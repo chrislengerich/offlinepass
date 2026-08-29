@@ -26,11 +26,6 @@ def _qr_to_ascii(text: str) -> list[str]:
     return result.stdout.rstrip("\n").split("\n") if result.stdout else []
 
 
-def _input_prompt(stdscr: int, prompt: str, prefill: str = "") -> str:
-    """Curses text input (standalone, not a method)."""
-    pass  # placeholder, implemented inside TUI class
-
-
 # ---------------------------------------------------------------------------
 # TUI
 # ---------------------------------------------------------------------------
