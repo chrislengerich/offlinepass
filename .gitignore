@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+test_data_write.json
+test_data_backup.json
