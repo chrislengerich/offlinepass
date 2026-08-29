@@ -26,6 +26,28 @@ def _qr_ansiutf8(text: str) -> str:
     return result.stdout if result.stdout else ""
 
 
+def _copy_to_clipboard(text: str) -> str:
+    """Copy text to clipboard. Prefers wl-copy (Wayland), falls back to xclip.
+
+    Uses Popen without wait() because both tools fork background processes
+    to hold the clipboard contents, which would block subprocess.run().
+    """
+    for cmd in (["wl-copy", "--trim-newline"], ["xclip", "-selection", "clipboard"]):
+        try:
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, text=True)
+            proc.communicate(input=text, timeout=5)
+            proc.wait(timeout=2)
+            return "Password copied to clipboard."
+        except FileNotFoundError:
+            continue
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            return "Password copied to clipboard."
+        except Exception as e:
+            return f"Clipboard error: {e}"
+    return "No clipboard tool (wl-copy/xclip) found."
+
+
 # ---------------------------------------------------------------------------
 # TUI
 # ---------------------------------------------------------------------------
@@ -284,16 +306,8 @@ class TUI:
             elif action == "pw":
                 self._show_message(f"Password:\n{item.password}")
             elif action == "clip":
-                try:
-                    subprocess.run(["xclip", "-selection", "clipboard"],
-                                   input=item.password, text=True)
-                    self._show_message("Password copied to clipboard.")
-                except FileNotFoundError:
-                    try:
-                        subprocess.run(["wl-copy"], input=item.password, text=True)
-                        self._show_message("Password copied to clipboard.")
-                    except FileNotFoundError:
-                        self._show_message("No clipboard tool (xclip/wl-copy) found.")
+                msg = _copy_to_clipboard(item.password)
+                self._show_message(msg)
             elif action == "back":
                 return
 
