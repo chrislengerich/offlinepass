@@ -17,13 +17,13 @@ from passlib import PasswordStore, ProtonItem, generate_password, generate_alias
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _qr_to_ascii(text: str) -> list[str]:
-    """Render QR code as ASCII lines using qrencode."""
+def _qr_ansiutf8(text: str) -> str:
+    """Render QR code as ANSI UTF-8 string using qrencode (Unicode blocks + colors)."""
     result = subprocess.run(
-        ["qrencode", "-t", "ASCIIi", "-o", "-", "-l", "L"],
+        ["qrencode", "-t", "ANSIUTF8", "-o", "-", "-l", "L", "-m", "2"],
         input=text, capture_output=True, text=True,
     )
-    return result.stdout.rstrip("\n").split("\n") if result.stdout else []
+    return result.stdout if result.stdout else ""
 
 
 # ---------------------------------------------------------------------------
@@ -138,20 +138,23 @@ class TUI:
                 buf.append(chr(key))
 
     def _qr_display(self, text: str, title: str = "QR Code") -> None:
-        """Display QR code in terminal. Exits curses, shows QR, waits for key."""
-        lines = _qr_to_ascii(text)
-        h, w = self.stdscr.getmaxyx()
-        self.stdscr.erase()
-        self.stdscr.addstr(0, 0, title[:w - 1], curses.A_BOLD)
-        self.stdscr.addstr(1, 0, f"Scan with QR Autofill app"[:w - 1], curses.A_DIM)
-        start_y = 3
-        qr_w = len(lines[0]) if lines else 0
-        start_x = max(0, (w - qr_w) // 2)
-        for i, line in enumerate(lines[:h - start_y - 2]):
-            self.stdscr.addstr(start_y + i, start_x, line[:w - start_x])
-        self.stdscr.addstr(h - 1, 0, "[Press any key to return]"[:w - 1], curses.A_DIM)
+        """Display QR code as a terminal image.
+
+        Exits curses, prints the QR using qrencode ANSIUTF8 (Unicode blocks
+        + ANSI colors), waits for a keypress, then re-enters curses.
+        """
+        qr = _qr_ansiutf8(text)
+        curses.endwin()
+        print(f"\n  {title}")
+        print(f"  Scan with QR Autofill app\n")
+        print(qr)
+        print(f"\n  [Press Enter to return]")
+        sys.stdin.readline()
+        self.stdscr = curses.initscr()
+        curses.curs_set(0)
+        self.stdscr.keypad(True)
+        self.stdscr.redrawln(0, self.stdscr.getmaxyx()[0])
         self.stdscr.refresh()
-        self.stdscr.getch()
 
     # -- main menu ---------------------------------------------------------
 
