@@ -33,7 +33,6 @@ class TUI:
     MENU_ITEMS = [
         ("Search", "action_search"),
         ("Add entry", "action_add_entry"),
-        ("Add email (SimpleLogin)", "action_add_email"),
         ("Quit", "action_quit"),
     ]
 
@@ -180,40 +179,34 @@ class TUI:
         self._show_results(results)
 
     def action_add_entry(self) -> None:
-        self.stdscr.erase()
+        choice = self._menu("Add entry — identity type", [
+            ("Username", "user"),
+            ("Email alias (SimpleLogin)", "alias"),
+        ])
+        if choice < 0:
+            return
         name = self._text_input("Website name")
         if not name:
             return
         url = self._text_input("URL")
-        username = self._text_input("Username (blank for email)")
+        username = ""
         email = ""
-        if not username:
-            email = self._text_input("Email")
+        note = ""
+        if choice == 0:
+            username = self._text_input("Username")
+        else:
+            email = generate_alias()
+            self._show_message(f"SimpleLogin alias generated:\n{email}\n\n(Stub — not actually registered)\n\nPress any key.")
+            note = "Created via linuxpass (SimpleLogin stub)"
         pw = generate_password()
         self._show_message(f"Generated password:\n{pw}\n\nPress any key to confirm, then save.")
         item = ProtonItem(
             name=name, username=username, email=email,
-            password=pw, urls=[url] if url else [],
+            password=pw, urls=[url] if url else [], note=note,
         )
         self.items.append(item)
         self.items.sort(key=lambda i: i.name.lower())
         self._save_and_confirm(f"Added entry: {name}")
-
-    def action_add_email(self) -> None:
-        name = self._text_input("For website")
-        if not name:
-            return
-        alias = generate_alias()
-        self._show_message(f"SimpleLogin alias generated:\n{alias}\n\n(Stub — not actually registered)\n\nPress any key.")
-        pw = generate_password()
-        item = ProtonItem(
-            name=name, email=alias,
-            password=pw,
-            note="Created via linuxpass (SimpleLogin stub)",
-        )
-        self.items.append(item)
-        self.items.sort(key=lambda i: i.name.lower())
-        self._save_and_confirm(f"Added email entry: {name}")
 
     # -- results / detail view --------------------------------------------
 
