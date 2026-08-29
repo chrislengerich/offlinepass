@@ -11,6 +11,9 @@ from passlib import (
     ProtonItem,
     generate_password,
     generate_alias,
+    generate_totp,
+    totp_secret_from_input,
+    parse_totp_uri,
 )
 
 
@@ -86,6 +89,76 @@ class TestPasswordGeneration(unittest.TestCase):
         alias = generate_alias()
         self.assertIn("@", alias)
         self.assertGreater(len(alias), 10)
+
+
+class TestTOTP(unittest.TestCase):
+    # RFC 6238 test secret (base32 of "12345678901234567890")
+    RFC_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+    RFC_URI = f"otpauth://totp/test?secret={RFC_SECRET}&issuer=Test&digits=8&period=30"
+
+    def test_parse_uri(self):
+        secret, issuer, digits, period = parse_totp_uri(self.RFC_URI)
+        self.assertEqual(secret, self.RFC_SECRET)
+        self.assertEqual(issuer, "Test")
+        self.assertEqual(digits, 8)
+        self.assertEqual(period, 30)
+
+    def test_raw_secret_wrapped_to_uri(self):
+        uri = totp_secret_from_input("JBSWY3DPEHPK3PXP")
+        self.assertTrue(uri.startswith("otpauth://totp/"))
+        secret, _, _, _ = parse_totp_uri(uri)
+        self.assertEqual(secret, "JBSWY3DPEHPK3PXP")
+
+    def test_uri_passthrough(self):
+        result = totp_secret_from_input(self.RFC_URI)
+        self.assertEqual(result, self.RFC_URI)
+
+    def test_rfc6238_vectors(self):
+        """Verify against RFC 6238 Appendix B test vectors (SHA1, 8 digits)."""
+        # time, expected_code
+        vectors = [
+            (59,          "94287082"),
+            (1111111109,  "07081804"),
+            (1111111111,  "14050471"),
+            (1234567890,  "89005924"),
+            (2000000000,  "69279037"),
+        ]
+        for t, expected in vectors:
+            code, remaining = generate_totp(self.RFC_URI, at_time=t)
+            self.assertEqual(code, expected, f"Failed at t={t}")
+
+    def test_remaining_within_period(self):
+        code, remaining = generate_totp(self.RFC_URI, at_time=100)
+        self.assertGreater(remaining, 0)
+        self.assertLessEqual(remaining, 30)
+
+    def test_code_changes_across_periods(self):
+        code1, _ = generate_totp(self.RFC_URI, at_time=0)
+        code2, _ = generate_totp(self.RFC_URI, at_time=30)
+        self.assertNotEqual(code1, code2)
+
+    def test_same_code_within_period(self):
+        code1, _ = generate_totp(self.RFC_URI, at_time=10)
+        code2, _ = generate_totp(self.RFC_URI, at_time=20)
+        self.assertEqual(code1, code2)
+
+
+class TestDisplayName(unittest.TestCase):
+    def test_uses_name_when_set(self):
+        item = ProtonItem(name="GitHub", username="ko", urls=["https://github.com"])
+        self.assertEqual(item.display_name, "GitHub")
+
+    def test_derives_from_url(self):
+        item = ProtonItem(name="", username="ko", urls=["https://gitlab.com"])
+        self.assertEqual(item.display_name, "gitlab.com")
+
+    def test_falls_back_to_username(self):
+        item = ProtonItem(name="", username="ko", urls=[])
+        self.assertEqual(item.display_name, "ko")
+
+    def test_falls_back_to_email(self):
+        item = ProtonItem(name="", username="", email="ko@mail.com", urls=[])
+        self.assertEqual(item.display_name, "ko@mail.com")
 
 
 class TestPasswordStore(unittest.TestCase):

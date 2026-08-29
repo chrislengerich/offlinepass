@@ -1,12 +1,18 @@
-"""Proton Pass item model, GPG-encrypted storage, git sync, password generation."""
+"""Proton Pass item model, GPG-encrypted storage, git sync, password/TOTP generation."""
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import os
 import secrets
 import string
+import struct
 import subprocess
+import time
+import urllib.parse
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -18,7 +24,7 @@ from typing import Any
 
 @dataclass
 class ProtonItem:
-    name: str
+    name: str = ""
     username: str = ""
     email: str = ""
     password: str = ""
@@ -27,6 +33,18 @@ class ProtonItem:
     totp_uri: str = ""
     item_uuid: str = field(default_factory=lambda: str(uuid.uuid4()))
     item_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+
+    @property
+    def display_name(self) -> str:
+        """Best available display label: name, URL domain, or identity."""
+        if self.name:
+            return self.name
+        if self.urls:
+            parsed = urllib.parse.urlparse(self.urls[0])
+            host = parsed.hostname or parsed.path.lstrip("/")
+            if host:
+                return host
+        return self.username or self.email or "(unnamed)"
 
     def to_proton_json(self) -> dict[str, Any]:
         return {
@@ -111,6 +129,59 @@ def generate_alias() -> str:
 
 
 # ---------------------------------------------------------------------------
+# TOTP
+# ---------------------------------------------------------------------------
+
+def _base32_decode(secret: str) -> bytes:
+    """Decode a base32 string, stripping spaces and fixing padding."""
+    clean = secret.replace(" ", "").replace("-", "").upper()
+    padding = (8 - len(clean) % 8) % 8
+    return base64.b32decode(clean + "=" * padding)
+
+
+def parse_totp_uri(uri: str) -> tuple[str, str, int, int]:
+    """Parse an otpauth:// URI. Returns (secret, issuer, digits, period)."""
+    parsed = urllib.parse.urlparse(uri)
+    if parsed.scheme != "otpauth":
+        raise ValueError(f"Not an otpauth URI: {uri}")
+    params = urllib.parse.parse_qs(parsed.query)
+    secret = params.get("secret", [""])[0]
+    if not secret:
+        raise ValueError("No secret in TOTP URI")
+    issuer = params.get("issuer", [""])[0]
+    digits = int(params.get("digits", ["6"])[0])
+    period = int(params.get("period", ["30"])[0])
+    return secret, issuer, digits, period
+
+
+def totp_secret_from_input(user_input: str) -> str:
+    """Accept either a raw base32 secret or an otpauth:// URI.
+    Returns a normalized otpauth:// URI."""
+    user_input = user_input.strip()
+    if user_input.startswith("otpauth://"):
+        return user_input
+    # Raw secret — wrap in a minimal otpauth URI
+    secret = user_input.replace(" ", "").replace("-", "").upper()
+    return f"otpauth://totp/linuxpass?secret={secret}&issuer=linuxpass"
+
+
+def generate_totp(uri: str, at_time: int | None = None) -> tuple[str, int]:
+    """Generate a TOTP code from an otpauth:// URI.
+    Returns (code, seconds_remaining_in_period)."""
+    secret_b32, _issuer, digits, period = parse_totp_uri(uri)
+    key = _base32_decode(secret_b32)
+    now = at_time if at_time is not None else int(time.time())
+    counter = now // period
+    remaining = period - (now % period)
+    msg = struct.pack(">Q", counter)
+    h = hmac.new(key, msg, hashlib.sha1).digest()
+    offset = h[-1] & 0x0F
+    code_int = struct.unpack(">I", h[offset:offset + 4])[0] & 0x7FFFFFFF
+    code = str(code_int)[-digits:].zfill(digits)
+    return code, remaining
+
+
+# ---------------------------------------------------------------------------
 # Storage — GPG-encrypted JSON file with git sync
 # ---------------------------------------------------------------------------
 
@@ -176,7 +247,7 @@ class PasswordStore:
                     items.append(ProtonItem.from_proton_json(obj))
         elif isinstance(data, dict) and "data" in data:
             items.append(ProtonItem.from_proton_json(data))
-        items.sort(key=lambda i: i.name.lower())
+        items.sort(key=lambda i: i.display_name.lower())
         return items
 
     def _build_envelope(self, items: list[ProtonItem]) -> dict[str, Any]:

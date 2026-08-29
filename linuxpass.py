@@ -9,7 +9,11 @@ import os
 import subprocess
 import sys
 
-from passlib import PasswordStore, ProtonItem, generate_password, generate_alias
+from passlib import (
+    PasswordStore, ProtonItem,
+    generate_password, generate_alias,
+    generate_totp, totp_secret_from_input,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -185,10 +189,9 @@ class TUI:
         ])
         if choice < 0:
             return
-        name = self._text_input("Website name")
-        if not name:
-            return
         url = self._text_input("URL")
+        if not url:
+            return
         username = ""
         email = ""
         note = ""
@@ -201,12 +204,12 @@ class TUI:
         pw = generate_password()
         self._show_message(f"Generated password:\n{pw}\n\nPress any key to confirm, then save.")
         item = ProtonItem(
-            name=name, username=username, email=email,
-            password=pw, urls=[url] if url else [], note=note,
+            name="", username=username, email=email,
+            password=pw, urls=[url], note=note,
         )
         self.items.append(item)
-        self.items.sort(key=lambda i: i.name.lower())
-        self._save_and_confirm(f"Added entry: {name}")
+        self.items.sort(key=lambda i: i.display_name.lower())
+        self._save_and_confirm(f"Added entry: {item.display_name}")
 
     # -- results / detail view --------------------------------------------
 
@@ -216,7 +219,7 @@ class TUI:
             options = []
             for it in results:
                 ident = it.identity or "(no identity)"
-                options.append((f"{it.name:30s}  {ident}", ""))
+                options.append((f"{it.display_name:30s}  {ident}", ""))
             sel = self._menu(f"Results ({len(results)})", [(o[0], "") for o in options], sel)
             if sel < 0:
                 return
@@ -225,17 +228,18 @@ class TUI:
     def _show_detail(self, item: ProtonItem) -> None:
         while True:
             detail_lines = [
-                f"Name:     {item.name}",
+                f"Name:     {item.display_name}",
                 f"Username: {item.username or '-'}",
                 f"Email:    {item.email or '-'}",
                 f"URLs:     {', '.join(item.urls) or '-'}",
                 f"Note:     {item.note or '-'}",
-                f"TOTP:     {'yes' if item.totp_uri else 'no'}",
+                f"TOTP:     {'enrolled' if item.totp_uri else 'not enrolled'}",
             ]
             options = [
                 ("Display QR code", "qr"),
                 ("Show credentials", "creds"),
                 ("Update password", "update"),
+                ("Enroll TOTP", "totp"),
                 ("Back", "back"),
             ]
             h, w = self.stdscr.getmaxyx()
@@ -249,27 +253,91 @@ class TUI:
             _, action = options[sel]
             if action == "qr":
                 qr_text = json.dumps(item.to_proton_json(), separators=(",", ":"))
-                self._qr_display(qr_text, f"QR: {item.name}")
+                self._qr_display(qr_text, f"QR: {item.display_name}")
             elif action == "creds":
-                lines = [f"Name:     {item.name}"]
-                if item.username:
-                    lines.append(f"Username: {item.username}")
-                if item.email:
-                    lines.append(f"Email:    {item.email}")
-                lines.append(f"Password: {item.password}")
-                self._show_message("\n".join(lines))
+                self._show_credentials(item)
             elif action == "update":
                 new_pw = generate_password()
                 self._show_message(
-                    f"Updating: {item.name}\n\n"
+                    f"Updating: {item.display_name}\n\n"
                     f"Old password: {item.password}\n"
                     f"New password: {new_pw}\n\n"
                     f"Press any key to confirm."
                 )
                 item.password = new_pw
-                self._save_and_confirm(f"Updated password for: {item.name}")
+                self._save_and_confirm(f"Updated password for: {item.display_name}")
+            elif action == "totp":
+                self._enroll_totp(item)
             elif action == "back":
                 return
+
+    def _enroll_totp(self, item: ProtonItem) -> None:
+        raw = self._text_input("TOTP secret (base32) or otpauth:// URI")
+        if not raw:
+            return
+        try:
+            uri = totp_secret_from_input(raw)
+            code, remaining = generate_totp(uri)
+            self._show_message(
+                f"TOTP enrolled for: {item.display_name}\n\n"
+                f"Test code: {code}  (expires in {remaining}s)\n\n"
+                f"Press any key to save."
+            )
+            item.totp_uri = uri
+            self._save_and_confirm(f"Enrolled TOTP for: {item.display_name}")
+        except Exception as e:
+            self._show_message(f"TOTP enrollment failed:\n{e}")
+
+    def _show_credentials(self, item: ProtonItem) -> None:
+        """Show username/email/password, plus live TOTP if enrolled."""
+        if not item.totp_uri:
+            lines = [f"Name:     {item.display_name}"]
+            if item.username:
+                lines.append(f"Username: {item.username}")
+            if item.email:
+                lines.append(f"Email:    {item.email}")
+            lines.append(f"Password: {item.password}")
+            self._show_message("\n".join(lines))
+            return
+
+        curses.halfdelay(10)
+        try:
+            while True:
+                try:
+                    code, remaining = generate_totp(item.totp_uri)
+                except Exception as e:
+                    self._show_message(f"TOTP error:\n{e}")
+                    return
+                self.stdscr.erase()
+                h, w = self.stdscr.getmaxyx()
+                row = 1
+                lines = [
+                    f"Name:     {item.display_name}",
+                ]
+                if item.username:
+                    lines.append(f"Username: {item.username}")
+                if item.email:
+                    lines.append(f"Email:    {item.email}")
+                lines.append(f"Password: {item.password}")
+                lines.append("")
+                lines.append(f"TOTP:     {code}")
+                for line in lines:
+                    if row < h - 3:
+                        self.stdscr.addstr(row, 2, line[:w - 3])
+                        row += 1
+                bar_len = 20
+                filled = int(bar_len * remaining / 30)
+                bar = "█" * filled + "░" * (bar_len - filled)
+                if row < h - 2:
+                    self.stdscr.addstr(row, 2, f"Refresh:  {bar} {remaining}s")
+                    row += 1
+                self.stdscr.addstr(h - 2, 2, "[Press any key to exit]", curses.A_DIM)
+                self.stdscr.refresh()
+                key = self.stdscr.getch()
+                if key != -1:
+                    break
+        finally:
+            curses.cbreak()
 
     def _menu_offset(self, title: str, options: list[tuple[str, str]], start_row: int = 0) -> int:
         """Menu that starts at a specific row offset."""
