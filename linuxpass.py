@@ -29,20 +29,21 @@ def _qr_ansiutf8(text: str) -> str:
 def _copy_to_clipboard(text: str) -> str:
     """Copy text to clipboard. Prefers wl-copy (Wayland), falls back to xclip.
 
-    Uses Popen without wait() because both tools fork background processes
-    to hold the clipboard contents, which would block subprocess.run().
+    Both tools fork background daemons to hold clipboard contents, so we
+    write stdin and return immediately without waiting for the process.
     """
     for cmd in (["wl-copy", "--trim-newline"], ["xclip", "-selection", "clipboard"]):
         try:
-            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, text=True)
-            proc.communicate(input=text, timeout=5)
-            proc.wait(timeout=2)
+            proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            proc.stdin.write(text)
+            proc.stdin.close()
             return "Password copied to clipboard."
         except FileNotFoundError:
             continue
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            return "Password copied to clipboard."
         except Exception as e:
             return f"Clipboard error: {e}"
     return "No clipboard tool (wl-copy/xclip) found."
