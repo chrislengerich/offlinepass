@@ -63,8 +63,8 @@ python3 linuxpass.py
 - **Search** — fuzzy keyword search across all fields
 - **Select** — navigate filtered results with vim-style keys
 - **Display QR code** — terminal QR rendering of the Proton Pass item JSON
-- **Show password** — display in plain text
-- **Copy password** — copy to clipboard via `xclip` or `wl-copy`
+- **Show credentials** — display username/email and password in plain text
+  (copy via ChromeOS trackpad click-select)
 
 ### Step 2 — write
 
@@ -72,8 +72,8 @@ python3 linuxpass.py
   auto-generated (24 chars, mixed case + digits + symbols)
 - **Add email** — generate a SimpleLogin-style alias (stub — not actually
   registered with SimpleLogin) and create an entry with auto-generated password
-- **Update password** — search for an entry, confirm, and replace its password
-  with a newly generated one
+- **Update password** — available from the entry detail view; generates a new
+  password and replaces the old one after confirmation
 
 ## QR code format
 

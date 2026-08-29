@@ -8,7 +8,6 @@ import json
 import os
 import subprocess
 import sys
-from typing import Callable
 
 from passlib import PasswordStore, ProtonItem, generate_password, generate_alias
 
@@ -26,46 +25,6 @@ def _qr_ansiutf8(text: str) -> str:
     return result.stdout if result.stdout else ""
 
 
-def _copy_to_clipboard(text: str) -> str:
-    """Copy text to clipboard.
-
-    wl-copy: pass text as argument (no stdin pipe) in a new session so
-    the daemon survives curses re-entering. xclip: write to a temp file
-    and read from it, also detached.
-    """
-    import shutil
-    if shutil.which("wl-copy"):
-        try:
-            subprocess.Popen(
-                ["wl-copy", "--trim-newline", text],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            return "Password copied to clipboard."
-        except Exception as e:
-            return f"Clipboard error: {e}"
-    if shutil.which("xclip"):
-        try:
-            import tempfile
-            fd, tmp = tempfile.mkstemp()
-            os.write(fd, text.encode())
-            os.close(fd)
-            subprocess.Popen(
-                ["xclip", "-selection", "clipboard", "-i", tmp],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            # xclip holds the clipboard; clean up the temp file after a delay
-            subprocess.Popen(
-                ["sh", "-c", f"sleep 10 && rm -f {tmp}"],
-                start_new_session=True,
-            )
-            return "Password copied to clipboard."
-        except Exception as e:
-            return f"Clipboard error: {e}"
-    return "No clipboard tool (wl-copy/xclip) found."
-
-
 # ---------------------------------------------------------------------------
 # TUI
 # ---------------------------------------------------------------------------
@@ -75,7 +34,6 @@ class TUI:
         ("Search", "action_search"),
         ("Add entry", "action_add_entry"),
         ("Add email (SimpleLogin)", "action_add_email"),
-        ("Update password", "action_update_password"),
         ("Quit", "action_quit"),
     ]
 
@@ -257,28 +215,6 @@ class TUI:
         self.items.sort(key=lambda i: i.name.lower())
         self._save_and_confirm(f"Added email entry: {name}")
 
-    def action_update_password(self) -> None:
-        query = self._text_input("Search entry to update")
-        if not query:
-            return
-        results = [it for it in self.items if it.matches(query)]
-        if not results:
-            self._show_message("No matching entries found.")
-            return
-        sel = self._select_from(results, "Select entry")
-        if sel < 0:
-            return
-        item = results[sel]
-        new_pw = generate_password()
-        self._show_message(
-            f"Updating: {item.name}\n\n"
-            f"Old password: {item.password}\n"
-            f"New password: {new_pw}\n\n"
-            f"Press any key to confirm."
-        )
-        item.password = new_pw
-        self._save_and_confirm(f"Updated password for: {item.name}")
-
     # -- results / detail view --------------------------------------------
 
     def _show_results(self, results: list[ProtonItem]) -> None:
@@ -305,8 +241,8 @@ class TUI:
             ]
             options = [
                 ("Display QR code", "qr"),
-                ("Show password", "pw"),
-                ("Copy password to clipboard", "clip"),
+                ("Show credentials", "creds"),
+                ("Update password", "update"),
                 ("Back", "back"),
             ]
             h, w = self.stdscr.getmaxyx()
@@ -321,11 +257,24 @@ class TUI:
             if action == "qr":
                 qr_text = json.dumps(item.to_proton_json(), separators=(",", ":"))
                 self._qr_display(qr_text, f"QR: {item.name}")
-            elif action == "pw":
-                self._show_message(f"Password:\n{item.password}")
-            elif action == "clip":
-                msg = _copy_to_clipboard(item.password)
-                self._show_message(msg)
+            elif action == "creds":
+                lines = [f"Name:     {item.name}"]
+                if item.username:
+                    lines.append(f"Username: {item.username}")
+                if item.email:
+                    lines.append(f"Email:    {item.email}")
+                lines.append(f"Password: {item.password}")
+                self._show_message("\n".join(lines))
+            elif action == "update":
+                new_pw = generate_password()
+                self._show_message(
+                    f"Updating: {item.name}\n\n"
+                    f"Old password: {item.password}\n"
+                    f"New password: {new_pw}\n\n"
+                    f"Press any key to confirm."
+                )
+                item.password = new_pw
+                self._save_and_confirm(f"Updated password for: {item.name}")
             elif action == "back":
                 return
 
@@ -351,13 +300,6 @@ class TUI:
                 return sel
             elif key in (ord("q"), 27):
                 return -1
-
-    def _select_from(self, items: list[ProtonItem], title: str) -> int:
-        options = []
-        for it in items:
-            ident = it.identity or "(no identity)"
-            options.append((f"{it.name:30s}  {ident}", ""))
-        return self._menu(title, [(o[0], "") for o in options])
 
     # -- save --------------------------------------------------------------
 
