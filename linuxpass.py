@@ -37,6 +37,7 @@ class TUI:
     MENU_ITEMS = [
         ("Search", "action_search"),
         ("Add entry", "action_add_entry"),
+        ("Show git repo location", "action_git_location"),
         ("Quit", "action_quit"),
     ]
 
@@ -172,6 +173,16 @@ class TUI:
     def action_quit(self) -> None:
         raise KeyboardInterrupt
 
+    def action_git_location(self) -> None:
+        git_dir = self.store.git_dir
+        has_git = os.path.isdir(os.path.join(git_dir, ".git"))
+        status = "active" if has_git else "not initialized"
+        self._show_message(
+            f"Git repo: {git_dir}\n"
+            f"Status: {status}\n"
+            f"Data file: {self.store.path}"
+        )
+
     def action_search(self) -> None:
         query = self._text_input("Search (website / user / email)")
         if not query:
@@ -258,14 +269,26 @@ class TUI:
                 self._show_credentials(item)
             elif action == "update":
                 new_pw = generate_password()
-                self._show_message(
-                    f"Updating: {item.display_name}\n\n"
-                    f"Old password: {item.password}\n"
-                    f"New password: {new_pw}\n\n"
-                    f"Press any key to confirm."
-                )
-                item.password = new_pw
-                self._save_and_confirm(f"Updated password for: {item.display_name}")
+                self.stdscr.erase()
+                h, w = self.stdscr.getmaxyx()
+                lines = [
+                    f"Updating: {item.display_name}",
+                    "",
+                    f"Old password: {item.password}",
+                    f"New password: {new_pw}",
+                    "",
+                    "Enter = confirm    Esc = cancel",
+                ]
+                for i, line in enumerate(lines):
+                    if i + 1 < h - 1:
+                        self.stdscr.addstr(i + 1, 2, line[:w - 3])
+                self.stdscr.refresh()
+                key = self.stdscr.getch()
+                if key == 27:
+                    self._show_message("Password update cancelled.")
+                else:
+                    item.password = new_pw
+                    self._save_and_confirm(f"Updated password for: {item.display_name}")
             elif action == "totp":
                 self._enroll_totp(item)
             elif action == "back":
