@@ -27,23 +27,40 @@ def _qr_ansiutf8(text: str) -> str:
 
 
 def _copy_to_clipboard(text: str) -> str:
-    """Copy text to clipboard. Prefers wl-copy (Wayland), falls back to xclip.
+    """Copy text to clipboard.
 
-    Both tools fork background daemons to hold clipboard contents, so we
-    write stdin and return immediately without waiting for the process.
+    wl-copy: pass text as argument (no stdin pipe) in a new session so
+    the daemon survives curses re-entering. xclip: write to a temp file
+    and read from it, also detached.
     """
-    for cmd in (["wl-copy", "--trim-newline"], ["xclip", "-selection", "clipboard"]):
+    import shutil
+    if shutil.which("wl-copy"):
         try:
-            proc = subprocess.Popen(
-                cmd, stdin=subprocess.PIPE,
+            subprocess.Popen(
+                ["wl-copy", "--trim-newline", text],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                text=True,
+                start_new_session=True,
             )
-            proc.stdin.write(text)
-            proc.stdin.close()
             return "Password copied to clipboard."
-        except FileNotFoundError:
-            continue
+        except Exception as e:
+            return f"Clipboard error: {e}"
+    if shutil.which("xclip"):
+        try:
+            import tempfile
+            fd, tmp = tempfile.mkstemp()
+            os.write(fd, text.encode())
+            os.close(fd)
+            subprocess.Popen(
+                ["xclip", "-selection", "clipboard", "-i", tmp],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            # xclip holds the clipboard; clean up the temp file after a delay
+            subprocess.Popen(
+                ["sh", "-c", f"sleep 10 && rm -f {tmp}"],
+                start_new_session=True,
+            )
+            return "Password copied to clipboard."
         except Exception as e:
             return f"Clipboard error: {e}"
     return "No clipboard tool (wl-copy/xclip) found."
