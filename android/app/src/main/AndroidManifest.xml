@@ -22,5 +22,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".spike.S1DecryptActivity"
+            android:exported="false" />
+
+        <!-- Sharing the re-encrypted spike output back to the desktop. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.linuxpass.app.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>
