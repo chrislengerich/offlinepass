@@ -119,6 +119,11 @@ silent pass.
 
 ## 5b. Run log
 
+**2026-10-04 — Spike S3 PASS (production transport):**
+- JGit clone → fetch → commit → push over HTTPS with a fine-grained PAT, on-device: **two full cycles** (`7669ad9`, `4542aa0`), both visible from the desktop via the API.
+- Push-retry fix exercised (clean tree with an unpushed head pushes instead of reporting up-to-date — a gap in the offlinecam pattern, fixed here).
+- Keystore SSH identity (SshKeyManager + jsch) remains committed but deferred; T-G-01 (SSH auth) moves to the backlog test list.
+
 **2026-10-04 — Spike S2 decision:**
 - OpenKeyChain sign → PGP-only (see probe above) → **phone git auth moved to Android Keystore SSH keys** (per-device deploy keys; ed25519 API 33+ / RSA-3072 fallback; CCID upgrade deferred to backlog). Design §8 + decision log updated.
 

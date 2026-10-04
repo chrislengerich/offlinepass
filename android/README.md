@@ -7,12 +7,12 @@ Native Android client for the linuxpass vault (design:
 
 | Spike | What | Status |
 |---|---|---|
-| S1 | OpenKeyChain round-trip vs the real vault | **wired, needs on-device run** (`spike/S1DecryptActivity`) |
-| S2 | OpenKeyChain SSH-sign | not started |
-| S3 | JGit + SSH transport | not started |
+| S1 | OpenKeyChain round-trip vs the real vault | **integration proven** (software-key round-trip MATCH); real-applet run pending |
+| S2 | Sign-action probe | **done** — OpenKeyChain signs PGP-only → git auth moved to PAT; Keystore SSH identity committed for later |
+| S3 | JGit transport | **PASS** — clone/fetch/commit/push over HTTPS+PAT, two cycles, desktop-verified |
 | S4 | Autofill shell | not started |
 | S5 | Vendored qrft generator interop | not started |
-| S6 | NFC / touch UX timing | not started |
+| S6 | NFC / touch UX timing | pending (needs the real YubiKey applet flow) |
 
 ## Building
 
