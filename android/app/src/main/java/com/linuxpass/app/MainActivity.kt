@@ -46,6 +46,11 @@ class MainActivity : ComponentActivity() {
                     }) {
                         Text("Open Spike S2 (Keystore SSH identity)")
                     }
+                    androidx.compose.material3.Button(onClick = {
+                        startActivity(Intent(this@MainActivity, com.linuxpass.app.spike.S3GitActivity::class.java))
+                    }) {
+                        Text("Open Spike S3 (JGit HTTPS+PAT)")
+                    }
                 }
             }
         }

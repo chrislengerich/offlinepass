@@ -31,6 +31,9 @@
         <activity
             android:name=".spike.S2SshActivity"
             android:exported="false" />
+        <activity
+            android:name=".spike.S3GitActivity"
+            android:exported="false" />
 
         <!-- Sharing the re-encrypted spike output back to the desktop. -->
         <provider
