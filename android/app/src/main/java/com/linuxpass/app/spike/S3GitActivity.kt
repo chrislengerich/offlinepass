@@ -19,6 +19,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.linuxpass.app.vault.VaultGitClient
 import java.io.File
 import java.util.Date
 
@@ -69,7 +70,7 @@ class S3GitActivity : ComponentActivity() {
         lifecycleScope.launch {
             try {
                 val head = withContext(Dispatchers.IO) {
-                    val client = TestGitClient()
+                    val client = VaultGitClient()
                     val root = File(filesDir, "sync-test")
                     // A previous failed clone leaves a non-repo dir behind,
                     // which would block the next clone.

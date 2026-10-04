@@ -1,4 +1,4 @@
-package com.linuxpass.app.spike
+package com.linuxpass.app.vault
 
 import android.util.Log
 import org.eclipse.jgit.api.Git
@@ -17,7 +17,7 @@ import java.io.File
  * reading). HTTPS + fine-grained PAT; SSH (Keystore key / CCID) is a
  * later upgrade.
  */
-class TestGitClient {
+class VaultGitClient {
 
     private class TokenCredentials(pat: String) : UsernamePasswordCredentialsProvider(
         // GitHub wants any username: the token is the password.
