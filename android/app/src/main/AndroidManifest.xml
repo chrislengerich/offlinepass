@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Git/SSH transport + OpenKeyChain API. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Package visibility (Android 11+): bind OpenKeychain's OpenPGP
          service by explicit package + action. -->
     <queries>
@@ -24,6 +27,9 @@
         </activity>
         <activity
             android:name=".spike.S1DecryptActivity"
+            android:exported="false" />
+        <activity
+            android:name=".spike.S2SshActivity"
             android:exported="false" />
 
         <!-- Sharing the re-encrypted spike output back to the desktop. -->

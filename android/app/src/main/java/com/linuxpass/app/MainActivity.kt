@@ -37,9 +37,14 @@ class MainActivity : ComponentActivity() {
                 Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
                     Text("linuxpass — spike stub")
                     androidx.compose.material3.Button(onClick = {
-                        startActivity(android.content.Intent(this@MainActivity, com.linuxpass.app.spike.S1DecryptActivity::class.java))
+                        startActivity(Intent(this@MainActivity, com.linuxpass.app.spike.S1DecryptActivity::class.java))
                     }) {
                         Text("Open Spike S1 (OpenKeyChain round-trip)")
+                    }
+                    androidx.compose.material3.Button(onClick = {
+                        startActivity(Intent(this@MainActivity, com.linuxpass.app.spike.S2SshActivity::class.java))
+                    }) {
+                        Text("Open Spike S2 (Keystore SSH identity)")
                     }
                 }
             }

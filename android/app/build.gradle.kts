@@ -86,6 +86,10 @@ dependencies {
     // QR rendering for single-entry exports
     implementation("com.google.zxing:core:3.5.3")
 
+    // S2 spike: standalone SSH client for the Keystore-identity auth test
+    // (maintained jsch fork; supports ed25519 + rsa-sha2-256).
+    implementation("com.github.mwiede:jsch:0.2.17")
+
     // Testing (offlinecam pattern)
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.11.1")
