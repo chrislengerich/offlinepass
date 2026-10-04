@@ -1,5 +1,6 @@
 package com.linuxpass.app
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -16,6 +17,18 @@ import androidx.compose.ui.unit.dp
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // ADB-driven spike entry: forward extras to S1 (kept non-exported).
+        val e = intent
+        val forward = Intent(this, com.linuxpass.app.spike.S1DecryptActivity::class.java).apply {
+            listOf("path", "email", "exportKey").forEach { key ->
+                e.getStringExtra(key)?.let { putExtra(key, it) }
+            }
+        }
+        if (forward.hasExtra("path") || forward.hasExtra("email") || forward.hasExtra("exportKey")) {
+            startActivity(forward)
+            finish()
+            return
+        }
         setContent {
             Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
