@@ -51,6 +51,9 @@ object VaultSession {
     /** Envelope revision of the currently-open vault; bumped on each save. */
     private var rev: Long = 0
 
+    /** The envelope as loaded (tombstones + unknown fields preserved through saves). */
+    private var loadedEnvelope: Envelope? = null
+
     fun init(context: Context) {
         if (::appContext.isInitialized) return
         appContext = context.applicationContext
@@ -132,6 +135,7 @@ object VaultSession {
                     is OpenPgpClient.DecryptResult.Success -> {
                         val env = Envelope.fromJson(plain.readText())
                         rev = env.rev
+                        loadedEnvelope = env
                         state = State.Unlocked(env.items)
                         Log.i(TAG, "unlocked: ${env.items.size} items, rev=${env.rev}")
                         Result.Success
@@ -152,18 +156,21 @@ object VaultSession {
 
     /**
      * Encrypts (all configured recipients) + writes the vault file + pushes
-     * (remote mode). Local-only mode: just writes the file.
+     * (remote mode). Local-only mode: just writes the file. Returns
+     * Interaction when OpenKeyChain needs a prompt — the UI launches it and
+     * calls save() again.
      */
-    suspend fun save(items: List<ProtonItem>, onInteraction: suspend (android.app.PendingIntent) -> Result): Result {
+    suspend fun save(items: List<ProtonItem>): Result {
         val cfg = config() ?: return Result.Error("No config")
         busy = "Encrypting…"
         try {
             return withContext(Dispatchers.IO) {
-                val env = Envelope(
-                    rev = rev + 1,
-                    deviceId = cfg.deviceId,
-                    items = items.toMutableList()
-                )
+                val env = (loadedEnvelope ?: Envelope(deviceId = cfg.deviceId)).also { e ->
+                    e.rev = rev + 1
+                    e.items = items.toMutableList()
+                }
+                // Purge tombstoned entries for good.
+                env.items.removeAll { it.itemUuid in env.deletedItemUuids }
                 env.items.sortBy { it.displayName.lowercase() }
                 val client = OpenPgpClient(appContext)
 
@@ -177,7 +184,7 @@ object VaultSession {
                                 .apply()
                         }
                         is OpenPgpClient.KeyLookup.UserInteraction ->
-                            return@withContext onInteraction(lookup.pendingIntent)
+                            return@withContext Result.Interaction(lookup.pendingIntent)
                         is OpenPgpClient.KeyLookup.Error ->
                             return@withContext Result.Error("Recipient key lookup failed")
                     }
@@ -191,6 +198,7 @@ object VaultSession {
                     return@withContext Result.Error("Encrypt failed")
                 }
                 rev = env.rev
+                loadedEnvelope = env
                 Log.i(TAG, "encrypted ${target.length()} bytes, rev=${env.rev}")
 
                 if (cfg.remoteUrl != null) {
@@ -220,4 +228,54 @@ object VaultSession {
         prefs().getString("recipientKeyIds", null)
             ?.split(",")?.mapNotNull { it.toLongOrNull() }?.toLongArray()
             ?.takeIf { it.isNotEmpty() }
+
+    // -- helpers for UI (USB save/restore, QR export) -----------------------
+
+    fun vaultFilePath(): String = vaultFile().absolutePath
+    fun currentRev(): Long = rev
+
+    /** Deletes with a tombstone (survives merges/syncs). */
+    suspend fun delete(item: ProtonItem): Result {
+        loadedEnvelope?.deletedItemUuids?.add(item.itemUuid)
+        val remaining = (state as? State.Unlocked)?.items
+            ?.filter { it.itemUuid != item.itemUuid } ?: emptyList()
+        return save(remaining)
+    }
+
+    /** Fetch + push any pending work (Setup tab "Sync now"). */
+    suspend fun syncNow(): Result {
+        val cfg = config() ?: return Result.Error("Local-only mode: nothing to sync")
+        val remote = cfg.remoteUrl ?: return Result.Error("Local-only mode: nothing to sync")
+        val pat = pat() ?: return Result.Error("No PAT stored")
+        busy = "Syncing…"
+        try {
+            withContext(Dispatchers.IO) {
+                VaultGitClient().commitAndPush(remote, pat, gitRoot(), "sync")
+            }
+            return Result.Success
+        } catch (e: Exception) {
+            return Result.Error("${e.javaClass.simpleName}: ${e.message}")
+        } finally {
+            busy = null
+        }
+    }
+
+    sealed interface DecryptEnvelope {
+        data class Ok(val env: Envelope) : DecryptEnvelope
+        data class Interaction(val pendingIntent: android.app.PendingIntent) : DecryptEnvelope
+        data class Error(val message: String) : DecryptEnvelope
+    }
+
+    /** Decrypts an arbitrary vault file (USB restore path). */
+    suspend fun decryptEnvelope(file: File): DecryptEnvelope = withContext(Dispatchers.IO) {
+        if (!file.exists()) return@withContext DecryptEnvelope.Error("File missing")
+        val plain = File(appContext.cacheDir, "restore-plain.json")
+        val client = OpenPgpClient(appContext)
+        when (val r = client.decryptVerify(file, plain)) {
+            is OpenPgpClient.DecryptResult.Success ->
+                DecryptEnvelope.Ok(Envelope.fromJson(plain.readText()))
+            is OpenPgpClient.DecryptResult.UserInteraction -> DecryptEnvelope.Interaction(r.pendingIntent)
+            is OpenPgpClient.DecryptResult.Error -> DecryptEnvelope.Error("Decrypt failed (see logcat)")
+        }
+    }
 }

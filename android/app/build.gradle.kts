@@ -86,6 +86,9 @@ dependencies {
     // QR rendering for single-entry exports
     implementation("com.google.zxing:core:3.5.3")
 
+    // WebView asset loader (serves the vendored qrft generator at a secure origin)
+    implementation("androidx.webkit:webkit:1.9.0")
+
     // S2 spike: standalone SSH client for the Keystore-identity auth test
     // (maintained jsch fork; supports ed25519 + rsa-sha2-256).
     implementation("com.github.mwiede:jsch:0.2.17")
