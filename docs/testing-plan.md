@@ -1,0 +1,146 @@
+# linuxpass Android — Testing Plan
+
+Status: active
+Date: 2026-10-04
+Companion docs: `docs/android-app-design.md` (design), `docs/work-plan.md` (execution).
+
+## 1. Principles
+
+- **Tests mirror the risk.** The two riskiest seams are (a) OpenKeyChain
+  ↔ JGit SSH transport and (b) cross-platform vault format compatibility;
+  both get dedicated suites.
+- **Hardware-in-the-loop tests are explicit.** Any test needing a YubiKey
+  or OpenKeyChain is tagged and never runs in the plain JVM unit suite.
+- **No plaintext fixtures.** Encrypted fixtures are ciphertext committed
+  as test resources; plaintext appears only transiently in memory during
+  a test.
+- **Desktop parity is a contract.** Any file the app writes must decrypt
+  with desktop `gpg`, and vice versa — tested both directions.
+
+## 2. Test layers
+
+| Layer | Where | Runs on | Needs |
+|---|---|---|---|
+| L1 — JVM unit | `android/app/src/test` | JVM (Robolectric where needed) | nothing |
+| L2 — instrumented crypto | `android/app/src/androidTest` | device/emulator + OpenKeyChain | OpenKeyChain, YubiKey (NFC/USB) |
+| L3 — git/integration | `android/app/src/androidTest` | device + real GitHub | scratch private repo, YubiKey |
+| L4 — cross-platform | shell-driven, repo-rooted | desktop + device | `gpg`, `git`, QR Autofill app, qrft.org pages |
+| L5 — manual UX scripts | this file, §5 | real devices | everything |
+
+Tags: `@OpenKeyChain`, `@Hardware` (YubiKey required), `@Network`
+(real GitHub), `@Slow`. L1 runs everywhere, always; L2–L4 run explicitly
+on hardware.
+
+## 3. Suites & test IDs
+
+### L1 — JVM unit tests (`T-U-*`)
+
+| ID | Suite | Covers |
+|---|---|---|
+| T-U-01 | EnvelopeCodecTest | Proton Pass JSON round-trip; unknown-field preservation; `rev` bump on save; `deviceId` stability |
+| T-U-02 | EnvelopeCodecTest | tolerant parse: extra/missing fields, both envelope shapes (list / vaults-dict) like `passlib.py` |
+| T-U-03 | MergeTest | union by `itemUuid`; idempotence; ordering stable |
+| T-U-04 | MergeTest | tombstones: delete survives sync; resurrect conflict rules |
+| T-U-05 | MergeTest | divergence detection via `rev`/`deviceId`; conflict classification (clean / conflict) |
+| T-U-06 | EntryPayloadTest | single-entry Proton-JSON payload build/parse (QR export source of truth) |
+| T-U-07 | TotpTest | RFC 6238 test vectors; `otpauth://` parsing (digits/period/issuer); countdown math |
+| T-U-08 | PasswordGenTest | alphabet/length; alias stub charset asserted |
+| T-U-09 | OpenPgpClientMappingTest | result/status mapping + user-interaction path with mocked binder (offlinecam pattern) |
+| T-U-10 | RestoreDecisionTest | whole-file restore decision logic: same state / newer theirs / divergent → conflict classification |
+| T-U-11 | LocalOnlyModeTest | working copy without remote: sync disabled, CRUD + local commits still function |
+
+### L2 — instrumented crypto (`T-D-*`, `@OpenKeyChain @Hardware`)
+
+| ID | Suite | Covers |
+|---|---|---|
+| T-D-01 | OpenKeyChainRoundTripTest | decrypt the committed ciphertext fixture via applet (NFC) — manual key touch |
+| T-D-02 | OpenKeyChainRoundTripTest | same over USB/OTG |
+| T-D-03 | OpenKeyChainRoundTripTest | encrypt to all enrolled recipients; output written to app storage for desktop cross-check |
+| T-D-04 | OpenKeyChainSignTest | sign arbitrary bytes (SSH-challenge-sized) via the YubiKey-held key |
+| T-D-05 | NfcDispatchTest | foreground dispatch reliability; cancel/timeout → clean abort |
+| T-D-06 | UnlockFlowTest | biometric gate → decrypt; biometric-fail → retry path |
+| T-D-07 | CiphertextAtRestTest | after an unlock cycle: no plaintext on disk (working tree + caches greped in test) |
+| T-D-08 | QrftGeneratorTest | vendored `generator.html` renders a single-entry payload in the WebView; frames visible on screen |
+
+### L3 — git/integration (`T-G-*`, `@Network @Hardware`)
+
+| ID | Suite | Covers |
+|---|---|---|
+| T-G-01 | SshSignAuthTest | standalone SSH client authenticates to `git@github.com` via OpenKeyChain-signed challenge |
+| T-G-02 | JgitSyncTest | fetch of the scratch vault repo |
+| T-G-03 | JgitSyncTest | commit + push by key touch; commit identity/metadata correct |
+| T-G-04 | JgitSyncTest | non-fast-forward push → detected → re-pull/merge path exercised |
+| T-G-05 | JgitSyncTest | offline edit → later sync converges (queue-then-push) |
+| T-G-06 | DesktopSyncTest | TUI (`passlib.py`) push observed by app and vice versa in the same scratch repo |
+
+### L4 — cross-platform (`T-X-*`, shell-driven)
+
+| ID | Covers | How |
+|---|---|---|
+| T-X-01 | Desktop `gpg` decrypts an Android-written vault | pull file from device, `gpg --decrypt` with applet key |
+| T-X-02 | Android decrypts a TUI-written vault | commit from desktop, sync in app |
+| T-X-03 | Envelope field preservation both directions | `rev`/`deviceId`/unknown fields survive desktop save then app save and vice versa |
+| T-X-04 | qrft interop: app-rendered payload → qrft.org scanner page | manual, scripted (desktop browser) |
+| T-X-05 | QR Autofill app scans app-rendered single-frame QR | manual, on phone |
+| T-X-06 | USB snapshot imported by desktop TUI | restored file dropped into `LINUXPASS_FILE`/`LINUXPASS_GIT_DIR`; TUI reads it |
+
+### L5 — manual UX scripts (`T-M-*`)
+
+| ID | Script |
+|---|---|
+| T-M-01 | Fresh setup end-to-end (install → OpenKeyChain pairing → remote config → enrollment → first sync) |
+| T-M-02 | Daily offline use: unlock → search → CRUD → TOTP, no network |
+| T-M-03 | Two-device convergence drill (desktop + phone, deliberate conflict) |
+| T-M-04 | Autofill matrix: Chrome, Firefox, Samsung Internet + two native app login forms; inline unlock path |
+| T-M-05 | Offline phone drill: USB restore → local-only use → USB save → online side imports + reconciles |
+| T-M-06 | Maintenance runbooks: add hardware key C; key rotation; all-keys-lost doc walk-through |
+| T-M-07 | NFC/USB alternation across a week of real use (prompt friction log) |
+
+## 4. Fixtures & environments
+
+- **Ciphertext fixtures** (committed under `android/app/src/test/resources`
+  and `android/app/src/main/assets`): an envelope with 5 entries (from
+  `test_data.json`), one with TOTP enrolled; encrypted to a **test**
+  recipient set. Hardware round-trips additionally use the real vault via
+  a manual gate.
+- **Scratch repo:** private GitHub repo `linuxpass-vault-test`, resettable
+  by force-pushing a seed commit; both the app (test build) and the TUI
+  point at it during testing.
+- **Devices:** daily phone (NFC YubiKey A), offline test phone (USB-C
+  YubiKey B), desktop (`ed25519-sk` + applet via `gpg`).
+- **USB sticks:** two (save/restore drill needs a carrier).
+
+## 5. Manual scripts (L5) — summary
+
+Full checklists are executed per release and signed off with dated
+initials in this file's git history. The scripts above (T-M-01..07) are
+walked start-to-finish; any failure opens a work-plan task, never a
+silent pass.
+
+## 6. Traceability — phase exit criteria
+
+| Milestone (work plan) | Green tests |
+|---|---|
+| M1 — vault opens on phone | T-U-01..05, T-U-09, T-D-01..07, T-X-01..03 |
+| M2 — fully usable offline | T-U-07/08, T-M-02 |
+| M3 — two devices converge | T-G-01..06, T-M-03 |
+| M4 — entry travels by QR; offline copy survives save/restore | T-U-06, T-D-08, T-X-04..06, T-M-05 |
+| M5 — daily driver | T-M-04, T-M-06/07, L1–L4 all green |
+
+## 7. Backlog tests (written when the feature lands)
+
+- **Passkey-derived unlock spike:** does `Fido2ApiClient`/Credential
+  Manager return PRF extension outputs with a YubiKey 5 (NFC)? One
+  instrumented probe; result recorded here before any design work.
+- Whole-vault QR export, delta exchange, in-app qrft scanner (deferred
+  features) — suites defined when/if un-deferred.
+
+## 8. Conventions
+
+- Test classes live beside their layer: JVM in `src/test`, device in
+  `src/androidTest`; tags via JUnit `@Tag` (`OpenKeyChain`, `Hardware`,
+  `Network`, `Slow`).
+- Gradle helpers: `gradlew test` (L1 only), `gradlew
+  connectedAndroidTest -Ptags=hardware` (explicit hardware runs) — plain
+  CI (if ever added) runs L1 exclusively.
+- Every bug fix adds the test that would have caught it.
