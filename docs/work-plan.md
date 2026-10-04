@@ -38,8 +38,8 @@ All six spikes run in throwaway code inside `android/` (a stub module or
 | # | Spike | Tasks | Exit criteria | Tests |
 |---|---|---|---|---|
 | S1 | OpenKeyChain crypto round-trip | Lift `OpenPgpClient` + vendored AIDL + manifest visibility from offlinecam into the stub; decrypt the real `10.gpg` via applet (NFC **and** USB); encrypt multi-recipient | Stub decrypts the real vault; stub-written file decrypts with desktop `gpg` | T-D-01..03 |
-| S2 | OpenKeyChain SSH-sign | Sign an SSH auth challenge with a YubiKey-held key via OpenKeyChain's sign API; standalone JSch/Apache-SSHD client test against `git@github.com` | A standalone client authenticates to GitHub by key touch | T-G-01 |
-| S3 | JGit + SSH transport | Pull the Apache SSHD artifact; wire OpenKeyChain-backed auth into JGit; fetch + push a scratch repo | Commit pushed to scratch repo by key touch; non-FF rejection observed | T-G-02..04 |
+| S2 | Keystore SSH identity | Generate a non-exportable ed25519 (API 33+) / RSA-3072 (fallback) key in Android Keystore; export the OpenSSH-format public half; user enrolls it as the scratch repo's deploy key | Public key in OpenSSH wire format produced on-device | T-D-09 |
+| S3 | JGit + SSH transport | JGit transport wired to the Keystore-backed signer (SSHD custom auth or JSch Identity); fetch + push a scratch repo | Commit pushed to scratch repo by key-backed signature; non-FF rejection observed | T-G-02..04 |
 | S4 | Autofill shell | `AutofillService` + dataset building; fill a login form; inline-unlock path | A real login form fills with a stub dataset | T-M-04 |
 | S5 | Vendored qrft generator interop | Vendor `generator.html` + vendor libs as WebView assets; feed the single-entry payload file in; render loop on screen | qrft.org's *scanner* page (desktop) decodes the app-rendered payload back to the original bytes | T-D-08, T-X-04 |
 | S6 | NFC / touch UX | Foreground dispatch patterns, prompt latency, cancel/timeout handling | UX pattern for tap prompts written down (used by Phases 1–3 UI) | T-D-05 |
@@ -82,7 +82,7 @@ local copy with zero network. Exit tests: T-U-07/08, T-M-02.
 
 | Task | Detail | Depends on |
 |---|---|---|
-| SSH transport productionized | OpenKeyChain-backed SSH auth inside JGit; SSHD artifact pinned | S2, S3 |
+| SSH transport productionized | JGit wired to the Keystore-backed SSH identity (SSHD custom auth or JSch Identity); artifact pinned | S2, S3 |
 | Sync action | explicit pull → merge → push; offline banner; queued edits | M2 |
 | Merge + conflict UI | union by `itemUuid` + tombstones; keep-mine/theirs/merge screens; `rev`/`deviceId` bookkeeping | M2 |
 | Enrollment UX | signing key public half → GitHub deploy key flow (QR/copy + instructions) | S2 |
@@ -129,13 +129,36 @@ L1–L4 matrix green.
   FIDO2 API / Credential Manager surface YubiKey PRF (`hmac-secret`)
   outputs to apps? If yes: extra derived-key recipient + optional unlock
   path (SSH still OpenKeyChain-signed; device-bound passkeys rejected)
+- **CCID SSH signing upgrade** — in-app `PSO:SIGN` against the YubiKey
+  [A] subkey so the hardware key signs SSH too (replaces the Keystore
+  git identity; Keystore route ships first)
 - Encrypted single-entry QR mode, web client, background sync,
   credential-manager provider, TUI import command for snapshots
 
+## Target user flows (`user_flows.md`) → plan mapping
+
+The repo-root `user_flows.md` is the target end-state UX. Mapping to
+phases/milestones:
+
+| Flow (user_flows.md) | Plan mapping | Status |
+|---|---|---|
+| Initial setup → **New vault** (storage: GitHub / USB) | Phase 1: empty-envelope creation + storage choice (remote config or local-only mode) | **addition** — small task, lands with Phase 1/2 |
+| Load existing → GitHub info + auth key + encrypt key | M1 (Phase 1): remote config; auth key = per-device Keystore deploy key (S2/S3); encrypt keys = OpenKeyChain applet pairing | planned |
+| Load existing → USB | Phase 4 USB restore (whole-file save/restore) | planned |
+| Load existing → **QRTF import** | Deferred (qrft bandwidth; bulk QR) | backlog — revisit on request |
+| Setup tab (persistent): sync / GitHub info + identities / enroll key / autofill setup / export | Phase 2 settings + Phase 3 sync/enrollment + Phase 4 exports + Phase 5 autofill setup | planned |
+| Password search (main page) + entry options | Phase 2 (TUI-parity search + detail actions) | planned |
+| Autofill interaction (context match → dropdown → fill) | Phase 5 Autofill Service | planned |
+
+Terminology: "auth security key" = the per-device Keystore SSH deploy
+key (git transport); "encrypt security key" = the YubiKey OpenPGP applet
+keys (vault recipients, via OpenKeyChain). Two different roles — the
+setup UI should keep them visually distinct.
+
 ## Risk-driven ordering (why this order)
 
-1. **S2/S3 (SSH + OpenKeyChain signing)** is the only place the design
-   can fail — it gates Phase 3, so it spikes first.
+1. **S2/S3 (Keystore SSH identity + JGit transport)** is the only place
+   the design can still fail — it gates Phase 3, so it spikes early.
 2. **S1** confirms the crypto path but is already mostly de-risked by
    offlinecam's tested client.
 3. **S5** is generator-only with a trivial fallback (single-frame ZXing),

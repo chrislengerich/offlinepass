@@ -66,7 +66,7 @@ on hardware.
 
 | ID | Suite | Covers |
 |---|---|---|
-| T-G-01 | SshSignAuthTest | standalone SSH client authenticates to `git@github.com` via OpenKeyChain-signed challenge |
+| T-G-01 | SshSignAuthTest | SSH client authenticates to `git@github.com` with the Android-Keystore-backed identity (S2/S3) |
 | T-G-02 | JgitSyncTest | fetch of the scratch vault repo |
 | T-G-03 | JgitSyncTest | commit + push by key touch; commit identity/metadata correct |
 | T-G-04 | JgitSyncTest | non-fast-forward push → detected → re-pull/merge path exercised |
@@ -118,6 +118,9 @@ walked start-to-finish; any failure opens a work-plan task, never a
 silent pass.
 
 ## 5b. Run log
+
+**2026-10-04 — Spike S2 decision:**
+- OpenKeyChain sign → PGP-only (see probe above) → **phone git auth moved to Android Keystore SSH keys** (per-device deploy keys; ed25519 API 33+ / RSA-3072 fallback; CCID upgrade deferred to backlog). Design §8 + decision log updated.
 
 **2026-10-04 — Spike S2 probe (same device):**
 - Sign actions: `SIGN` (inline, 313 B) and `DETACHED_SIGN` both **code 1 OK**.

@@ -5,7 +5,8 @@ Date: 2026-10-04
 Scope: native Android client for the linuxpass vault
 Code layout: `linuxpass/android/` — own Gradle project in this repo,
 alongside the desktop TUI.
-Related docs: `docs/work-plan.md` (execution), `docs/testing-plan.md` (QA).
+Related docs: `docs/work-plan.md` (execution), `docs/testing-plan.md` (QA),
+`user_flows.md` (target end-state UX, repo root — mapped in work-plan).
 
 ## 1. Summary
 
@@ -136,13 +137,16 @@ native CRUD + autofill + sync.
 ## 8. GitHub sync over SSH
 
 - Remote: `git@github.com:<user>/<vault>.git` (private).
-- Auth: OpenKeyChain signs the SSH challenge with a YubiKey-held key
-  (sign API); OpenKeyChain's sign flow is invoked from a custom
-  SSHD/JSch auth provider inside JGit. (Precedent: ConnectBot's
-  OpenKeyChain SSH integration.) The public half of the signing key is
-  what GitHub sees.
-- Enrollment: that public key registered on GitHub as a per-repo deploy
-  key (read/write) or account SSH key.
+- Auth: a **per-device SSH key generated non-exportably inside Android
+  Keystore** (ed25519 where the device supports it, RSA-3072 fallback),
+  enrolled on GitHub as a per-repo **deploy key** (read/write). The SSH
+  auth signature is computed by the phone's TEE via
+  `java.security.Signature`; the private key never leaves the device.
+  OpenKeyChain is not part of transport auth. (Spike probe: OpenKeyChain
+  sign actions produce PGP-armored detached signatures — unusable for
+  SSH wire auth; see testing-plan run log.)
+- Enrollment: the Keystore public key (OpenSSH wire format) registered as
+  the vault repo's deploy key; per-device keys are revocable individually.
 - Sync is explicit: pull → decrypt both states → if diverged, union-merge
   by `itemUuid` + tombstones (conflict UI: keep mine / take theirs /
   merge) → encrypt (touch) → commit → push (sign, touch). Non-fast-forward
@@ -327,6 +331,13 @@ summary:
     to apps?). If yes: extra derived-key recipient + optional unlock
     path; SSH signing still needs OpenKeyChain; device-bound passkeys
     rejected (would break the hardware-key invariant).
+13. Phone git auth = **Android Keystore SSH key** as a per-device deploy
+    key (S2 probe showed OpenKeyChain's detached signatures are
+    PGP-armored — unusable for SSH wire auth). Non-exportable, TEE-held,
+    revocable per device; no tokens.
+14. Backlog upgrade: in-app CCID `PSO:SIGN` against the YubiKey's [A]
+    subkey so the hardware key signs SSH too (raw USB/CCID + card
+    protocol; weeks-scale).
 
 ## 17. References
 
