@@ -117,6 +117,22 @@ initials in this file's git history. The scripts above (T-M-01..07) are
 walked start-to-finish; any failure opens a work-plan task, never a
 silent pass.
 
+## 5b. Run log
+
+**2026-10-04 — Spike S2 probe (same device):**
+- Sign actions: `SIGN` (inline, 313 B) and `DETACHED_SIGN` both **code 1 OK**.
+- `DETACHED_SIGN` extra `detached_signature` = **ByteArray(244), armor `-----BEGIN PGP S…`** → PGP packet, **not** SSH-wire format → OpenKeyChain signing cannot produce SSH-auth signatures (hash framing + packet format differ). SSH-auth-via-OpenKeyChain is closed.
+- `GET_SIGN_KEY_ID` picker works (UI-driven selection flaky via adb taps; lookup-based bypass used).
+
+**2026-10-04 — Spike S1 (Pixel 10a, adb-driven; OpenKeyChain `noodlefish@nan.404`, software key on-device):**
+- OpenKeyChain binding + first-use approval flow: PASS (`RemoteRegisterActivity` via PendingIntent; user tap).
+- `GET_KEY_IDS` by email: PASS → `0xCCCB519D89D05EEA`.
+- `GET_KEY` armored export: PASS (566 B).
+- Desktop→phone: stub vault written by desktop `gpg` (noodlefish pub, 1102 B) decrypted on phone: **PASS** (T-X-02 for a software key; 3071 B plaintext).
+- Round-trip on phone: decrypt → re-encrypt (1098 B) → re-decrypt → **MATCH** (T-D-03 essence).
+- **Pending:** T-D-01/02 with the *real applet keys* + real `10.gpg` (OpenKeychain currently holds only noodlefish + Jiji S as software keys; applet keys need pairing). T-X-01 deferred to that run (desktop holds the real secrets; noodlefish self-encryption can't be desktop-decrypted by design).
+- Platform notes: short screen-timeout stalls the flow → `svc power stayon usb`; scoped-storage EACCES on raw `/sdcard` paths → inputs read from the app's external dir; `S1DecryptActivity` stays non-exported, extras forwarded via `MainActivity`.
+
 ## 6. Traceability — phase exit criteria
 
 | Milestone (work plan) | Green tests |

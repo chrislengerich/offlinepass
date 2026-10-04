@@ -87,10 +87,61 @@ class S1DecryptActivity : ComponentActivity() {
         val path = intent.getStringExtra("path")
         val email = intent.getStringExtra("email")
         val exportKey = intent.getStringExtra("exportKey")
+        val probeSign = intent.getStringExtra("probeSign")
         when {
+            probeSign != null -> runSignProbe(probeSign)
             exportKey != null -> runKeyExport(exportKey)
             path != null -> runRoundTrip(File(path), email)
         }
+    }
+
+    /**
+     * Spike S2 probe: pick a sign key, then fire candidate sign actions at
+     * OpenKeychain and log what comes back (the client's Log.d prints the
+     * result code + extras per action).
+     */
+    private fun runSignProbe(email: String) {
+        lifecycleScope.launch {
+            when (val lookup = client.lookupKeyIds(arrayOf(email))) {
+                is OpenPgpClient.KeyLookup.Success -> {
+                    val keyId = lookup.keyIds.first()
+                    setStatus("SIGN PROBE on key 0x%016X".format(keyId))
+                    probeActions(keyId)
+                }
+                is OpenPgpClient.KeyLookup.UserInteraction ->
+                    launchInteraction(lookup.pendingIntent) { runSignProbe(email) }
+                OpenPgpClient.KeyLookup.Error ->
+                    setStatus("SIGN KEY LOOKUP FAILED for \"$email\"")
+            }
+        }
+    }
+
+    private suspend fun probeActions(signKeyId: Long) {
+        val payload = "probe-sign-payload".toByteArray()
+        val candidates = listOf(
+            "org.openintents.openpgp.action.SIGN",
+            "org.openintents.openpgp.action.DETACHED_SIGN",
+            "org.sufficientlysecure.keychain.action.DETACHED_SIGN"
+        )
+        for (action in candidates) {
+            val data = Intent(action).apply {
+                putExtra(OpenPgpClient.EXTRA_SIGN_KEY_ID, signKeyId)
+                putExtra(OpenPgpClient.EXTRA_REQUEST_ASCII_ARMOR, true)
+            }
+            val sink = java.io.ByteArrayOutputStream()
+            val result = client.rawExecute(data, payload.inputStream(), sink)
+            val code = result.getIntExtra(OpenPgpClient.RESULT_CODE, OpenPgpClient.RESULT_CODE_ERROR)
+            val detRaw = result.extras?.get("detached_signature")
+            val detDesc = when (detRaw) {
+                null -> null
+                is String -> "String(${detRaw.length}): ${detRaw.take(48).replace('\n', '|')}"
+                is ByteArray -> "ByteArray(${detRaw.size}): head=${detRaw.take(16).joinToString(" ") { "%02X".format(it) }}"
+                else -> "${detRaw.javaClass.simpleName}: $detRaw"
+            }
+            setStatus("PROBE $action -> code $code, out=${sink.size()} bytes" +
+                (detDesc?.let { ", detached=$it" } ?: ", detached=null"))
+        }
+        setStatus("SIGN PROBE DONE")
     }
 
     // -- automated flows ---------------------------------------------------

@@ -495,6 +495,15 @@ class OpenPgpClient(private val context: Context) {
     }
 
     /** Releases the binding. The client is unusable afterwards. */
+    /**
+     * Raw passthrough for spike probing of undocumented API actions
+     * (S2: which sign action does OpenKeychain accept, and with what
+     * result shape?). Normal app code should use the typed methods.
+     */
+    suspend fun rawExecute(data: Intent, input: InputStream?, output: OutputStream?): Intent =
+        execute(data, input, output)
+
+    /** Releases the binding. The client is unusable afterwards. */
     fun close() {
         scope.cancel()
         connection?.let { runCatching { context.unbindService(it) } }
