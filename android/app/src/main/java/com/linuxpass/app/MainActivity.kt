@@ -127,16 +127,22 @@ class MainActivity : ComponentActivity() {
             contentResolver.openInputStream(uri)?.use { ins ->
                 staged.outputStream().use { ins.copyTo(it) }
             }
-            val restored = when (val r = VaultSession.decryptEnvelope(staged)) {
-                is VaultSession.DecryptEnvelope.Ok -> r.env
-                is VaultSession.DecryptEnvelope.Interaction -> {
-                    launchInteraction(r.pendingIntent); awaitInteraction()
-                    when (val r2 = VaultSession.decryptEnvelope(staged)) {
-                        is VaultSession.DecryptEnvelope.Ok -> r2.env
-                        else -> { status = "Restore decrypt failed."; return }
+            // Card-key decryption needs several OpenKeyChain interactions
+            // (per-key permission, card touch, PIN) — retry deeply.
+            val restored: com.linuxpass.app.vault.Envelope = run {
+                var env: VaultSession.DecryptEnvelope.Ok? = null
+                var guard = 0
+                while (guard++ < 6) {
+                    when (val r = VaultSession.decryptEnvelope(staged)) {
+                        is VaultSession.DecryptEnvelope.Ok -> { env = r; break }
+                        is VaultSession.DecryptEnvelope.Interaction -> {
+                            launchInteraction(r.pendingIntent); awaitInteraction()
+                        }
+                        is VaultSession.DecryptEnvelope.Error ->
+                            { status = "Restore failed: ${r.message}"; return }
                     }
                 }
-                is VaultSession.DecryptEnvelope.Error -> { status = "Restore failed: ${r.message}"; return }
+                env?.env ?: run { status = "Restore decrypt failed after retries."; return }
             }
             val current = if (File(VaultSession.vaultFilePath()).exists())
                 (VaultSession.decryptEnvelope(File(VaultSession.vaultFilePath())) as? VaultSession.DecryptEnvelope.Ok)?.env

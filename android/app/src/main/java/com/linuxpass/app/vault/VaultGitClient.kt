@@ -90,7 +90,6 @@ class VaultGitClient {
                 walk.isRetainBody = true
                 val head = walk.parseCommit(headId)
                 val remote = walk.parseCommit(remoteId)
-                walk.markStart(walk.parseCommit(headId))
                 var remoteReachableFromHead = false
                 val walk2 = RevWalk(repo)
                 walk2.markStart(walk2.parseCommit(headId))
@@ -100,6 +99,7 @@ class VaultGitClient {
                     c = walk2.next()
                 }
                 walk2.dispose()
+                Log.i(TAG, "headVsRemote head=${headId.name.take(7)} remote=${remoteId.name.take(7)} remoteInHead=$remoteReachableFromHead")
                 return when {
                     remoteReachableFromHead -> Divergence.AheadOnly(headId.name)
                     walk.isMergedInto(remote, head) -> Divergence.BehindOnly(remoteId.name)
