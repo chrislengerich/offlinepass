@@ -189,26 +189,57 @@ class PasswordStore:
     def __init__(
         self,
         path: str,
-        gpg_recipient: str | None = None,
+        gpg_recipients: list[str] | None = None,
         use_gpg: bool = True,
         git_dir: str | None = None,
     ):
         self.path = path
-        self.gpg_recipient = gpg_recipient
+        # One or more recipients; the vault is encrypted to all of them so
+        # both the desktop and the phone can open it.
+        self.gpg_recipients = gpg_recipients
         self.use_gpg = use_gpg
         self.git_dir = git_dir or os.path.dirname(os.path.abspath(path))
+        # Envelope bookkeeping shared with the phone client: rev bumps per
+        # save, tombstones survive merges, unknown top-level fields pass
+        # through untouched.
+        self._envelope: dict | None = None
+        self._deleted: set[str] = set()
+        self._device_id = self._load_device_id()
+
+    def _load_device_id(self) -> str:
+        # Stable per clone; untracked marker next to the vault repo.
+        marker = os.path.join(self.git_dir, ".linuxpass-device")
+        try:
+            if os.path.exists(marker):
+                with open(marker) as f:
+                    did = f.read().strip()
+                if did:
+                    return did
+            did = str(uuid.uuid4())
+            with open(marker, "w") as f:
+                f.write(did)
+            return did
+        except OSError:
+            return str(uuid.uuid4())
 
     def load(self) -> list[ProtonItem]:
         if not os.path.exists(self.path):
             return []
         raw = self._read_file()
+        self._envelope = json.loads(raw) if raw.lstrip().startswith("{") else None
+        if isinstance(self._envelope, dict):
+            self._deleted = set(self._envelope.get("deletedItemUuids", []))
         return self._parse_items(raw)
 
     def save(self, items: list[ProtonItem]) -> None:
         envelope = self._build_envelope(items)
         text = json.dumps(envelope, separators=(",", ":"))
         self._write_file(text)
+        # Keep the written envelope so consecutive saves keep bumping rev
+        # (a reload would also see it, but saves may come back-to-back).
+        self._envelope = envelope
         self._git_commit()
+        self.git_push(timeout=45)
 
     def _read_file(self) -> str:
         if self.use_gpg:
@@ -223,12 +254,11 @@ class PasswordStore:
             return f.read()
 
     def _write_file(self, text: str) -> None:
-        if self.use_gpg and self.gpg_recipient:
-            result = subprocess.run(
-                ["gpg", "--encrypt", "--recipient", self.gpg_recipient,
-                 "--output", self.path, "--batch", "--yes"],
-                input=text, capture_output=True, text=True,
-            )
+        if self.use_gpg and self.gpg_recipients:
+            cmd = ["gpg", "--encrypt", "--batch", "--yes", "--output", self.path]
+            for recipient in self.gpg_recipients:
+                cmd += ["--recipient", recipient]
+            result = subprocess.run(cmd, input=text, capture_output=True, text=True)
             if result.returncode != 0:
                 raise RuntimeError(f"GPG encrypt failed: {result.stderr.strip()}")
         else:
@@ -251,18 +281,21 @@ class PasswordStore:
         return items
 
     def _build_envelope(self, items: list[ProtonItem]) -> dict[str, Any]:
-        return {
-            "userId": "local",
-            "version": "1.0",
-            "vaults": {
-                "local": {
-                    "name": "Personal",
-                    "description": "",
-                    "display": {"color": 0, "icon": 0},
-                    "items": [item.to_proton_json() for item in items],
-                }
-            },
-        }
+        # Preserve everything the envelope already carried (rev, deviceId,
+        # tombstones, unknown fields); only the items array and rev are ours.
+        env = dict(self._envelope) if isinstance(self._envelope, dict) else {}
+        env.setdefault("userId", "local")
+        env.setdefault("version", "1.0")
+        vaults = env.get("vaults")
+        if not isinstance(vaults, dict) or "local" not in vaults:
+            vaults = {"local": {"name": "Personal", "description": "",
+                                "display": {"color": 0, "icon": 0}}}
+            env["vaults"] = vaults
+        vaults["local"]["items"] = [item.to_proton_json() for item in items]
+        env["rev"] = int(env.get("rev", 0)) + 1
+        env["deviceId"] = self._device_id
+        env["deletedItemUuids"] = sorted(self._deleted)
+        return env
 
     def _git_commit(self) -> None:
         if not os.path.isdir(os.path.join(self.git_dir, ".git")):
@@ -283,3 +316,20 @@ class PasswordStore:
             capture_output=True, text=True,
         )
         return result.returncode == 0 and "Already up to date" not in result.stdout
+
+    def git_push(self, timeout: int = 45) -> bool:
+        """Best-effort push of the current branch. Non-fatal: a failed push
+        (offline, pending key touch, no upstream) leaves the local commit
+        in place for the next attempt."""
+        if not os.path.isdir(os.path.join(self.git_dir, ".git")):
+            return False
+        env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
+        try:
+            result = subprocess.run(
+                ["git", "-C", self.git_dir, "push", "origin", "HEAD"],
+                capture_output=True, text=True, timeout=timeout, env=env,
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, OSError) as e:
+            print(f"git push skipped: {e}")
+            return False

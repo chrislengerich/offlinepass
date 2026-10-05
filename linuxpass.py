@@ -402,21 +402,38 @@ class TUI:
 def main():
     # Config — override with env vars
     data_path = os.environ.get("LINUXPASS_FILE", os.path.expanduser("~/linuxpass/test_data.json"))
-    gpg_recipient = os.environ.get("LINUXPASS_GPG_RECIPIENT")
+    # Multi-recipient (comma-separated), with back-compat for the single form.
+    recipients = (os.environ.get("LINUXPASS_GPG_RECIPIENTS")
+                  or os.environ.get("LINUXPASS_GPG_RECIPIENT"))
+    recipient_list = (
+        [r.strip() for r in recipients.split(",") if r.strip()]
+        if recipients else None
+    )
     use_gpg = os.environ.get("LINUXPASS_USE_GPG", "0") == "1"
     git_dir = os.environ.get("LINUXPASS_GIT_DIR")
 
     store = PasswordStore(
         path=data_path,
-        gpg_recipient=gpg_recipient,
+        gpg_recipients=recipient_list,
         use_gpg=use_gpg,
         git_dir=git_dir,
     )
 
     try:
+        store.git_pull()  # best-effort sync before use
+    except Exception:
+        pass
+
+    try:
         curses.wrapper(TUI(store).run)
     except KeyboardInterrupt:
         pass
+    finally:
+        try:
+            # The TUI is down: the tty is free for any ssh key touch.
+            store.git_push(timeout=120)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

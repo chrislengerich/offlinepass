@@ -231,6 +231,54 @@ class TestPasswordStore(unittest.TestCase):
         self.assertIn("local", data["vaults"])
         self.assertEqual(len(data["vaults"]["local"]["items"]), 1)
 
+    def test_rev_bumps_per_save(self):
+        self.store.save([ProtonItem(name="X", password="p")])
+        with open(self.tmp.name) as f:
+            rev1 = json.load(f)["rev"]
+        self.store.save([ProtonItem(name="X", password="p")])
+        with open(self.tmp.name) as f:
+            rev2 = json.load(f)["rev"]
+        self.assertEqual(rev2, rev1 + 1)
+
+    def test_device_id_stable(self):
+        self.store.save([ProtonItem(name="X", password="p")])
+        with open(self.tmp.name) as f:
+            d1 = json.load(f)["deviceId"]
+        self.assertTrue(d1)
+        self.store.save([ProtonItem(name="Y", password="p")])
+        with open(self.tmp.name) as f:
+            d2 = json.load(f)["deviceId"]
+        self.assertEqual(d1, d2)
+
+    def test_unknown_fields_preserved(self):
+        with open(self.tmp.name, "w") as f:
+            json.dump({"vaults": {"local": {"items": [], "customMarker": "keep"}}}, f)
+        self.store.load()
+        self.store.save([ProtonItem(name="X", password="p")])
+        with open(self.tmp.name) as f:
+            data = json.load(f)
+        self.assertEqual(data["vaults"]["local"]["customMarker"], "keep")
+
+    def test_tombstones_survive_desktop_save(self):
+        # The phone tombstoned u-B: items lack it, the envelope records it.
+        with open(self.tmp.name, "w") as f:
+            json.dump({
+                "rev": 7,
+                "deletedItemUuids": ["u-B"],
+                "vaults": {"local": {"items": [
+                    ProtonItem(name="A", password="1", item_uuid="u-A").to_proton_json(),
+                ]}},
+            }, f)
+        items = self.store.load()
+        self.assertEqual([i.name for i in items], ["A"])
+        self.store.save(items)
+        with open(self.tmp.name) as f:
+            data = json.load(f)
+        self.assertEqual(data["rev"], 8)
+        self.assertIn("u-B", data["deletedItemUuids"])
+        self.assertNotIn("u-B", [i.get("data", {}).get("metadata", {}).get("itemUuid", "")
+                                 for i in data["vaults"]["local"]["items"]])
+
 
 class TestProtonPassCompat(unittest.TestCase):
     """Verify the JSON format matches what the Android ProtonPassParser expects."""
