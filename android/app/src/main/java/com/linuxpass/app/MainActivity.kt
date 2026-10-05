@@ -73,7 +73,11 @@ class MainActivity : ComponentActivity() {
         var guard = 0
         while (guard++ < 2) {
             when (val r = VaultSession.unlock()) {
-                VaultSession.Result.Success -> return
+                VaultSession.Result.Success -> {
+                    android.widget.Toast.makeText(this, "Vault unlocked", android.widget.Toast.LENGTH_SHORT).show()
+                    if (screen == Screen.SetupChoice) screen = Screen.Search
+                    return
+                }
                 is VaultSession.Result.Interaction -> { launchInteraction(r.pendingIntent); awaitInteraction() }
                 is VaultSession.Result.Error -> { status = r.message; return }
             }
@@ -278,7 +282,13 @@ class MainActivity : ComponentActivity() {
                         status = "Imported ${env.items.size} entries — pick recipients."
                         pickRecipientsUntilDone()
                         status = when (val r = saveLoop(env.items)) {
-                            VaultSession.Result.Success -> "Import complete (rev ${VaultSession.currentRev()})."
+                            VaultSession.Result.Success -> {
+                                android.widget.Toast.makeText(
+                                    this@MainActivity, "Import complete",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                                "Import complete (rev ${VaultSession.currentRev()})."
+                            }
                             else -> "Imported locally; save: $r"
                         }
                         screen = Screen.Search
@@ -288,7 +298,13 @@ class MainActivity : ComponentActivity() {
                     VaultSession.configure(remote, emails)
                     if (pat.isNotBlank()) VaultSession.savePat(pat)
                     status = ""
-                    lifecycleScope.launch { unlockLoop() }
+                    lifecycleScope.launch {
+                        val open = VaultSession.gitOpenOnly()  // explicit network step
+                        if (open is VaultSession.Result.Error) { status = open.message; return@launch }
+                        unlockLoop()
+                        android.widget.Toast.makeText(this@MainActivity, "Vault loaded",
+                            android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 },
                 onLoadUsb = { usbRestoreLauncher.launch(arrayOf("application/octet-stream")) }
             )

@@ -158,35 +158,33 @@ object VaultSession {
      * Opens (clone/fetch, when remote), decrypts, parses. Caller must handle
      * [Result.Interaction] by launching the PendingIntent and calling again.
      */
+    /**
+     * LOCAL-ONLY operation: decrypts the on-disk vault via OpenKeyChain.
+     * No network — syncing happens explicitly (Sync now) or on save.
+     */
     suspend fun unlock(): Result {
         val cfg = config()
-        busy = if (cfg?.remoteUrl != null) "Syncing vault…" else "Opening vault…"
+        if (cfg?.remoteUrl != null && !File(vaultFilePath()).exists()) {
+            return Result.Error("No local vault yet — run Sync now (Setup) to fetch it.")
+        }
+        if (!localVaultFile().exists() && cfg?.remoteUrl == null) {
+            return Result.Error("No vault file — restore or create one first.")
+        }
+        busy = "Decrypting vault… (touch your key)"
         try {
-            return withContext(Dispatchers.IO) {
-                if (cfg?.remoteUrl != null) {
-                    val pat = pat() ?: return@withContext Result.Error("No PAT stored")
-                    VaultGitClient().open(cfg.remoteUrl, pat, gitRoot())
+            val plain = File(appContext.cacheDir, "vault-plain.json")
+            val client = OpenPgpClient(appContext)
+            return when (val r = client.decryptVerify(vaultFile(), plain)) {
+                is OpenPgpClient.DecryptResult.Success -> {
+                    val env = Envelope.fromJson(plain.readText())
+                    rev = env.rev
+                    loadedEnvelope = env
+                    state = State.Unlocked(env.items)
+                    Log.i(TAG, "unlocked: ${env.items.size} items, rev=${env.rev}")
+                    Result.Success
                 }
-                val vaultFile = vaultFile()
-                if (!vaultFile.exists()) {
-                    // New-vault flow: nothing to decrypt yet.
-                    state = State.Unlocked(emptyList())
-                    return@withContext Result.Success
-                }
-                val plain = File(appContext.cacheDir, "vault-plain.json")
-                val client = OpenPgpClient(appContext)
-                return@withContext when (val r = client.decryptVerify(vaultFile, plain)) {
-                    is OpenPgpClient.DecryptResult.Success -> {
-                        val env = Envelope.fromJson(plain.readText())
-                        rev = env.rev
-                        loadedEnvelope = env
-                        state = State.Unlocked(env.items)
-                        Log.i(TAG, "unlocked: ${env.items.size} items, rev=${env.rev}")
-                        Result.Success
-                    }
-                    is OpenPgpClient.DecryptResult.UserInteraction -> Result.Interaction(r.pendingIntent)
-                    is OpenPgpClient.DecryptResult.Error -> Result.Error("Decrypt failed (see logcat)")
-                }
+                is OpenPgpClient.DecryptResult.UserInteraction -> Result.Interaction(r.pendingIntent)
+                is OpenPgpClient.DecryptResult.Error -> Result.Error("Decrypt failed (see logcat)")
             }
         } catch (e: Exception) {
             Log.w(TAG, "unlock failed: ${e.message}")
@@ -358,8 +356,12 @@ object VaultSession {
                 git.open(remote, pat, root)
                 val vaultRelPath = "state/10.gpg"
                 when (val div = git.headVsRemote(root)) {
-                    is VaultGitClient.Divergence.UpToDate ->
+                    is VaultGitClient.Divergence.UpToDate -> {
                         syncStatus = "Already up to date (rev $rev)"
+                        // A fresh clone may carry the vault without the
+                        // session being unlocked yet.
+                        refreshFromVaultFile()
+                    }
                     is VaultGitClient.Divergence.AheadOnly -> {
                         git.pushBranch(remote, pat, root)
                         syncStatus = "Pushed (rev $rev)"
