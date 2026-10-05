@@ -37,8 +37,8 @@ fun SetupChoiceScreen(
     defaultEmails: String,
     prefillPat: String,
     status: String,
-    onNewVault: (remote: String?) -> Unit,
-    onImportProton: (remote: String?, uri: android.net.Uri) -> Unit,
+    onNewVault: (remote: String?, pat: String) -> Unit,
+    onImportProton: (remote: String?, pat: String, uri: android.net.Uri) -> Unit,
     onLoadGitHub: (remote: String, emails: List<String>, pat: String) -> Unit,
     onLoadUsb: () -> Unit
 ) {
@@ -49,7 +49,7 @@ fun SetupChoiceScreen(
 
     val importPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
-    ) { uri -> uri?.let { onImportProton(remote.trim().ifBlank { null }, it) } }
+    ) { uri -> uri?.let { onImportProton(remote.trim().ifBlank { null }, pat.trim(), it) } }
 
     Column(
         modifier = Modifier
@@ -65,14 +65,23 @@ fun SetupChoiceScreen(
         }
 
         if (mode == "new") {
-            Text("New vault — pick recipients from OpenKeyChain after creating.",
+            Text("New vault — recipients are picked from OpenKeyChain after creating/importing.",
                 style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(
                 value = remote, onValueChange = { remote = it },
                 label = { Text("GitHub HTTPS remote (blank = local-only)") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
-            Button(onClick = { onNewVault(remote.trim().ifBlank { null }) }, modifier = Modifier.fillMaxWidth()) {
+            if (remote.isNotBlank()) {
+                OutlinedTextField(
+                    value = pat, onValueChange = { pat = it },
+                    label = { Text("Fine-grained PAT (stored encrypted)") },
+                    singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            Button(onClick = { onNewVault(remote.trim().ifBlank { null }, pat.trim()) }, modifier = Modifier.fillMaxWidth()) {
                 Text("Create empty vault")
             }
             Button(

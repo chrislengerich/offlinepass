@@ -326,6 +326,24 @@ object VaultSession {
         return save(remaining)
     }
 
+    // -- git open without decrypt (new-vault / import flows) -----------------
+
+    suspend fun gitOpenOnly(): Result {
+        val cfg = config() ?: return Result.Error("No config")
+        val remote = cfg.remoteUrl ?: return Result.Success  // local-only: nothing to open
+        val pat = pat() ?: return Result.Error("No PAT stored")
+        busy = "Opening repo…"
+        try {
+            withContext(Dispatchers.IO) { VaultGitClient().open(remote, pat, gitRoot()) }
+            return Result.Success
+        } catch (e: Exception) {
+            Log.w(TAG, "git open failed: ${e.message}")
+            return Result.Error("Repo open failed: ${e.message?.take(60)}")
+        } finally {
+            busy = null
+        }
+    }
+
     /** Fetch + push, with application-level union-merge when the two
      * devices diverged (the M3 convergence path). */
     suspend fun syncNow(): Result {

@@ -241,33 +241,47 @@ class MainActivity : ComponentActivity() {
                     File(getExternalFilesDir(null), "storage-pat.txt").readText().trim()
                 }.getOrDefault(""),
                 status = status,
-                onNewVault = { remote ->
+                onNewVault = { remote, pat ->
                     VaultSession.configure(remote, emptyList())
+                    if (pat.isNotBlank()) VaultSession.savePat(pat)
                     status = ""
                     lifecycleScope.launch {
-                        unlockLoop()               // empty vault (no file yet)
-                        pickRecipientsUntilDone()  // pick recipients in OpenKeyChain
+                        // New vault: git state only (no decrypt of anything),
+                        // then recipients, then the (empty) vault persists on
+                        // first save.
+                        val open = VaultSession.gitOpenOnly()
+                        if (open is VaultSession.Result.Error) { status = open.message; return@launch }
+                        pickRecipientsUntilDone()
+                        screen = Screen.Search
+                        status = "New vault ready — Add entry to begin."
                     }
                 },
-                onImportProton = { remote, uri ->
+                onImportProton = { remote, pat, uri ->
                     VaultSession.configure(remote, emptyList())
+                    if (pat.isNotBlank()) VaultSession.savePat(pat)
                     status = ""
                     lifecycleScope.launch {
-                        unlockLoop()               // empty vault base
-                        // Import: a PLAINTEXT Proton Pass export (no decrypt
-                        // needed) or an encrypted vault (OpenKeyChain path).
                         val staged = File(cacheDir, "import-proton")
                         contentResolver.openInputStream(uri)?.use { ins ->
                             staged.outputStream().use { ins.copyTo(it) }
                         }
+                        // Plaintext Proton export? (No decrypt involved.)
                         val env = Envelope.parseImport(staged.readText())
-                        if (env != null) {
-                            status = "Imported plaintext Proton export (${env.items.size} entries)."
-                            pickRecipientsUntilDone()
-                            saveLoop(env.items)
-                        } else {
-                            restoreLoop(uri)  // encrypted path (decrypt via OpenKeyChain)
+                        if (env == null) {
+                            status = "Not a plaintext Proton Pass export — trying encrypted restore…"
+                            restoreLoop(uri)
+                            return@launch
                         }
+                        val open = VaultSession.gitOpenOnly()
+                        if (open is VaultSession.Result.Error) { status = open.message; return@launch }
+                        VaultSession.adopt(env)
+                        status = "Imported ${env.items.size} entries — pick recipients."
+                        pickRecipientsUntilDone()
+                        status = when (val r = saveLoop(env.items)) {
+                            VaultSession.Result.Success -> "Import complete (rev ${VaultSession.currentRev()})."
+                            else -> "Imported locally; save: $r"
+                        }
+                        screen = Screen.Search
                     }
                 },
                 onLoadGitHub = { remote, emails, pat ->
