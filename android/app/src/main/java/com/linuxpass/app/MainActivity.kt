@@ -419,11 +419,22 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                                 screen = Screen.Qrft(item.itemUuid)
                             }
                         },
-                        onUpdatePassword = {
+                        onSaveChanges = { edited ->
                             lifecycleScope.launch {
-                                item.password = PasswordGen.password()
+                                val items = unlockedItems().map {
+                                    if (it.itemUuid == edited.itemUuid) edited else it
+                                }
+                                status = when (val r = saveLoop(items)) {
+                                    VaultSession.Result.Success -> "Saved (rev ${VaultSession.currentRev()})."
+                                    else -> "Save: $r"
+                                }
+                            }
+                        },
+                        onRegeneratePassword = { newPw ->
+                            lifecycleScope.launch {
+                                item.password = newPw
                                 status = when (val r = saveLoop(unlockedItems())) {
-                                    VaultSession.Result.Success -> "Password updated (rev ${VaultSession.currentRev()})."
+                                    VaultSession.Result.Success -> "Password regenerated (rev ${VaultSession.currentRev()})."
                                     else -> "Save: $r"
                                 }
                             }
@@ -513,6 +524,43 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                     },
                     onClearSigner = { VaultSession.clearSigningKey(); status = "Signer reset to default." }
                 )
+            }
+        }
+    }
+
+    /** Toggle handler: enabling first verifies the device has a biometric /
+     * credential enrolled — none → redirect to enrollment; the user re-toggles
+     * after enrolling. */
+    private fun handleScreenLockToggle(on: Boolean) {
+        if (!on) {
+            VaultSession.setScreenLockRequired(false)
+            status = "Screen lock gate off."
+            return
+        }
+        when (VaultSession.isDeviceCredentialReady()) {
+            androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS -> {
+                VaultSession.setScreenLockRequired(true)
+                status = "Screen lock gate ON — biometric/PIN asked before the key."
+            }
+            androidx.biometric.BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> {
+                try {
+                    startActivity(
+                        Intent(android.provider.Settings.ACTION_BIOMETRIC_ENROLL).apply {
+                            putExtra(
+                                android.provider.Settings.EXTRA_BIOMETRIC_AUTHENTICATORS_ALLOWED,
+                                androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
+                                    or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                            )
+                        }
+                    )
+                    status = "Enroll a biometric/PIN, then toggle screen lock on."
+                } catch (e: Exception) {
+                    startActivity(Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS))
+                    status = "Enroll a screen lock, then toggle screen lock on."
+                }
+            }
+            else -> {
+                status = "Biometrics unavailable on this device — gate not enabled."
             }
         }
     }

@@ -1,40 +1,26 @@
 package com.linuxpass.app.ui
 
-import android.graphics.Bitmap
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.qrcode.QRCodeWriter
 import com.linuxpass.app.vault.ProtonItem
 import com.linuxpass.app.vault.Totp
 import org.json.JSONObject
 
-/** Compact Proton-JSON payload for one entry — the QR Autofill format. */
+/** Compact Proton-JSON payload for one entry — the QRFT export format. */
 fun entryPayload(item: ProtonItem): String = item.toProtonJson().toString()
 
-/** Renders a payload as a QR bitmap with ZXing (kept for qrft frame debugging). */
-fun qrBitmap(payload: String, sizePx: Int = 700): Bitmap {
-    val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, sizePx, sizePx)
-    val bmp = Bitmap.createBitmap(matrix.width, matrix.height, Bitmap.Config.RGB_565)
-    for (y in 0 until matrix.height) for (x in 0 until matrix.width) {
-        bmp.setPixel(x, y, if (matrix[x, y]) 0xFF000000.toInt() else 0xFFFFFFFF.toInt())
-    }
-    return bmp
-}
-
 /**
- * Entry detail: fields, reveal, live TOTP, and the entry options the TUI
- * offers — QR export via the vendored qrft generator, update password,
- * enroll TOTP, delete.
+ * Entry detail: editable fields (username, email, URLs, password), live TOTP,
+ * Save changes, Regenerate password (confirm), Export as QRFT, enroll TOTP,
+ * delete.
  */
 @Composable
 fun EntryDetailScreen(
@@ -43,16 +29,27 @@ fun EntryDetailScreen(
     busy: String?,
     onBack: () -> Unit,
     onExportQr: () -> Unit,
-    onUpdatePassword: () -> Unit,
+    onSaveChanges: (ProtonItem) -> Unit,
+    onRegeneratePassword: (String) -> Unit,
     onEnrollTotp: (String) -> Unit,
     onDelete: () -> Unit
 ) {
+    // Editable copies — applied to the item only on Save.
+    var username by remember(item.itemUuid) { mutableStateOf(item.username) }
+    var email by remember(item.itemUuid) { mutableStateOf(item.email) }
+    var urls by remember(item.itemUuid) { mutableStateOf(item.urls.joinToString(", ")) }
+    var password by remember(item.itemUuid) { mutableStateOf(item.password) }
+    var showPassword by remember { mutableStateOf(false) }
+
+    val dirty = username != item.username || email != item.email ||
+        urls != item.urls.joinToString(", ") || password != item.password
+
+    var showRegenConfirm by remember { mutableStateOf(false) }
     var revealed by remember { mutableStateOf(false) }
     var totp by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var showTotpEntry by remember { mutableStateOf(false) }
     var totpInput by remember { mutableStateOf("") }
 
-    // Live TOTP refresh.
     if (item.totpUri.isNotBlank()) {
         LaunchedEffect(item.totpUri) {
             while (true) {
@@ -63,35 +60,70 @@ fun EntryDetailScreen(
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(androidx.compose.foundation.rememberScrollState())
+            .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("← Back") }
             Text(item.displayName, style = MaterialTheme.typography.titleLarge)
         }
-        Text("Username: ${item.identity.ifBlank { "-" }}")
-        Text("Email: ${item.email.ifBlank { "-" }}")
-        Text("URLs: ${item.urls.joinToString(", ").ifBlank { "-" }}")
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Password: ${if (revealed) item.password else "•".repeat(item.password.length)}")
-            TextButton(onClick = { revealed = !revealed }) { Text(if (revealed) "Hide" else "Reveal") }
-        }
+        OutlinedTextField(
+            value = username, onValueChange = { username = it },
+            label = { Text("Username") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = email, onValueChange = { email = it },
+            label = { Text("Email") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = urls, onValueChange = { urls = it },
+            label = { Text("URLs (comma-separated)") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = password, onValueChange = { password = it },
+            label = { Text("Password") }, singleLine = true,
+            visualTransformation = if (showPassword) VisualTransformation.None
+                                   else PasswordVisualTransformation(),
+            trailingIcon = {
+                TextButton(onClick = { showPassword = !showPassword }) {
+                    Text(if (showPassword) "Hide" else "Show")
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Button(
+            onClick = {
+                onSaveChanges(item.copy(
+                    username = username.trim(),
+                    email = email.trim(),
+                    password = password,
+                    urls = urls.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                ))
+            },
+            enabled = dirty && busy == null,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Save changes") }
+        if (dirty) Text("Unsaved changes — Save to persist.", style = MaterialTheme.typography.bodySmall)
+
         if (totp != null) {
             val (code, remaining) = totp!!
             Text("TOTP: $code  (${remaining}s)", style = MaterialTheme.typography.titleMedium)
-            LinearProgressIndicator(
-                progress = { remaining.toFloat() / 30f },
-                modifier = Modifier.fillMaxWidth()
-            )
         }
-        if (item.note.isNotBlank()) Text("Note: ${item.note}")
+        if (item.note.isNotBlank()) Text("Note: ${item.note}", style = MaterialTheme.typography.bodySmall)
 
         HorizontalDivider()
+        Button(onClick = { showRegenConfirm = true }, modifier = Modifier.fillMaxWidth()) {
+            Text("Regenerate password")
+        }
         Button(onClick = onExportQr, modifier = Modifier.fillMaxWidth()) {
             Text("Export as QRFT")
         }
-        Button(onClick = onUpdatePassword, modifier = Modifier.fillMaxWidth()) { Text("Update password") }
         if (item.totpUri.isBlank()) {
             Button(onClick = { showTotpEntry = true }, modifier = Modifier.fillMaxWidth()) {
                 Text("Enroll TOTP")
@@ -105,6 +137,25 @@ fun EntryDetailScreen(
         if (busy != null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
 
+        if (showRegenConfirm) {
+            AlertDialog(
+                onDismissRequest = { showRegenConfirm = false },
+                title = { Text("Regenerate password?") },
+                text = { Text("The current password is replaced by a generated one. "
+                    + "Save the entry to persist it.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showRegenConfirm = false
+                        val newPw = com.linuxpass.app.vault.PasswordGen.password()
+                        password = newPw
+                        onRegeneratePassword(newPw)
+                    }) { Text("Regenerate") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showRegenConfirm = false }) { Text("Cancel") }
+                }
+            )
+        }
         if (showTotpEntry) {
             OutlinedTextField(
                 value = totpInput,
