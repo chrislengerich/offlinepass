@@ -13,9 +13,35 @@ Native Android client for the linuxpass vault (design:
 | S4 | Autofill | **PASS** — service enabled, datasets offered, form filled |
 | S5 | Vendored qrft generator interop | **PASS** — payload prefilled, sender auto-starts in WebView |
 | S6 | NFC / touch UX timing | pending (needs the real YubiKey applet flow) |
+
+## TODOs
+
+- [ ] **Real-applet-keys pass** — import `real-keys.pub` into the phone's OpenKeyChain, pair the jiji key (USB OTG), run unlock/CRUD against the real 192 KB vault; verify desktop `gpg --list-packets` ↔ recipients-ledger parity (T-X-01/03)
+- [ ] **USB restore drill on a diverged snapshot** — restore a stale rev over a newer local state; confirm the union-merge conflict path
+- [ ] **Sign-key picker UX polish** — dedicated signing key (GET_SIGN_KEY_ID) is wired; document/verify rotation (design decision log #15)
+- [ ] **Keystore-SSH / CCID git auth upgrade** — per-device deploy keys (built: `SshKeyManager`) or in-app CCID `PSO:SIGN`; PAT/HTTPS ships for now
+- [ ] **PAT hardening** — rotation policy/expiry reminders; GrapheneOS network-toggle note
+- [ ] **QRFT variants** — encrypted single-entry export (vs plaintext); whole-vault transfer (deferred: bandwidth)
+
+## Next up (later)
+
+- [ ] **E2E test to the Linux password manager** — qrft password transfer to a low-dependency computer: phone → QRFT export → qrft.org scanner on a bare machine → entry file → decrypt/open with the desktop flow; exercise the whole chain offline.
 | S4 | Autofill shell | not started |
 | S5 | Vendored qrft generator interop | not started |
 | S6 | NFC / touch UX timing | pending (needs the real YubiKey applet flow) |
+
+## TODOs
+
+- [ ] **Real-applet-keys pass** — import `real-keys.pub` into the phone's OpenKeyChain, pair the jiji key (USB OTG), run unlock/CRUD against the real 192 KB vault; verify desktop `gpg --list-packets` ↔ recipients-ledger parity (T-X-01/03)
+- [ ] **USB restore drill on a diverged snapshot** — restore a stale rev over a newer local state; confirm the union-merge conflict path
+- [ ] **Sign-key picker UX polish** — dedicated signing key (GET_SIGN_KEY_ID) is wired; document/verify rotation (design decision log #15)
+- [ ] **Keystore-SSH / CCID git auth upgrade** — per-device deploy keys (built: `SshKeyManager`) or in-app CCID `PSO:SIGN`; PAT/HTTPS ships for now
+- [ ] **PAT hardening** — rotation policy/expiry reminders; GrapheneOS network-toggle note
+- [ ] **QRFT variants** — encrypted single-entry export (vs plaintext); whole-vault transfer (deferred: bandwidth)
+
+## Next up (later)
+
+- [ ] **E2E test to the Linux password manager** — qrft password transfer to a low-dependency computer: phone → QRFT export → qrft.org scanner on a bare machine → entry file → decrypt/open with the desktop flow; exercise the whole chain offline.
 
 ## On-device storage & encryption
 
