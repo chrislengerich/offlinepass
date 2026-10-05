@@ -320,7 +320,34 @@ class MainActivity : ComponentActivity() {
                     },
                     onForget = { VaultSession.forgetConfig(); screen = Screen.SetupChoice },
                     patSave = { VaultSession.savePat(it); status = "PAT stored (encrypted)." },
-                    autofillEnabled = isAutofillEnabled()
+                    autofillEnabled = isAutofillEnabled(),
+                    recipientIds = VaultSession.recipientKeyIds(),
+                    onAddRecipient = {
+                        lifecycleScope.launch {
+                            var guard = 0
+                            while (guard++ < 5) {
+                                when (val r = VaultSession.pickRecipient()) {
+                                    VaultSession.Result.Success -> {
+                                        VaultSession.lastPickedKeyId?.let { id ->
+                                            VaultSession.setRecipientKeyIds(
+                                                (VaultSession.recipientKeyIds() + id).distinct()
+                                            )
+                                            status = "Recipient added: 0x%016X".format(id)
+                                        }
+                                        return@launch
+                                    }
+                                    is VaultSession.Result.Interaction -> {
+                                        launchInteraction(r.pendingIntent); awaitInteraction()
+                                    }
+                                    is VaultSession.Result.Error -> { status = "Recipient: ${r.message}"; return@launch }
+                                }
+                            }
+                        }
+                    },
+                    onRemoveRecipient = { id ->
+                        VaultSession.setRecipientKeyIds(VaultSession.recipientKeyIds() - id)
+                        status = "Recipient removed."
+                    }
                 )
             }
         }

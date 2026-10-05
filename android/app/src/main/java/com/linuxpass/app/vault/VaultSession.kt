@@ -41,6 +41,7 @@ object VaultSession {
     )
 
     private const val TAG = "VaultSession"
+    private val PICK_SENTINEL = "pick-recipient@linuxpass.local"
     private lateinit var appContext: Context
 
     var state by mutableStateOf<State>(State.Locked)
@@ -72,8 +73,40 @@ object VaultSession {
         val prefs = prefs()
         val remote = prefs.getString("remoteUrl", null)
         val emails = prefs.getString("recipientEmails", null)?.split(",")?.filter { it.isNotBlank() }
-        if (remote == null && emails == null) return null
+        val ids = prefs.getString("recipientKeyIds", null)?.split(",")?.mapNotNull { it.toLongOrNull() }
+        if (remote == null && emails == null && ids == null) return null
         return Config(remote, emails ?: emptyList(), deviceId())
+    }
+
+    fun recipientKeyIds(): List<Long> =
+        prefs().getString("recipientKeyIds", null)
+            ?.split(",")?.mapNotNull { it.toLongOrNull() } ?: emptyList()
+
+    fun setRecipientKeyIds(ids: List<Long>) {
+        prefs().edit().putString("recipientKeyIds", ids.joinToString(",")).apply()
+    }
+
+    var lastPickedKeyId: Long? = null
+        private set
+
+    /**
+     * Recipient PICK via OpenKeyChain's own keyring UI: a lookup for an
+     * unknown user id raises the key-selection screen; the picked key comes
+     * back as its key id (in [lastPickedKeyId]). Returns the picked id, or
+     * Interaction for the UI loop while the picker is up.
+     */
+    suspend fun pickRecipient(): Result {
+        val client = OpenPgpClient(appContext)
+        return when (val lookup = client.lookupKeyIds(arrayOf(PICK_SENTINEL))) {
+            is OpenPgpClient.KeyLookup.Success -> {
+                if (lookup.keyIds.isNotEmpty()) {
+                    lastPickedKeyId = lookup.keyIds.first()
+                    Result.Success
+                } else Result.Error("Pick returned no key")
+            }
+            is OpenPgpClient.KeyLookup.UserInteraction -> Result.Interaction(lookup.pendingIntent)
+            is OpenPgpClient.KeyLookup.Error -> Result.Error("Key lookup failed")
+        }
     }
 
     fun deviceId(): String {
@@ -178,8 +211,8 @@ object VaultSession {
                 env.items.sortBy { it.displayName.lowercase() }
                 val client = OpenPgpClient(appContext)
 
-                var keyIds = cachedRecipientKeyIds()
-                if (keyIds == null) {
+                var keyIds = cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()
+                if (keyIds.isEmpty() && cfg.recipientEmails.isNotEmpty()) {
                     when (val lookup = client.lookupKeyIds(cfg.recipientEmails.toTypedArray())) {
                         is OpenPgpClient.KeyLookup.Success -> {
                             keyIds = lookup.keyIds
@@ -192,6 +225,9 @@ object VaultSession {
                         is OpenPgpClient.KeyLookup.Error ->
                             return@withContext Result.Error("Recipient key lookup failed")
                     }
+                }
+                if (keyIds.isEmpty()) {
+                    return@withContext Result.Error("No recipients — add one in Setup (OpenKeyChain picker)")
                 }
 
                 val plain = File(appContext.cacheDir, "vault-plain-next.json")
@@ -249,6 +285,32 @@ object VaultSession {
         prefs().getString("recipientKeyIds", null)
             ?.split(",")?.mapNotNull { it.toLongOrNull() }?.toLongArray()
             ?.takeIf { it.isNotEmpty() }
+
+    /**
+     * Verifies each recipient email resolves to a key in OpenKeyChain.
+     * Returns (resolved map, missing list). Interaction surfaces as
+     * Interaction (OpenKeyChain's own key picker) for the UI to launch.
+     */
+    suspend fun resolveRecipients(
+        emails: List<String>,
+        client: OpenPgpClient
+    ): Triple<Map<String, Long>, List<String>, android.app.PendingIntent?> {
+        val resolved = mutableMapOf<String, Long>()
+        val missing = mutableListOf<String>()
+        for (email in emails) {
+            when (val lookup = client.lookupKeyIds(arrayOf(email))) {
+                is OpenPgpClient.KeyLookup.Success -> {
+                    if (lookup.keyIds.isNotEmpty()) resolved[email] = lookup.keyIds.first()
+                    else missing += email
+                }
+                is OpenPgpClient.KeyLookup.UserInteraction -> {
+                    return Triple(resolved, missing, lookup.pendingIntent)
+                }
+                is OpenPgpClient.KeyLookup.Error -> missing += email
+            }
+        }
+        return Triple(resolved, missing, null)
+    }
 
     // -- helpers for UI (USB save/restore, QR export) -----------------------
 

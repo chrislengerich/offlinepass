@@ -23,7 +23,10 @@ fun SetupTabScreen(
     onFakeLogin: () -> Unit,
     onForget: () -> Unit,
     patSave: (String) -> Unit,
-    autofillEnabled: Boolean
+    autofillEnabled: Boolean,
+    recipientIds: List<Long>,
+    onAddRecipient: () -> Unit,
+    onRemoveRecipient: (Long) -> Unit
 ) {
     val cfg = VaultSession.config()
     var patInput by remember { mutableStateOf("") }
@@ -36,11 +39,22 @@ fun SetupTabScreen(
             Text("Setup", style = MaterialTheme.typography.titleLarge)
         }
         Text("Remote: ${cfg?.remoteUrl ?: "(none — local-only)"}")
-        Text("Recipients: ${cfg?.recipientEmails?.joinToString(", ") ?: "-"}")
         Text("Device: ${cfg?.deviceId?.take(8) ?: "-"}   Rev: ${VaultSession.currentRev()}")
         if (cfg?.remoteUrl != null) {
             Text("Sync: ${VaultSession.syncStatus ?: "not synced this session"}",
                 style = MaterialTheme.typography.bodySmall)
+        }
+        HorizontalDivider()
+        Text("Recipients (from OpenKeyChain picker)", style = MaterialTheme.typography.titleSmall)
+        if (recipientIds.isEmpty()) Text("(none — add one before saving)", style = MaterialTheme.typography.bodySmall)
+        recipientIds.forEach { id ->
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("0x%016X".format(id), modifier = Modifier.weight(1f))
+                TextButton(onClick = { onRemoveRecipient(id) }) { Text("Remove") }
+            }
+        }
+        Button(onClick = onAddRecipient, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Add recipient (pick in OpenKeyChain)")
         }
         HorizontalDivider()
         Button(onClick = onTestSync, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
