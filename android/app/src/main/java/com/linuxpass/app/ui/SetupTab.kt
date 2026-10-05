@@ -38,6 +38,10 @@ fun SetupTabScreen(
         Text("Remote: ${cfg?.remoteUrl ?: "(none — local-only)"}")
         Text("Recipients: ${cfg?.recipientEmails?.joinToString(", ") ?: "-"}")
         Text("Device: ${cfg?.deviceId?.take(8) ?: "-"}   Rev: ${VaultSession.currentRev()}")
+        if (cfg?.remoteUrl != null) {
+            Text("Sync: ${VaultSession.syncStatus ?: "not synced this session"}",
+                style = MaterialTheme.typography.bodySmall)
+        }
         HorizontalDivider()
         Button(onClick = onTestSync, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Sync now (fetch/push)")
@@ -59,7 +63,10 @@ fun SetupTabScreen(
             Text("Open fake login (autofill test)")
         }
         HorizontalDivider()
-        Text("PAT rotation (stored encrypted)", style = MaterialTheme.typography.titleSmall)
+        Text(
+            "PAT: ${if (VaultSession.hasPat()) "stored (encrypted in Android Keystore)" else "not stored"}",
+            style = MaterialTheme.typography.titleSmall
+        )
         OutlinedTextField(
             value = patInput, onValueChange = { patInput = it },
             label = { Text("New fine-grained PAT") }, singleLine = true,

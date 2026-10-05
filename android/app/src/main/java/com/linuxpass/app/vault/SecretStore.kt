@@ -101,7 +101,7 @@ class SecretStore(context: Context) {
         private const val TAG_BITS = 128
 
         /** The preference filename; also the externally-known storage name. */
-        const val KEYS = "offlinecam_secret_keys"
+        const val KEYS = "linuxpass_secret_keys"
 
         /** The repo credential this store keeps. */
         /** The camera's repo token: read and write, because it pushes. */

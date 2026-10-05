@@ -48,6 +48,10 @@ object VaultSession {
     var busy by mutableStateOf<String?>(null)
         private set
 
+    /** Human-readable sync state, shown above the Sync-now button. */
+    var syncStatus by mutableStateOf<String?>(null)
+        private set
+
     /** Envelope revision of the currently-open vault; bumped on each save. */
     private var rev: Long = 0
 
@@ -206,10 +210,12 @@ object VaultSession {
                     val pat = pat() ?: return@withContext Result.Error("No PAT stored")
                     try {
                         VaultGitClient().commitAndPush(cfg.remoteUrl, pat, gitRoot(), "Update 10.gpg (rev ${env.rev})")
+                        syncStatus = "Pushed rev ${env.rev}"
                     } catch (e: Exception) {
                         // The encrypted file is committed locally; the push
                         // retries on the next save/sync.
                         Log.w(TAG, "push failed (kept local commit): ${e.message}")
+                        syncStatus = "Saved locally; push pending"
                         return@withContext Result.Error("Saved locally; push failed: ${e.message}")
                     }
                 }
@@ -252,6 +258,7 @@ object VaultSession {
             withContext(Dispatchers.IO) {
                 VaultGitClient().commitAndPush(remote, pat, gitRoot(), "sync")
             }
+            syncStatus = "Synced (rev $rev)"
             return Result.Success
         } catch (e: Exception) {
             return Result.Error("${e.javaClass.simpleName}: ${e.message}")

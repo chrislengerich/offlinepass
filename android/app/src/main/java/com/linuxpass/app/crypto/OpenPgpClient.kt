@@ -62,6 +62,8 @@ class OpenPgpClient(private val context: Context) {
         /** Retrieves the whole public key for [EXTRA_KEY_ID] into the output pipe. */
         const val ACTION_GET_KEY = "org.openintents.openpgp.action.GET_KEY"
         const val ACTION_GET_SIGN_KEY_ID = "org.openintents.openpgp.action.GET_SIGN_KEY_ID"
+    /** Detached PGP signature; result extra `detached_signature` (armored bytes). */
+    const val ACTION_DETACHED_SIGN = "org.openintents.openpgp.action.DETACHED_SIGN"
 
         const val EXTRA_API_VERSION = "api_version"
         const val EXTRA_USER_IDS = "user_ids"
@@ -502,6 +504,24 @@ class OpenPgpClient(private val context: Context) {
      */
     suspend fun rawExecute(data: Intent, input: InputStream?, output: OutputStream?): Intent =
         execute(data, input, output)
+
+    /**
+     * Detached PGP signature over [data], armored — OpenKeyChain returns it
+     * in the `detached_signature` extra (the output pipe stays empty for
+     * this action). Returns the ASCII-armored signature block, or null.
+     */
+    suspend fun signDetached(data: ByteArray, keyId: Long): String? {
+        if (!connect()) return null
+        val data2 = Intent(ACTION_DETACHED_SIGN).apply {
+            putExtra(EXTRA_SIGN_KEY_ID, keyId)
+            putExtra(EXTRA_REQUEST_ASCII_ARMOR, true)
+        }
+        val sink = ByteArrayOutputStream()
+        val result = execute(data2, data.inputStream(), sink)
+        if (result.getIntExtra(RESULT_CODE, RESULT_CODE_ERROR) != RESULT_CODE_SUCCESS) return null
+        val raw = result.extras?.get("detached_signature") as? ByteArray ?: return null
+        return String(raw, Charsets.UTF_8)
+    }
 
     /** Releases the binding. The client is unusable afterwards. */
     fun close() {
