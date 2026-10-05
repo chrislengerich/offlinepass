@@ -64,6 +64,8 @@ class OpenPgpClient(private val context: Context) {
         const val ACTION_GET_SIGN_KEY_ID = "org.openintents.openpgp.action.GET_SIGN_KEY_ID"
     /** Detached PGP signature; result extra `detached_signature` (armored bytes). */
     const val ACTION_DETACHED_SIGN = "org.openintents.openpgp.action.DETACHED_SIGN"
+    /** OpenKeychain's error parcelable (id + message) on failure results. */
+    const val RESULT_ERROR = "error"
 
         const val EXTRA_API_VERSION = "api_version"
         const val EXTRA_USER_IDS = "user_ids"
@@ -251,12 +253,17 @@ class OpenPgpClient(private val context: Context) {
                 // off the main thread via Dispatchers.IO.
                 val result = api.execute(data, inputFd, pipeId)
                 pump?.join()
-                // A lookup that silently comes back as an error is the one
-                // failure this app cannot recover from by retrying, so the code
-                // and the extras behind it are worth seeing in the log.
-                Log.d(
+                // The result carries everything the caller needs to diagnose
+                // an interaction cycle: on code 2 the PendingIntent to launch;
+                // on any failure, OpenKeychain's OpenPgpError (id + message).
+                val code = result.getIntExtra(RESULT_CODE, RESULT_CODE_ERROR)
+                val err = runCatching {
+                    result.getParcelableExtra<Parcelable>(RESULT_ERROR) as? org.openintents.openpgp.OpenPgpError
+                }.getOrNull()
+                Log.i(
                     TAG,
-                    "${data.action}: code ${result.getIntExtra(RESULT_CODE, RESULT_CODE_ERROR)} " +
+                    "${data.action}: code $code " +
+                        (err?.let { "error id=${it.errorId} msg='${it.message}' " } ?: "") +
                         "extras ${result.extras?.keySet()}"
                 )
                 result
