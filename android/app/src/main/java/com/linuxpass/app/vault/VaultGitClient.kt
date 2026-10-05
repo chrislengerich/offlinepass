@@ -64,14 +64,21 @@ class VaultGitClient {
         pat: String,
         root: File,
         message: String,
-        branch: String = "main"
+        branch: String = "main",
+        signer: org.eclipse.jgit.lib.Signer? = null
     ): String? {
         open(remote, pat, root, branch)
         Git.open(root).use { git ->
             git.add().addFilepattern(".").call()
             if (!git.status().call().isClean) {
                 val ident = PersonIdent("linuxpass-android", "linuxpass@android.local")
-                git.commit().setAuthor(ident).setCommitter(ident).setMessage(message).call()
+                val cmd = git.commit().setAuthor(ident).setCommitter(ident).setMessage(message)
+                if (signer != null) {
+                    // Signing with the vault identity: desktop
+                    // `git log --show-signature` verifies it.
+                    cmd.setSign(true).setSigner(signer)
+                }
+                cmd.call()
             } else {
                 Log.i(TAG, "Tree clean: pushing any locally-committed-but-unpushed head")
             }

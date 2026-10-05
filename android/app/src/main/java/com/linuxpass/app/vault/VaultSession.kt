@@ -209,8 +209,23 @@ object VaultSession {
                     busy = "Pushing…"
                     val pat = pat() ?: return@withContext Result.Error("No PAT stored")
                     try {
-                        VaultGitClient().commitAndPush(cfg.remoteUrl, pat, gitRoot(), "Update 10.gpg (rev ${env.rev})")
-                        syncStatus = "Pushed rev ${env.rev}"
+                        // Sign with the same identity that receives the vault
+                        // (falls back to an unsigned commit if that key cannot sign).
+                        val signer = OpenKeyChainSigner(client, keyIds.first())
+                        try {
+                            VaultGitClient().commitAndPush(
+                                cfg.remoteUrl, pat, gitRoot(),
+                                "Update 10.gpg (rev ${env.rev})", signer = signer
+                            )
+                            syncStatus = "Pushed rev ${env.rev} (signed)"
+                        } catch (e: Exception) {
+                            Log.w(TAG, "signed commit failed (${e.message}); retrying unsigned")
+                            VaultGitClient().commitAndPush(
+                                cfg.remoteUrl, pat, gitRoot(),
+                                "Update 10.gpg (rev ${env.rev})"
+                            )
+                            syncStatus = "Pushed rev ${env.rev} (unsigned)"
+                        }
                     } catch (e: Exception) {
                         // The encrypted file is committed locally; the push
                         // retries on the next save/sync.
