@@ -422,6 +422,10 @@ object VaultSession {
                 val root = gitRoot()
                 git.open(remote, pat, root)
                 val vaultRelPath = "state/10.gpg"
+                // Commit a stranded/dirty vault file FIRST so it participates
+                // in the divergence check + push (a failed push leaves it
+                // uncommitted; without this it never reaches the remote).
+                git.commitDirty(root, "Update 10.gpg (pre-sync)", null)
                 when (val div = git.headVsRemote(root)) {
                     is VaultGitClient.Divergence.UpToDate -> {
                         syncStatus = "Already up to date (rev $rev)"

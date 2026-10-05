@@ -182,9 +182,25 @@ class VaultGitClient {
         }
     }
 
-    /** Convenience (spikes/simple callers): open → add-all → commit → push.
-     * The push THROWS on rejection, so a rejected push is never reported as
-     * success; the caller decides how to merge. */
+    /** Commits the working tree when dirty (used before sync so stranded
+     * vault files get committed + pushed). Returns the new head, or null
+     * when the tree was already clean. */
+    fun commitDirty(root: File, message: String, signer: org.eclipse.jgit.lib.Signer? = null): String? {
+        Git.open(root).use { git ->
+            git.add().addFilepattern(".").call()
+            if (git.status().call().isClean) return null
+            val ident = PersonIdent("linuxpass-android", "linuxpass@android.local")
+            val cmd = git.commit().setAuthor(ident).setCommitter(ident).setMessage(message)
+            if (signer != null) cmd.setSign(true).setSigner(signer)
+            cmd.call()
+            return git.repository.exactRef(Constants.HEAD)?.objectId?.name?.take(7)
+        }
+    }
+
+    /** Convenience (spikes/simple callers): open → add-all → commit (with a
+     * signed→unsigned fallback when a signer is given) → push. The push
+     * THROWS on rejection; the commit never reports a rejected push as
+     * success. */
     fun commitAndPush(
         remote: String,
         pat: String,
@@ -196,11 +212,18 @@ class VaultGitClient {
         open(remote, pat, root, branch)
         Git.open(root).use { git ->
             git.add().addFilepattern(".").call()
+            val ident = PersonIdent("linuxpass-android", "linuxpass@android.local")
             if (!git.status().call().isClean) {
-                val ident = PersonIdent("linuxpass-android", "linuxpass@android.local")
                 val cmd = git.commit().setAuthor(ident).setCommitter(ident).setMessage(message)
                 if (signer != null) cmd.setSign(true).setSigner(signer)
-                cmd.call()
+                try {
+                    cmd.call()
+                } catch (e: Exception) {
+                    if (signer == null) throw e
+                    // Signing failed (e.g. the key cannot sign): retry unsigned.
+                    Log.w(TAG, "signed commit failed: ${e.message} — retrying unsigned", e)
+                    git.commit().setAuthor(ident).setCommitter(ident).setMessage(message).call()
+                }
             } else {
                 Log.i(TAG, "Tree clean: pushing any locally-committed-but-unpushed head")
             }
@@ -208,9 +231,6 @@ class VaultGitClient {
             return git.repository.exactRef(Constants.HEAD)?.objectId?.name?.take(7)
         }
     }
-
-    fun readLocalHeadFile(root: File, path: String): ByteArray? =
-        readFileAt(root, Constants.HEAD + ":" + path)
 
     private fun ensureBranch(root: File, branch: String) {
         val git = Git.open(root)
