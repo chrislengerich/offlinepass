@@ -381,6 +381,25 @@ object VaultSession {
         return Triple(resolved, missing, null)
     }
 
+    // -- screen-lock gate (default OFF) ---------------------------------------
+
+    var screenLockOn by mutableStateOf(false)
+        private set
+
+    fun screenLockRequired(): Boolean =
+        prefs().getBoolean("screenLockRequired", false).also { screenLockOn = it }
+
+    fun setScreenLockRequired(on: Boolean) {
+        prefs().edit().putBoolean("screenLockRequired", on).apply()
+        screenLockOn = on
+    }
+
+    fun isDeviceCredentialReady(): Int =
+        androidx.biometric.BiometricManager.from(appContext).canAuthenticate(
+            androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
+                or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        )
+
     // -- helpers for UI (USB save/restore, QR export) -----------------------
 
     fun vaultFilePath(): String = vaultFile().absolutePath

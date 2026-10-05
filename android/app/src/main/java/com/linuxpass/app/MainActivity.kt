@@ -42,7 +42,7 @@ import kotlin.coroutines.resume
  * Spike extras (path/email/exportKey/probeSign/autostart) forward to the
  * spike activities so the earlier spikes keep working.
  */
-class MainActivity : ComponentActivity() {
+class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     private var screen by mutableStateOf<Screen>(Screen.SetupChoice)
     private var status by mutableStateOf("")
@@ -69,7 +69,43 @@ class MainActivity : ComponentActivity() {
         }
 
     /** Unlock: one interaction retry is usually enough. */
+    /** The optional screen-lock gate: a device biometric/PIN prompt BEFORE
+     * the hardware-key interaction (only when enabled in Setup). */
+    private suspend fun biometricGate(): Boolean {
+        if (!VaultSession.screenLockRequired()) return true
+        return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+            val prompt = androidx.biometric.BiometricPrompt(
+                this,
+                androidx.core.content.ContextCompat.getMainExecutor(this),
+                object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(
+                        result: androidx.biometric.BiometricPrompt.AuthenticationResult
+                    ) {
+                        cont.resume(true)
+                    }
+                    override fun onAuthenticationError(code: Int, errString: CharSequence) {
+                        Log.w(TAG, "screen-lock gate: $code $errString")
+                        cont.resume(false)
+                    }
+                }
+            )
+            val info = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Unlock linuxpass")
+                .setSubtitle("Device lock required before the security key")
+                .setAllowedAuthenticators(
+                    androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
+                        or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                )
+                .build()
+            prompt.authenticate(info)
+        }
+    }
+
     private suspend fun unlockLoop() {
+        if (!biometricGate()) {
+            status = "Screen lock failed — unlock aborted."
+            return
+        }
         var guard = 0
         while (guard++ < 2) {
             when (val r = VaultSession.unlock()) {
@@ -453,6 +489,8 @@ class MainActivity : ComponentActivity() {
                     onUsbSave = { usbSaveLauncher.launch("linuxpass-vault-rev${VaultSession.currentRev()}.gpg") },
                     onUsbRestore = { usbRestoreLauncher.launch(arrayOf("application/octet-stream")) },
                     onEnableAutofill = { requestAutofillService() },
+                    screenLockOn = VaultSession.screenLockOn,
+                    onScreenLockToggle = { on -> handleScreenLockToggle(on) },
                     onForget = { VaultSession.forgetConfig(); screen = Screen.SetupChoice },
                     patSave = { VaultSession.savePat(it); status = "PAT stored (encrypted)." },
                     autofillEnabled = isAutofillEnabled(),

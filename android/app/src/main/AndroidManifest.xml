@@ -3,6 +3,8 @@
 
     <!-- Git/SSH transport + OpenKeyChain API. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Optional screen-lock gate before unlock. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
     <!-- Package visibility (Android 11+): bind OpenKeychain's OpenPGP
          service by explicit package + action. -->

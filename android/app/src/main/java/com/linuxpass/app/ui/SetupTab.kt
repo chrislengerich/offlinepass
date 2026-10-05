@@ -32,7 +32,9 @@ fun SetupTabScreen(
     onRemoveRecipient: (Long) -> Unit,
     signerLabel: String,
     onPickSigner: () -> Unit,
-    onClearSigner: () -> Unit
+    onClearSigner: () -> Unit,
+    screenLockOn: Boolean,
+    onScreenLockToggle: (Boolean) -> Unit
 ) {
     val cfg = VaultSession.config()
     var patInput by remember { mutableStateOf("") }
@@ -129,6 +131,20 @@ fun SetupTabScreen(
         Text("Autofill", style = MaterialTheme.typography.titleSmall)
         Button(onClick = onEnableAutofill, modifier = Modifier.fillMaxWidth()) {
             Text(if (autofillEnabled) "Autofill: enabled (re-open settings)" else "Enable autofill service")
+        }
+        HorizontalDivider()
+        Text("Screen lock (optional)", style = MaterialTheme.typography.titleSmall)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                "Require biometric/PIN before the key on unlock",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall
+            )
+            Switch(checked = screenLockOn, onCheckedChange = { onScreenLockToggle(it) })
         }
         HorizontalDivider()
 
