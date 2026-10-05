@@ -60,7 +60,11 @@ class VaultGitClient {
                         .setTimeout(30)
                         .call()
                 }.onFailure { error ->
-                    if (error.message != "Nothing to fetch.") throw error
+                    // Offline is fine: local commits must still work; the
+                    // push retries when connectivity returns.
+                    if (error.message != "Nothing to fetch.") {
+                        Log.w(TAG, "fetch failed (continuing offline): ${error.message}")
+                    }
                 }
             }
         } else {

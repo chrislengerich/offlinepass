@@ -9,7 +9,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.linuxpass.app.crypto.OpenPgpClient
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -63,6 +66,10 @@ object VaultSession {
     var syncStatus by mutableStateOf<String?>(null)
         private set
 
+    /** A commit exists locally that the remote hasn't seen. */
+    private var pendingPush = false
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     /** Envelope revision of the currently-open vault; bumped on each save. */
     private var rev: Long = 0
 
@@ -75,6 +82,26 @@ object VaultSession {
         // A local vault file = the vault exists → Locked (unlock screen).
         // No local vault → the setup/import screen (no unlock shown).
         state = if (File(vaultFilePath()).exists()) State.Locked else State.NoConfig
+        registerConnectivityWatch()
+    }
+
+    /** Background sync: when connectivity returns and a push is pending,
+     * attempt one sync. */
+    fun registerConnectivityWatch() {
+        val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE)
+            as? android.net.ConnectivityManager ?: return
+        val request = android.net.NetworkRequest.Builder()
+            .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        cm.registerNetworkCallback(request, object : android.net.ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) {
+                if (pendingPush) {
+                    Log.i(TAG, "connectivity back — background sync")
+                    pendingPush = false
+                    appScope.launch { syncNow() }
+                }
+            }
+        })
     }
 
     // -- config -------------------------------------------------------------
@@ -316,30 +343,41 @@ object VaultSession {
 
                 val signId = signingKeyId() ?: keyIds.first()
                 val signer = OpenKeyChainSigner(client, signId)
+                val git = VaultGitClient()
+                if (cfg.remoteUrl == null) git.gitInit(gitRoot())
+
+                // The LOCAL TRUTH FIRST: the change is on disk + committed
+                // regardless of connectivity; the push retries when the
+                // network returns (background sync).
+                state = State.Unlocked(items)
+
                 if (cfg.remoteUrl != null) {
-                    busy = "Pushing…"
-                    val pat = pat() ?: return@withContext Result.Error("No PAT stored")
+                    busy = "Committing…"
                     try {
-                        // Sign with the same identity that receives the vault
-                        // (falls back to an unsigned commit if that key cannot sign).
-                        VaultGitClient().commitAndPush(
-                            cfg.remoteUrl, pat, gitRoot(),
-                            "Update 10.gpg (rev ${env.rev})", signer = signer
-                        )
+                        git.commitDirty(gitRoot(), "Update 10.gpg (rev ${env.rev})", signer)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "commit failed: ${e.message}", e)
+                        syncStatus = "Saved (file only); commit failed"
+                        return@withContext Result.Error("Saved; commit failed: ${e.message}")
+                    }
+                    busy = "Pushing…"
+                    val pushPat = pat() ?: return@withContext Result.Error("No PAT stored")
+                    try {
+                        git.pushBranch(cfg.remoteUrl, pushPat, gitRoot())
+                        pendingPush = false
                         syncStatus = if (keysOk) "Pushed rev ${env.rev} (signed)"
                                      else "Pushed rev ${env.rev} (signed; key files pending)"
                     } catch (e: Exception) {
                         Log.w(TAG, "push failed (kept local commit): ${e.message}")
+                        pendingPush = true
                         syncStatus = "Saved locally; push pending"
-                        return@withContext Result.Error("Saved locally; push failed: ${e.message}")
+                        // NOT an error: the change persisted locally.
                     }
                 } else {
                     // LOCAL-ONLY: same repo dir, no remotes — history stays on-device.
-                    VaultGitClient().gitInit(gitRoot())
-                    VaultGitClient().commitFile(gitRoot(), "Update 10.gpg (rev ${env.rev})", signer)
+                    git.commitFile(gitRoot(), "Update 10.gpg (rev ${env.rev})", signer)
                     syncStatus = "Committed locally (rev ${env.rev}, no remote)"
                 }
-                state = State.Unlocked(items)
                 Result.Success
             }
         } catch (e: Exception) {
