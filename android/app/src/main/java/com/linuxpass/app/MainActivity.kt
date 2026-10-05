@@ -245,6 +245,12 @@ class MainActivity : ComponentActivity() {
                     File(getExternalFilesDir(null), "storage-pat.txt").readText().trim()
                 }.getOrDefault(""),
                 status = status,
+                recipientIds = VaultSession.recipientKeyIds(),
+                onPickRecipients = { lifecycleScope.launch { pickRecipientsUntilDone() } },
+                onRemoveRecipient = { id ->
+                    VaultSession.setRecipientKeyIds(VaultSession.recipientKeyIds() - id)
+                    status = "Recipient removed."
+                },
                 onNewVault = { remote, pat ->
                     VaultSession.configure(remote, emptyList())
                     if (pat.isNotBlank()) VaultSession.savePat(pat)

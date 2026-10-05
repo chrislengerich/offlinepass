@@ -164,11 +164,12 @@ object VaultSession {
      */
     suspend fun unlock(): Result {
         val cfg = config()
-        if (cfg?.remoteUrl != null && !File(vaultFilePath()).exists()) {
-            return Result.Error("No local vault yet — run Sync now (Setup) to fetch it.")
-        }
-        if (!localVaultFile().exists() && cfg?.remoteUrl == null) {
-            return Result.Error("No vault file — restore or create one first.")
+        // New-vault flow: no file yet — adopt an empty envelope (first save
+        // creates it, encrypted to the picked recipients).
+        if (!File(vaultFilePath()).exists()) {
+            val fresh = Envelope(rev = 0, deviceId = deviceId())
+            adopt(fresh)
+            return Result.Success
         }
         busy = "Decrypting vault… (touch your key)"
         try {

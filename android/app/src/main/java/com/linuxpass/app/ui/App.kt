@@ -37,6 +37,9 @@ fun SetupChoiceScreen(
     defaultEmails: String,
     prefillPat: String,
     status: String,
+    recipientIds: List<Long>,
+    onPickRecipients: () -> Unit,
+    onRemoveRecipient: (Long) -> Unit,
     onNewVault: (remote: String?, pat: String) -> Unit,
     onImportProton: (remote: String?, pat: String, uri: android.net.Uri) -> Unit,
     onLoadGitHub: (remote: String, emails: List<String>, pat: String) -> Unit,
@@ -65,7 +68,7 @@ fun SetupChoiceScreen(
         }
 
         if (mode == "new") {
-            Text("New vault — recipients are picked from OpenKeyChain after creating/importing.",
+            Text("New vault — recipients are picked from OpenKeyChain before creating/importing.",
                 style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(
                 value = remote, onValueChange = { remote = it },
@@ -81,12 +84,29 @@ fun SetupChoiceScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
-            Button(onClick = { onNewVault(remote.trim().ifBlank { null }, pat.trim()) }, modifier = Modifier.fillMaxWidth()) {
-                Text("Create empty vault")
+            // Recipients — same UI as the Setup tab, BEFORE create/import.
+            Text("Recipients (from OpenKeyChain picker)", style = MaterialTheme.typography.titleSmall)
+            if (recipientIds.isEmpty()) {
+                Text("(none — pick at least one before creating/importing)",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            recipientIds.forEach { id ->
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Text("0x%016X".format(id), modifier = Modifier.weight(1f))
+                    TextButton(onClick = { onRemoveRecipient(id) }) { Text("Remove") }
+                }
+            }
+            Button(onClick = onPickRecipients, enabled = true, modifier = Modifier.fillMaxWidth()) {
+                Text("Add recipient (pick in OpenKeyChain)")
             }
             Button(
+                onClick = { onNewVault(remote.trim().ifBlank { null }, pat.trim()) },
+                enabled = recipientIds.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Create empty vault") }
+            Button(
                 onClick = { importPicker.launch(arrayOf("*/*")) },
-                enabled = remote.isNotBlank(),
+                enabled = recipientIds.isNotEmpty() && remote.isNotBlank(),
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Import from Proton Pass export") }
             if (remote.isBlank()) Text(
