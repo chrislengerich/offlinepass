@@ -164,6 +164,12 @@ silent pass.
 - Setup tab now shows: sync status line (above Sync now) + "PAT: stored (encrypted in Android Keystore)".
 - Known gap handled: renaming SecretStore prefs orphaned the previously stored PAT (one-time; re-entered via the new locked-screen field).
 
+**2026-10-05 — Real-vault offline restore (user-driven, adb detached):**
+- **Restore + save PASS offline**: the real 192 KB vault decrypted via OpenKeyChain + the jiji security key; re-encrypted on-phone (177096 B, rev 2). 
+- **Push failures are transport-flaky** (Mullvad route: `cannot open git-receive-pack` intermittently; fetch+probes 200 in the same window) — queued commits retry per design.
+- **Structural constraint**: one USB-C port — adb and the YubiKey exclude each other → hardware-in-the-loop testing moves to **wireless debugging**; the "unlock aborted after interaction retry" is that port conflict, not a code defect.
+- Desktop parity needs Osono's public key in the phone's OpenKeyChain (`Download/real-keys.pub` pushed) + re-pick recipients → next save re-encrypts to all keys → desktop `gpg` can verify.
+
 ## 6. Traceability — phase exit criteria
 
 | Milestone (work plan) | Green tests |
