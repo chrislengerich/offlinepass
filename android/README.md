@@ -22,21 +22,44 @@ Native Android client for the linuxpass vault (design:
 Everything lives in **app-private storage** (readable only by the app's
 UID — and by `adb` only for debug builds via `run-as`).
 
-```
-filesDir/
-├── vault/
-│   ├── repo/                  # REMOTE mode: git clone of the vault repo
-│   │   ├── state/10.gpg       #   the vault file — OpenPGP ciphertext
-│   │   └── .git/              #   full history of ciphertext commits only
-│   └── local/
-│       └── 10.gpg             # LOCAL-ONLY mode: same format, no git
-└── vault_config.xml-style prefs:
-    ├── remoteUrl, recipientEmails, recipientKeyIds   # NOT secrets
-    └── deviceId               # per-install UUID (envelope bookkeeping)
+**File structure (device):**
 
-shared_prefs/linuxpass_secret_keys.xml
-└── pat → AES-256-GCM blob wrapped by an AndroidKeyStore key
-        (the wrapping key is TEE-held + non-exportable)
+```
+/data/data/com.linuxpass.app/                    (app-private, internal)
+├── files/
+│   ├── vault/
+│   │   ├── repo/                        # REMOTE mode: clone of the vault repo
+│   │   │   ├── .git/                    #   history of ciphertext commits only
+│   │   │   ├── keys/
+│   │   │   │   ├── <KEYID>.public.asc   # recipients' armored public halves
+│   │   │   │   └── recipients.txt       # ledger: emails, key ids, deviceId
+│   │   │   └── state/
+│   │   │       └── 10.gpg               # THE VAULT — OpenPGP ciphertext
+│   │   └── local/                       # LOCAL-ONLY mode: same layout,
+│   │       ├── .git/                    #   git history without a remote
+│   │       ├── keys/                    #   (recipients ledger kept too)
+│   │       └── state/10.gpg
+│   └── cache/                           # transient decrypt buffers (wiped)
+├── shared_prefs/
+│   ├── vault_config.xml                 # remote URL, recipient emails, deviceId
+│   ├── linuxpass_secret_keys.xml        # PAT: AES-256-GCM blob wrapped by
+│   │                                    #   AndroidKeyStore (TEE-held)
+│   └── recipientKeyIds (in vault_config) # picked via the OpenKeyChain picker
+
+/sdcard/Android/data/com.linuxpass.app/files/   (app external dir)
+├── storage-pat.txt                       # optional: PAT prefill (remove after setup)
+└── id-linuxpass.pub                      # the device's Keystore SSH public key
+```
+
+**The vault repo layout (both local-only and the remote side):**
+
+```
+├── keys/                                 # who can open the vault (ledger)
+│   ├── <KEYID>.public.asc
+│   ├── ...
+│   └── recipients.txt
+└── state/
+    └── 10.gpg                            # the vault (OpenPGP ciphertext)
 ```
 
 **Encryption states, per artifact:**
@@ -51,18 +74,6 @@ shared_prefs/linuxpass_secret_keys.xml
 
 **What a stolen device yields:** vault ciphertext + a wrapped token. No
 plaintext, no keys, no decryptable state.
-
-## Building
-
-Requires Android SDK (compileSdk 36) + JDK 17 — same toolchain as
-offlinecam. First build downloads Gradle 8.13 + dependencies.
-
-```bash
-cd android
-./gradlew :app:assembleDebug        # debug APK
-./gradlew :app:testDebugUnitTest    # L1 JVM suite
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
 
 ## Running spike S1 (hardware-in-the-loop)
 
