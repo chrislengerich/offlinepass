@@ -1,6 +1,8 @@
 package com.linuxpass.app.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -9,7 +11,8 @@ import com.linuxpass.app.vault.VaultSession
 
 /**
  * The persistent Setup tab (user_flows.md): sync/remote config, identities,
- * USB save/restore, autofill enablement, vault export (qrft) entry point.
+ * USB save/restore, autofill enablement, QRFT export entry point.
+ * Scrolls — the content exceeds one screen.
  */
 @Composable
 fun SetupTabScreen(
@@ -31,7 +34,10 @@ fun SetupTabScreen(
     val cfg = VaultSession.config()
     var patInput by remember { mutableStateOf("") }
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -40,13 +46,23 @@ fun SetupTabScreen(
         }
         Text("Remote: ${cfg?.remoteUrl ?: "(none — local-only)"}")
         Text("Device: ${cfg?.deviceId?.take(8) ?: "-"}   Rev: ${VaultSession.currentRev()}")
+
+        // Sync state lives directly with its button.
         if (cfg?.remoteUrl != null) {
-            Text("Sync: ${VaultSession.syncStatus ?: "not synced this session"}",
-                style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Sync: ${VaultSession.syncStatus ?: "not synced this session"}",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Button(onClick = onTestSync, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+                Text("Sync now (fetch/push)")
+            }
         }
         HorizontalDivider()
+
         Text("Recipients (from OpenKeyChain picker)", style = MaterialTheme.typography.titleSmall)
-        if (recipientIds.isEmpty()) Text("(none — add one before saving)", style = MaterialTheme.typography.bodySmall)
+        if (recipientIds.isEmpty()) {
+            Text("(none — add one before saving)", style = MaterialTheme.typography.bodySmall)
+        }
         recipientIds.forEach { id ->
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Text("0x%016X".format(id), modifier = Modifier.weight(1f))
@@ -57,10 +73,7 @@ fun SetupTabScreen(
             Text("Add recipient (pick in OpenKeyChain)")
         }
         HorizontalDivider()
-        Button(onClick = onTestSync, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Sync now (fetch/push)")
-        }
-        HorizontalDivider()
+
         Text("USB offline copies", style = MaterialTheme.typography.titleSmall)
         Button(onClick = onUsbSave, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Save vault snapshot to USB/file")
@@ -69,6 +82,7 @@ fun SetupTabScreen(
             Text("Restore vault from USB/file (merge)")
         }
         HorizontalDivider()
+
         Text("Autofill", style = MaterialTheme.typography.titleSmall)
         Button(onClick = onEnableAutofill, modifier = Modifier.fillMaxWidth()) {
             Text(if (autofillEnabled) "Autofill: enabled (re-open settings)" else "Enable autofill service")
@@ -77,6 +91,7 @@ fun SetupTabScreen(
             Text("Open fake login (autofill test)")
         }
         HorizontalDivider()
+
         Text(
             "PAT: ${if (VaultSession.hasPat()) "stored (encrypted in Android Keystore)" else "not stored"}",
             style = MaterialTheme.typography.titleSmall
@@ -92,6 +107,7 @@ fun SetupTabScreen(
             modifier = Modifier.fillMaxWidth()
         ) { Text("Save PAT") }
         HorizontalDivider()
+
         Button(onClick = onForget, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Forget config (keeps files)")
         }

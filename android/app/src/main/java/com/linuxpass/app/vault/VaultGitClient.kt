@@ -35,6 +35,7 @@ class VaultGitClient {
                         .setRemote(remote)
                         .setCredentialsProvider(TokenCredentials(pat))
                         .setTagOpt(TagOpt.NO_TAGS)
+                        .setTimeout(30)
                         .call()
                 }.onFailure { error ->
                     if (error.message != "Nothing to fetch.") throw error
@@ -86,6 +87,7 @@ class VaultGitClient {
                 .setRemote(remote)
                 .setRefSpecs(RefSpec("refs/heads/$branch:refs/heads/$branch"))
                 .setCredentialsProvider(TokenCredentials(pat))
+                .setTimeout(30)
                 .call()
             for (result in results) for (u in result.remoteUpdates) {
                 Log.i(TAG, "push ${u.remoteName}: ${u.status} ${u.message ?: ""}")

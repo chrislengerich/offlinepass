@@ -255,7 +255,7 @@ object VaultSession {
                             )
                             syncStatus = "Pushed rev ${env.rev} (signed)"
                         } catch (e: Exception) {
-                            Log.w(TAG, "signed commit failed (${e.message}); retrying unsigned")
+                            Log.w(TAG, "signed commit failed: ${e.javaClass.simpleName}: ${e.message}", e)
                             VaultGitClient().commitAndPush(
                                 cfg.remoteUrl, pat, gitRoot(),
                                 "Update 10.gpg (rev ${env.rev})"
@@ -338,6 +338,8 @@ object VaultSession {
             syncStatus = "Synced (rev $rev)"
             return Result.Success
         } catch (e: Exception) {
+            Log.w(TAG, "syncNow failed: ${e.javaClass.simpleName}: ${e.message}")
+            syncStatus = "Sync failed: ${e.message?.take(60)}"
             return Result.Error("${e.javaClass.simpleName}: ${e.message}")
         } finally {
             busy = null

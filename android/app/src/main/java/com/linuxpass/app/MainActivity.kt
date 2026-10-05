@@ -50,6 +50,9 @@ class MainActivity : ComponentActivity() {
 
     private val interactionLauncher =
         registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+            Log.i("S1", "interaction result: code=${result.resultCode} " +
+                "extras=${result.data?.extras?.keySet()} " +
+                "key_ids=${result.data?.getLongArrayExtra("key_ids")?.contentToString()}")
             pendingInteraction?.resume(result.data)
             pendingInteraction = null
         }
@@ -343,9 +346,10 @@ class MainActivity : ComponentActivity() {
                                         launchInteraction(r.pendingIntent)
                                         val data = awaitInteraction()
                                         // The picker returns the picked keys in
-                                        // the result's key_ids extra — persist
-                                        // them directly (no re-lookup).
-                                        val picked = data?.getLongArrayExtra("key_ids")
+                                        // the result's key_ids_selected extra —
+                                        // persist them directly (no re-lookup).
+                                        val picked = (data?.getLongArrayExtra("key_ids_selected")
+                                            ?: data?.getLongArrayExtra("key_ids"))
                                             ?.toList()?.takeIf { it.isNotEmpty() }
                                         if (picked != null) {
                                             VaultSession.setRecipientKeyIds(
