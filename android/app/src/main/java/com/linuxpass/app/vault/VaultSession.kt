@@ -1,6 +1,8 @@
 package com.linuxpass.app.vault
 
 import android.content.Context
+import android.app.PendingIntent
+import android.content.Intent
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +50,14 @@ object VaultSession {
         private set
     var busy by mutableStateOf<String?>(null)
         private set
+
+    /**
+     * Set by the UI layer: launches the OpenKeyChain interaction
+     * PendingIntent and returns its RESULT intent (which carries the call
+     * UUIDs for OpenKeyChain's crypto-input cache). Every interaction loop
+     * below depends on this to converge.
+     */
+    var interactionHandler: (suspend (PendingIntent) -> Intent?)? = null
 
     /** Human-readable sync state, shown above the Sync-now button. */
     var syncStatus by mutableStateOf<String?>(null)
@@ -99,16 +109,22 @@ object VaultSession {
      */
     suspend fun pickRecipient(): Result {
         val client = OpenPgpClient(appContext)
-        return when (val lookup = client.lookupKeyIds(arrayOf(PICK_SENTINEL))) {
-            is OpenPgpClient.KeyLookup.Success -> {
-                if (lookup.keyIds.isNotEmpty()) {
-                    lastPickedKeyIds = lookup.keyIds.toList()
-                    Result.Success
-                } else Result.Error("Pick returned no key")
+        var reqData: Intent? = null
+        var guard = 0
+        while (guard++ < 2) {
+            when (val lookup = client.lookupKeyIds(arrayOf(PICK_SENTINEL), reqData)) {
+                is OpenPgpClient.KeyLookup.Success -> {
+                    return if (lookup.keyIds.isNotEmpty()) {
+                        lastPickedKeyIds = lookup.keyIds.toList()
+                        Result.Success
+                    } else Result.Error("Pick returned no key")
+                }
+                is OpenPgpClient.KeyLookup.UserInteraction -> reqData = interactionHandler?.invoke(lookup.pendingIntent)
+                            ?: return Result.Error("Interaction needs the UI layer")
+                is OpenPgpClient.KeyLookup.Error -> return Result.Error("Key lookup failed")
             }
-            is OpenPgpClient.KeyLookup.UserInteraction -> Result.Interaction(lookup.pendingIntent)
-            is OpenPgpClient.KeyLookup.Error -> Result.Error("Key lookup failed")
         }
+        return Result.Error("Pick aborted after interaction retry")
     }
 
     fun deviceId(): String {
@@ -175,18 +191,28 @@ object VaultSession {
         try {
             val plain = File(appContext.cacheDir, "vault-plain.json")
             val client = OpenPgpClient(appContext)
-            return when (val r = client.decryptVerify(vaultFile(), plain)) {
-                is OpenPgpClient.DecryptResult.Success -> {
-                    val env = Envelope.fromJson(plain.readText())
-                    rev = env.rev
-                    loadedEnvelope = env
-                    state = State.Unlocked(env.items)
-                    Log.i(TAG, "unlocked: ${env.items.size} items, rev=${env.rev}")
-                    Result.Success
+            // OpenKeychain's interaction contract: after the user completes
+            // the prompt, retry with the RETURNED intent (it carries the
+            // call UUIDs that locate the cached crypto input).
+            var reqData: Intent? = null
+            var guard = 0
+            while (guard++ < 2) {
+                when (val r = client.decryptVerify(vaultFile(), plain, reqData)) {
+                    is OpenPgpClient.DecryptResult.Success -> {
+                        val env = Envelope.fromJson(plain.readText())
+                        rev = env.rev
+                        loadedEnvelope = env
+                        state = State.Unlocked(env.items)
+                        Log.i(TAG, "unlocked: ${env.items.size} items, rev=${env.rev}")
+                        return Result.Success
+                    }
+                    is OpenPgpClient.DecryptResult.UserInteraction ->
+                        reqData = interactionHandler?.invoke(r.pendingIntent)
+                            ?: return Result.Error("Interaction needs the UI layer")
+                    is OpenPgpClient.DecryptResult.Error -> return Result.Error("Decrypt failed (see logcat)")
                 }
-                is OpenPgpClient.DecryptResult.UserInteraction -> Result.Interaction(r.pendingIntent)
-                is OpenPgpClient.DecryptResult.Error -> Result.Error("Decrypt failed (see logcat)")
             }
+            return Result.Error("Unlock aborted after interaction retry.")
         } catch (e: Exception) {
             Log.w(TAG, "unlock failed: ${e.message}")
             return Result.Error("${e.javaClass.simpleName}: ${e.message}")
@@ -218,8 +244,10 @@ object VaultSession {
                 val client = OpenPgpClient(appContext)
 
                 var keyIds = cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()
-                if (keyIds.isEmpty() && cfg.recipientEmails.isNotEmpty()) {
-                    when (val lookup = client.lookupKeyIds(cfg.recipientEmails.toTypedArray())) {
+                var lookupReqData: Intent? = null
+                var lookupGuard = 0
+                while (keyIds.isEmpty() && cfg.recipientEmails.isNotEmpty() && lookupGuard++ < 2) {
+                    when (val lookup = client.lookupKeyIds(cfg.recipientEmails.toTypedArray(), lookupReqData)) {
                         is OpenPgpClient.KeyLookup.Success -> {
                             keyIds = lookup.keyIds
                             prefs().edit()
@@ -443,12 +471,20 @@ object VaultSession {
         if (!file.exists()) return@withContext DecryptEnvelope.Error("File missing")
         val plain = File(appContext.cacheDir, "restore-plain.json")
         val client = OpenPgpClient(appContext)
-        when (val r = client.decryptVerify(file, plain)) {
-            is OpenPgpClient.DecryptResult.Success ->
-                DecryptEnvelope.Ok(Envelope.fromJson(plain.readText()))
-            is OpenPgpClient.DecryptResult.UserInteraction -> DecryptEnvelope.Interaction(r.pendingIntent)
-            is OpenPgpClient.DecryptResult.Error -> DecryptEnvelope.Error("Decrypt failed (see logcat)")
+        var reqData: Intent? = null
+        var guard = 0
+        while (guard++ < 2) {
+            when (val r = client.decryptVerify(file, plain, reqData)) {
+                is OpenPgpClient.DecryptResult.Success ->
+                    return@withContext DecryptEnvelope.Ok(Envelope.fromJson(plain.readText()))
+                is OpenPgpClient.DecryptResult.UserInteraction -> {
+                    val h = interactionHandler ?: return@withContext DecryptEnvelope.Error("Interaction needs the UI layer")
+                    reqData = h(r.pendingIntent)
+                }
+                is OpenPgpClient.DecryptResult.Error -> return@withContext DecryptEnvelope.Error("Decrypt failed (see logcat)")
+            }
         }
+        DecryptEnvelope.Error("Decrypt aborted after interaction retry")
     }
 
     /** Adopts an already-decrypted envelope as the unlocked session —

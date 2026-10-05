@@ -284,9 +284,11 @@ class OpenPgpClient(private val context: Context) {
      * Looks up the key ids for [userIds] (emails). No user interaction is
      * offered here; the caller decides what to do with an interaction request.
      */
-    suspend fun lookupKeyIds(userIds: Array<String>): KeyLookup {
+    suspend fun lookupKeyIds(userIds: Array<String>, requestData: Intent? = null): KeyLookup {
         if (!connect()) return KeyLookup.Error
-        val data = Intent(ACTION_GET_KEY_IDS).apply {
+        // After an interaction, the returned intent (with OpenKeychain's call
+        // UUIDs) must be the request — see decryptVerify.
+        val data = requestData ?: Intent(ACTION_GET_KEY_IDS).apply {
             putExtra(EXTRA_USER_IDS, userIds)
         }
         val result = execute(data, null, null)
@@ -415,9 +417,12 @@ class OpenPgpClient(private val context: Context) {
      * sign key. A locked secret or first-use approval comes back as
      * [DecryptResult.UserInteraction] for the activity to launch.
      */
-    suspend fun decryptVerify(source: File, target: File): DecryptResult {
+    suspend fun decryptVerify(source: File, target: File, requestData: Intent? = null): DecryptResult {
         if (!connect()) return DecryptResult.Error
-        val data = Intent(ACTION_DECRYPT_VERIFY)
+        // After an interaction, the returned intent (carrying OpenKeychain's
+        // call UUIDs) must be used as the request data — that's how the
+        // service finds the cached crypto input; a fresh intent re-prompts.
+        val data = requestData ?: Intent(ACTION_DECRYPT_VERIFY)
         val result = execute(data, source.inputStream(), target.outputStream())
         return when (result.getIntExtra(RESULT_CODE, RESULT_CODE_ERROR)) {
             RESULT_CODE_SUCCESS -> DecryptResult.Success(

@@ -223,6 +223,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         VaultSession.init(applicationContext)
+        // The vault layer can't launch activities: the UI performs the
+        // OpenKeyChain interaction and returns the RESULT intent (which
+        // carries OpenKeyChain's call UUIDs for its crypto-input cache).
+        VaultSession.interactionHandler = { pi ->
+            launchInteraction(pi)
+            awaitInteraction()
+        }
         // Spike extras forward (S1/S3 keep working).
         val keys = listOf("path", "email", "exportKey", "probeSign", "autostart")
         val received = keys.mapNotNull { k -> intent.getStringExtra(k)?.let { k to it } }.toMap()
