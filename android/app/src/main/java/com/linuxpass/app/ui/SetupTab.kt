@@ -29,7 +29,10 @@ fun SetupTabScreen(
     autofillEnabled: Boolean,
     recipientIds: List<Long>,
     onAddRecipient: () -> Unit,
-    onRemoveRecipient: (Long) -> Unit
+    onRemoveRecipient: (Long) -> Unit,
+    signerLabel: String,
+    onPickSigner: () -> Unit,
+    onClearSigner: () -> Unit
 ) {
     val cfg = VaultSession.config()
     var patInput by remember { mutableStateOf("") }
@@ -102,6 +105,15 @@ fun SetupTabScreen(
         }
         Button(onClick = onAddRecipient, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Add recipient (pick in OpenKeyChain)")
+        }
+        HorizontalDivider()
+        Text("Commit signer", style = MaterialTheme.typography.titleSmall)
+        Text("Signer: $signerLabel", style = MaterialTheme.typography.bodySmall)
+        Button(onClick = onPickSigner, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Pick signing key (OpenKeyChain)")
+        }
+        TextButton(onClick = onClearSigner, enabled = VaultSession.signingKeyId() != null) {
+            Text("Use default (first recipient)")
         }
         HorizontalDivider()
 

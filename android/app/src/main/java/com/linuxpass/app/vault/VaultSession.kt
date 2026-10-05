@@ -101,6 +101,43 @@ object VaultSession {
     var lastPickedKeyIds: List<Long> = emptyList()
         private set
 
+    // -- signing identity ----------------------------------------------------
+
+    fun signingKeyId(): Long? = prefs().getString("signingKeyId", null)?.toLongOrNull()
+    fun signingKeyUserId(): String? = prefs().getString("signingKeyUserId", null)
+
+    /**
+     * Runs OpenKeychain's sign-key picker (GET_SIGN_KEY_ID) and persists the
+     * picked key as the app's signing identity. Interaction surfaces for the
+     * UI loop.
+     */
+    suspend fun pickSigningKey(): Result {
+        val client = OpenPgpClient(appContext)
+        var reqData: Intent? = null
+        var guard = 0
+        while (guard++ < 2) {
+            when (val sk = client.pickSignKey(reqData)) {
+                is OpenPgpClient.SignKey.Picked -> {
+                    prefs().edit()
+                        .putString("signingKeyId", sk.keyId.toString())
+                        .putString("signingKeyUserId", sk.userId)
+                        .apply()
+                    return Result.Success
+                }
+                is OpenPgpClient.SignKey.NeedsInteraction -> {
+                    reqData = interactionHandler?.invoke(sk.pendingIntent)
+                        ?: return Result.Error("Interaction needs the UI layer")
+                }
+                is OpenPgpClient.SignKey.Error -> return Result.Error("Sign key pick failed")
+            }
+        }
+        return Result.Error("Sign key pick aborted after interaction retry")
+    }
+
+    fun clearSigningKey() {
+        prefs().edit().remove("signingKeyId").remove("signingKeyUserId").apply()
+    }
+
     /**
      * Recipient PICK via OpenKeyChain's own keyring UI: a lookup for an
      * unknown user id raises the key-selection screen (multi-select
@@ -277,7 +314,8 @@ object VaultSession {
                 val keysOk = materializeRecipientKeys(client, gitRoot(), keyIds)
                 if (!keysOk) syncStatus = "Some recipient key files missing (retried next save)"
 
-                val signer = OpenKeyChainSigner(client, keyIds.first())
+                val signId = signingKeyId() ?: keyIds.first()
+                val signer = OpenKeyChainSigner(client, signId)
                 if (cfg.remoteUrl != null) {
                     busy = "Pushing…"
                     val pat = pat() ?: return@withContext Result.Error("No PAT stored")
@@ -465,7 +503,8 @@ object VaultSession {
                         if (!client.encryptTo(keyIds, plain, target)) {
                             throw IllegalStateException("encrypt during merge failed")
                         }
-                        val signer = OpenKeyChainSigner(client, keyIds.first())
+                        val signId = signingKeyId() ?: keyIds.first()
+                val signer = OpenKeyChainSigner(client, signId)
                         try {
                             git.commitFile(root, "Merge with remote (rev ${merged.rev})", signer)
                         } catch (e: Exception) {

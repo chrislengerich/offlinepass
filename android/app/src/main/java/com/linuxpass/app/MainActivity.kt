@@ -461,7 +461,19 @@ class MainActivity : ComponentActivity() {
                     onRemoveRecipient = { id ->
                         VaultSession.setRecipientKeyIds(VaultSession.recipientKeyIds() - id)
                         status = "Recipient removed."
-                    }
+                    },
+                    signerLabel = VaultSession.signingKeyId()
+                        ?.let { id -> "0x%016X".format(id) + (VaultSession.signingKeyUserId()?.let { u -> " ($u)" } ?: "") }
+                        ?: "default (first recipient)",
+                    onPickSigner = {
+                        lifecycleScope.launch {
+                            status = when (val r = VaultSession.pickSigningKey()) {
+                                VaultSession.Result.Success -> "Signing key set."
+                                else -> "Signer: $r"
+                            }
+                        }
+                    },
+                    onClearSigner = { VaultSession.clearSigningKey(); status = "Signer reset to default." }
                 )
             }
         }
