@@ -40,6 +40,12 @@ class LinuxpassAutofillService : AutofillService() {
             callback.onSuccess(null); return
         }
         val fields = parse(structure)
+        // No recognized login fields → no response. Building a dataset with
+        // zero values throws — and this service shares the app's process, so
+        // a crash here kills the whole app (vault session included).
+        if (fields.username.isEmpty() && fields.password.isEmpty()) {
+            callback.onSuccess(null); return
+        }
 
         val response = if (VaultSession.state is VaultSession.State.Unlocked) {
             unlockedResponse(fields)
@@ -73,7 +79,8 @@ class LinuxpassAutofillService : AutofillService() {
         for (item in shown) {
             builder.addDataset(datasetFor(item, fields, "${item.displayName} — ${item.identity}"))
         }
-        // Search-in-app dataset (covers non-matching or >5 entries).
+        // Search-in-app dataset (covers non-matching or >5 entries). With the
+        // empty-fields guard in onFillRequest, at least one id exists here.
         val searchIntent = android.content.Intent(appContext(), MainActivity::class.java)
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         val searchPi = android.app.PendingIntent.getActivity(
@@ -85,7 +92,9 @@ class LinuxpassAutofillService : AutofillService() {
         }
         val searchDs = Dataset.Builder()
             .setAuthentication(searchPi.intentSender)
-        fields.username.firstOrNull()?.let { searchDs.setValue(it, null as AutofillValue?, searchView) }
+        (fields.username + fields.password).firstOrNull()?.let {
+            searchDs.setValue(it, null as AutofillValue?, searchView)
+        }
         builder.addDataset(searchDs.build())
         return builder.build()
     }
