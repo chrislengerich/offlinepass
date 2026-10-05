@@ -120,6 +120,13 @@ object VaultSession {
      * the repo is opened on next unlock.
      */
     fun configure(remoteUrl: String?, recipientEmails: List<String>) {
+        val old = prefs().getString("remoteUrl", null)
+        if (remoteUrl != null && old != null && old != remoteUrl) {
+            // Remote changed: wipe the stale clone from another vault era
+            // (reinit git state — fresh clone on next unlock).
+            gitRoot().deleteRecursively()
+            Log.i(TAG, "remote changed: wiped stale clone")
+        }
         prefs().edit()
             .putString("remoteUrl", remoteUrl)
             .putString("recipientEmails", recipientEmails.joinToString(","))
@@ -421,5 +428,13 @@ object VaultSession {
             is OpenPgpClient.DecryptResult.UserInteraction -> DecryptEnvelope.Interaction(r.pendingIntent)
             is OpenPgpClient.DecryptResult.Error -> DecryptEnvelope.Error("Decrypt failed (see logcat)")
         }
+    }
+
+    /** Adopts an already-decrypted envelope as the unlocked session —
+     * no second decrypt, no extra OpenKeyChain prompts (USB restore). */
+    fun adopt(env: Envelope) {
+        rev = env.rev
+        loadedEnvelope = env
+        state = State.Unlocked(env.items)
     }
 }

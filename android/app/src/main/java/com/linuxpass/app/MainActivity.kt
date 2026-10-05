@@ -150,12 +150,14 @@ class MainActivity : ComponentActivity() {
             val merged = if (current == null) restored else VaultMerge.unionMerge(current, restored)
             if (VaultSession.config() == null) {
                 // Local-only restore: the imported file becomes the vault.
+                // The envelope is ALREADY decrypted — adopt it directly; a
+                // re-unlock would re-prompt OpenKeyChain for nothing.
                 VaultSession.configure(null, emptyList())
                 File(VaultSession.vaultFilePath()).parentFile?.mkdirs()
                 File(VaultSession.vaultFilePath()).writeBytes(staged.readBytes())
-                status = "Restored (local-only)."
+                VaultSession.adopt(restored)
+                status = "Restored (local-only, rev ${restored.rev})."
                 screen = Screen.Search
-                unlockLoop()
             } else {
                 status = when (val r = saveLoop(merged.items)) {
                     VaultSession.Result.Success -> "Restored + merged (rev ${VaultSession.currentRev()})."
