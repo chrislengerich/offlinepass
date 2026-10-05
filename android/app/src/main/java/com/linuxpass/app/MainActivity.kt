@@ -25,6 +25,7 @@ import com.linuxpass.app.ui.AddEntryScreen
 import com.linuxpass.app.ui.EntryDetailScreen
 import com.linuxpass.app.ui.QrftScreen
 import com.linuxpass.app.ui.entryPayload
+import com.linuxpass.app.vault.Envelope
 import com.linuxpass.app.vault.PasswordGen
 import com.linuxpass.app.vault.ProtonItem
 import com.linuxpass.app.vault.VaultMerge
@@ -38,8 +39,8 @@ import kotlin.coroutines.resume
 /**
  * The router. Owns the interaction loop (OpenKeyChain PendingIntents), the
  * USB SAF launchers, and screen navigation; screens are pure Compose.
- * Legacy spike extras (path/email/exportKey/probeSign/autostart) forward to
- * the spike activities so the earlier spikes keep working.
+ * Spike extras (path/email/exportKey/probeSign/autostart) forward to the
+ * spike activities so the earlier spikes keep working.
  */
 class MainActivity : ComponentActivity() {
 
@@ -50,9 +51,8 @@ class MainActivity : ComponentActivity() {
 
     private val interactionLauncher =
         registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-            Log.i("S1", "interaction result: code=${result.resultCode} " +
-                "extras=${result.data?.extras?.keySet()} " +
-                "key_ids=${result.data?.getLongArrayExtra("key_ids")?.contentToString()}")
+            Log.i(TAG, "interaction result: code=${result.resultCode} " +
+                "key_ids_selected=${result.data?.getLongArrayExtra("key_ids_selected")?.contentToString()}")
             pendingInteraction?.resume(result.data)
             pendingInteraction = null
         }
@@ -67,37 +67,59 @@ class MainActivity : ComponentActivity() {
             pendingInteraction = cont
             cont.invokeOnCancellation { pendingInteraction = null }
         }
-    private var lastInteractionData: Intent? = null
 
-    /** Retries the op while OpenKeyChain keeps asking for interaction. */
+    /** Unlock: one interaction retry is usually enough. */
     private suspend fun unlockLoop() {
         var guard = 0
-        while (guard++ < 5) {
+        while (guard++ < 2) {
             when (val r = VaultSession.unlock()) {
                 VaultSession.Result.Success -> return
                 is VaultSession.Result.Interaction -> { launchInteraction(r.pendingIntent); awaitInteraction() }
                 is VaultSession.Result.Error -> { status = r.message; return }
             }
         }
-        status = "Too many OpenKeyChain interactions; unlock aborted."
+        status = "Unlock aborted after interaction retry."
     }
 
     private suspend fun saveLoop(items: List<ProtonItem>): VaultSession.Result {
         var guard = 0
-        while (guard++ < 5) {
+        while (guard++ < 2) {
             when (val r = VaultSession.save(items)) {
                 is VaultSession.Result.Interaction -> { launchInteraction(r.pendingIntent); awaitInteraction() }
                 else -> return r
             }
         }
-        return VaultSession.Result.Error("Too many OpenKeyChain interactions; save aborted.")
+        return VaultSession.Result.Error("Save aborted after interaction retry.")
     }
 
-    private fun unlockedItems(): List<ProtonItem> =
-        (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
+    /** Add recipients via OpenKeyChain's keyring picker (multi-select). */
+    private suspend fun pickRecipientsUntilDone() {
+        var guard = 0
+        while (guard++ < 2) {
+            when (val r = VaultSession.pickRecipient()) {
+                VaultSession.Result.Success -> { persistPicked(VaultSession.lastPickedKeyIds); return }
+                is VaultSession.Result.Interaction -> {
+                    launchInteraction(r.pendingIntent)
+                    val data = awaitInteraction()
+                    val picked = (data?.getLongArrayExtra("key_ids_selected")
+                        ?: data?.getLongArrayExtra("key_ids"))
+                        ?.toList()?.takeIf { it.isNotEmpty() }
+                    if (picked != null) {
+                        persistPicked(picked)
+                        return
+                    }
+                }
+                is VaultSession.Result.Error -> { status = "Recipient: ${r.message}"; return }
+            }
+        }
+        status = "Recipient picking aborted."
+    }
 
-    private fun currentDetailItem(uuid: String): ProtonItem? =
-        unlockedItems().firstOrNull { it.itemUuid == uuid }
+    private fun persistPicked(picked: List<Long>) {
+        VaultSession.setRecipientKeyIds((VaultSession.recipientKeyIds() + picked).distinct())
+        status = "Recipients: " + VaultSession.recipientKeyIds()
+            .joinToString(" ") { "0x%016X".format(it) }
+    }
 
     // -- USB save/restore ---------------------------------------------------
 
@@ -127,12 +149,10 @@ class MainActivity : ComponentActivity() {
             contentResolver.openInputStream(uri)?.use { ins ->
                 staged.outputStream().use { ins.copyTo(it) }
             }
-            // Card-key decryption needs several OpenKeyChain interactions
-            // (per-key permission, card touch, PIN) — retry deeply.
-            val restored: com.linuxpass.app.vault.Envelope = run {
+            val restored: Envelope = run {
                 var env: VaultSession.DecryptEnvelope.Ok? = null
                 var guard = 0
-                while (guard++ < 6) {
+                while (guard++ < 2) {
                     when (val r = VaultSession.decryptEnvelope(staged)) {
                         is VaultSession.DecryptEnvelope.Ok -> { env = r; break }
                         is VaultSession.DecryptEnvelope.Interaction -> {
@@ -142,7 +162,7 @@ class MainActivity : ComponentActivity() {
                             { status = "Restore failed: ${r.message}"; return }
                     }
                 }
-                env?.env ?: run { status = "Restore decrypt failed after retries."; return }
+                env?.env ?: run { status = "Restore decrypt failed after retry."; return }
             }
             val current = if (File(VaultSession.vaultFilePath()).exists())
                 (VaultSession.decryptEnvelope(File(VaultSession.vaultFilePath())) as? VaultSession.DecryptEnvelope.Ok)?.env
@@ -150,8 +170,7 @@ class MainActivity : ComponentActivity() {
             val merged = if (current == null) restored else VaultMerge.unionMerge(current, restored)
             if (VaultSession.config() == null) {
                 // Local-only restore: the imported file becomes the vault.
-                // The envelope is ALREADY decrypted — adopt it directly; a
-                // re-unlock would re-prompt OpenKeyChain for nothing.
+                // The envelope is ALREADY decrypted — adopt it directly.
                 VaultSession.configure(null, emptyList())
                 File(VaultSession.vaultFilePath()).parentFile?.mkdirs()
                 File(VaultSession.vaultFilePath()).writeBytes(staged.readBytes())
@@ -216,20 +235,47 @@ class MainActivity : ComponentActivity() {
     private fun AppRouter() {
         when (VaultSession.state) {
             VaultSession.State.NoConfig -> SetupChoiceScreen(
-                defaults = Pair(
-                    "https://github.com/planetaltitude/linuxpass-storage-test.git",
-                    "noodlefish@nan.404"
-                ),
+                defaultRemote = "https://github.com/planetaltitude/linuxpass-storage-test.git",
+                defaultEmails = "noodlefish@nan.404",
                 prefillPat = runCatching {
                     File(getExternalFilesDir(null), "storage-pat.txt").readText().trim()
                 }.getOrDefault(""),
-                onConfigured = { remote, emails, pat ->
+                status = status,
+                onNewVault = { remote ->
+                    VaultSession.configure(remote, emptyList())
+                    status = ""
+                    lifecycleScope.launch {
+                        unlockLoop()               // empty vault (no file yet)
+                        pickRecipientsUntilDone()  // pick recipients in OpenKeyChain
+                    }
+                },
+                onImportProton = { remote, uri ->
+                    VaultSession.configure(remote, emptyList())
+                    status = ""
+                    lifecycleScope.launch {
+                        unlockLoop()               // empty vault base
+                        // Import: a PLAINTEXT Proton Pass export (no decrypt
+                        // needed) or an encrypted vault (OpenKeyChain path).
+                        val staged = File(cacheDir, "import-proton")
+                        contentResolver.openInputStream(uri)?.use { ins ->
+                            staged.outputStream().use { ins.copyTo(it) }
+                        }
+                        val env = Envelope.parseImport(staged.readText())
+                        if (env != null) {
+                            status = "Imported plaintext Proton export (${env.items.size} entries)."
+                            pickRecipientsUntilDone()
+                            saveLoop(env.items)
+                        } else {
+                            restoreLoop(uri)  // encrypted path (decrypt via OpenKeyChain)
+                        }
+                    }
+                },
+                onLoadGitHub = { remote, emails, pat ->
                     VaultSession.configure(remote, emails)
                     if (pat.isNotBlank()) VaultSession.savePat(pat)
                     status = ""
                     lifecycleScope.launch { unlockLoop() }
                 },
-                status = status,
                 onLoadUsb = { usbRestoreLauncher.launch(arrayOf("application/octet-stream")) }
             )
             VaultSession.State.Locked -> UnlockScreen(
@@ -327,53 +373,11 @@ class MainActivity : ComponentActivity() {
                     onUsbSave = { usbSaveLauncher.launch("linuxpass-vault-rev${VaultSession.currentRev()}.gpg") },
                     onUsbRestore = { usbRestoreLauncher.launch(arrayOf("application/octet-stream")) },
                     onEnableAutofill = { requestAutofillService() },
-                    onFakeLogin = {
-                        startActivity(Intent(this, com.linuxpass.app.spike.FakeLoginActivity::class.java))
-                    },
                     onForget = { VaultSession.forgetConfig(); screen = Screen.SetupChoice },
                     patSave = { VaultSession.savePat(it); status = "PAT stored (encrypted)." },
                     autofillEnabled = isAutofillEnabled(),
                     recipientIds = VaultSession.recipientKeyIds(),
-                    onAddRecipient = {
-                        lifecycleScope.launch {
-                            var guard = 0
-                            while (guard++ < 3) {
-                                when (val r = VaultSession.pickRecipient()) {
-                                    VaultSession.Result.Success -> {
-                                        val picked = VaultSession.lastPickedKeyIds
-                                        if (picked.isNotEmpty()) {
-                                            VaultSession.setRecipientKeyIds(
-                                                (VaultSession.recipientKeyIds() + picked).distinct()
-                                            )
-                                            status = "Recipients added: " +
-                                                picked.joinToString(" ") { "0x%016X".format(it) }
-                                        }
-                                        return@launch
-                                    }
-                                    is VaultSession.Result.Interaction -> {
-                                        launchInteraction(r.pendingIntent)
-                                        val data = awaitInteraction()
-                                        // The picker returns the picked keys in
-                                        // the result's key_ids_selected extra —
-                                        // persist them directly (no re-lookup).
-                                        val picked = (data?.getLongArrayExtra("key_ids_selected")
-                                            ?: data?.getLongArrayExtra("key_ids"))
-                                            ?.toList()?.takeIf { it.isNotEmpty() }
-                                        if (picked != null) {
-                                            VaultSession.setRecipientKeyIds(
-                                                (VaultSession.recipientKeyIds() + picked).distinct()
-                                            )
-                                            status = "Recipients added: " +
-                                                picked.joinToString(" ") { "0x%016X".format(it) }
-                                            return@launch
-                                        }
-                                    }
-                                    is VaultSession.Result.Error -> { status = "Recipient: ${r.message}"; return@launch }
-                                }
-                            }
-                            status = "Recipient picking aborted."
-                        }
-                    },
+                    onAddRecipient = { lifecycleScope.launch { pickRecipientsUntilDone() } },
                     onRemoveRecipient = { id ->
                         VaultSession.setRecipientKeyIds(VaultSession.recipientKeyIds() - id)
                         status = "Recipient removed."
@@ -381,5 +385,15 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    private fun unlockedItems(): List<ProtonItem> =
+        (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
+
+    private fun currentDetailItem(uuid: String): ProtonItem? =
+        unlockedItems().firstOrNull { it.itemUuid == uuid }
+
+    companion object {
+        private const val TAG = "S1"
     }
 }

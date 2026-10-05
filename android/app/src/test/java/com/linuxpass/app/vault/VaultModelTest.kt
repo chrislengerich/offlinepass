@@ -121,6 +121,28 @@ class TotpTest {
     }
 }
 
+@RunWith(RobolectricTestRunner::class)
+class ImportPathTest {
+    @Test
+    fun plaintextProtonListImport() {
+        val env = Envelope.parseImport("""[{"itemId":"i","data":{"metadata":{"name":"S"},"content":{"password":"p"}}}]""")
+        assertEquals(1, env?.items?.size)
+        assertEquals("S", env?.items?.get(0)?.displayName)
+    }
+
+    @Test
+    fun plaintextVaultsImport() {
+        val env = Envelope.parseImport("""{"version":"1.0","vaults":{"local":{"items":[]}}}""")
+        assertEquals(0, env?.items?.size)
+    }
+
+    @Test
+    fun pgpArmorIsNotPlaintext() {
+        assertNull(Envelope.parseImport("-----BEGIN PGP MESSAGE-----\nxx\n"))
+        assertNull(Envelope.parseImport(java.lang.StringBuilder("com.random.binary").toString()))
+    }
+}
+
 class PasswordGenTest {
     @Test
     fun alphabetRespected() {

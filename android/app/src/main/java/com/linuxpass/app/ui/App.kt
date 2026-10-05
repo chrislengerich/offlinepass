@@ -1,6 +1,10 @@
 package com.linuxpass.app.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,24 +27,35 @@ sealed class Screen {
 }
 
 /**
- * First run: create a new vault (GitHub-managed or local-only) or load an
- * existing one (GitHub + PAT / USB file). Mirrors user_flows.md "Initial
- * setup".
+ * First run (user_flows.md "Initial setup"): create a NEW vault (empty, or
+ * imported from a plaintext Proton Pass export — recipients picked from
+ * OpenKeyChain afterwards) or LOAD an existing vault (GitHub + PAT / USB).
  */
 @Composable
 fun SetupChoiceScreen(
-    defaults: Pair<String, String>, // remote, recipient emails
+    defaultRemote: String,
+    defaultEmails: String,
     prefillPat: String,
-    onConfigured: (remote: String?, emails: List<String>, pat: String) -> Unit,
     status: String,
+    onNewVault: (remote: String?) -> Unit,
+    onImportProton: (remote: String?, uri: android.net.Uri) -> Unit,
+    onLoadGitHub: (remote: String, emails: List<String>, pat: String) -> Unit,
     onLoadUsb: () -> Unit
 ) {
-    var remote by remember { mutableStateOf(defaults.first) }
-    var email by remember { mutableStateOf(defaults.second) }
+    var remote by remember { mutableStateOf(defaultRemote) }
+    var email by remember { mutableStateOf(defaultEmails) }
     var pat by remember { mutableStateOf(prefillPat) }
     var mode by remember { mutableStateOf("load") }
+
+    val importPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let { onImportProton(remote.trim().ifBlank { null }, it) } }
+
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text("linuxpass", style = MaterialTheme.typography.headlineSmall)
@@ -48,17 +63,38 @@ fun SetupChoiceScreen(
             FilterChip(selected = mode == "load", onClick = { mode = "load" }, label = { Text("Load existing") })
             FilterChip(selected = mode == "new", onClick = { mode = "new" }, label = { Text("New vault") })
         }
-        OutlinedTextField(
-            value = remote, onValueChange = { remote = it },
-            label = { Text("GitHub HTTPS remote") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        OutlinedTextField(
-            value = email, onValueChange = { email = it },
-            label = { Text("OpenKeyChain recipient email(s), comma-separated") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        if (mode == "load" && remote.isNotBlank()) {
+
+        if (mode == "new") {
+            Text("New vault — pick recipients from OpenKeyChain after creating.",
+                style = MaterialTheme.typography.bodySmall)
+            OutlinedTextField(
+                value = remote, onValueChange = { remote = it },
+                label = { Text("GitHub HTTPS remote (blank = local-only)") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(onClick = { onNewVault(remote.trim().ifBlank { null }) }, modifier = Modifier.fillMaxWidth()) {
+                Text("Create empty vault")
+            }
+            Button(
+                onClick = { importPicker.launch(arrayOf("*/*")) },
+                enabled = remote.isNotBlank(),
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Import from Proton Pass export") }
+            if (remote.isBlank()) Text(
+                "Import needs a remote (the import is encrypted to recipients on save).",
+                style = MaterialTheme.typography.bodySmall
+            )
+        } else {
+            OutlinedTextField(
+                value = remote, onValueChange = { remote = it },
+                label = { Text("GitHub HTTPS remote") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = email, onValueChange = { email = it },
+                label = { Text("OpenKeyChain recipient email(s)") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
             OutlinedTextField(
                 value = pat, onValueChange = { pat = it },
                 label = { Text("Fine-grained PAT (stored encrypted)") },
@@ -66,18 +102,13 @@ fun SetupChoiceScreen(
                 visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth()
             )
-        }
-        Text(
-            "USB load: no remote configured — local-only mode (the imported file becomes the vault).",
-            style = MaterialTheme.typography.bodySmall
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = {
-                val r = remote.trim().ifBlank { null }
-                val emails = email.split(",").map { it.trim() }.filter { it.isNotBlank() }
-                onConfigured(r, emails, pat.trim())
-            }) { Text(if (mode == "new") "Create (empty vault)" else "Load from GitHub") }
-            OutlinedButton(onClick = { onLoadUsb() }) { Text("Load from USB file") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    val emails = email.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                    onLoadGitHub(remote.trim(), emails, pat.trim())
+                }) { Text("Load from GitHub") }
+                OutlinedButton(onClick = { onLoadUsb() }) { Text("Load from USB file") }
+            }
         }
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
     }

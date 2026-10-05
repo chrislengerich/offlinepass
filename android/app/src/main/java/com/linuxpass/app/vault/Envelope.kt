@@ -77,5 +77,17 @@ data class Envelope(
 
         /** A fresh empty envelope for the new-vault flow. */
         fun empty(deviceId: String): Envelope = Envelope(rev = 1, deviceId = deviceId)
+
+        /**
+         * Import from a Proton Pass EXPORT file (plaintext!) vs an encrypted
+         * vault: plaintext JSON (list- or envelope-shaped) parses to an
+         * Envelope; anything else (PGP armor/binary) returns null and the
+         * caller decrypts first. This is the "Import from Proton Pass" path.
+         */
+        fun parseImport(raw: String): Envelope? {
+            val t = raw.trimStart()
+            if (!(t.startsWith("{") || t.startsWith("["))) return null
+            return runCatching { fromJson(t) }.getOrNull()
+        }
     }
 }
