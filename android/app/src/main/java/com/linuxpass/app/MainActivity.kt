@@ -79,7 +79,14 @@ class MainActivity : ComponentActivity() {
                     return
                 }
                 is VaultSession.Result.Interaction -> { launchInteraction(r.pendingIntent); awaitInteraction() }
-                is VaultSession.Result.Error -> { status = r.message; return }
+                is VaultSession.Result.Error -> {
+                    if (!File(VaultSession.vaultFilePath()).exists()) {
+                        // No vault on this device: setup screen, not an error.
+                        screen = Screen.SetupChoice
+                        status = "No vault on this device — create or import one below."
+                    } else status = r.message
+                    return
+                }
             }
         }
         status = "Unlock aborted after interaction retry."
