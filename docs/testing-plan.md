@@ -153,6 +153,11 @@ silent pass.
 - Pending: real-applet-keys variant of the above (YubiKey pairing in OpenKeyChain + the real 192 KB vault), USB restore+merge drill, S6 NFC timing.
 - Fixes landed en route: search rows clickable; push-retry on clean tree; `getRootViewNode()` API name; PAT field on first-run setup AND on the locked screen when unstored.
 
+**2026-10-04 — Signed commits PASS (same device):**
+- App save → OpenKeyChain `DETACHED_SIGN` with the vault identity's key (noodlefish, EDDSA) → JGit commit carries the gpgsig header → pushed `6b0f890` (rev 5).
+- Desktop `git log --show-signature`: **"gpg: Good signature from Noodlefish0 <noodlefish@nan.404>"** (trust warning expected — key not Web-of-Trust certified).
+- Fallback in place: if the signing key cannot sign, the commit pushes unsigned with a status note.
+
 **2026-10-04 — USB restore + storage verification pass (same device):**
 - **USB restore + merge: PASS** — picked the saved rev-3 snapshot from Downloads; decrypt → union-merge with current → rev 4 (1175 B) → push `2a87a9a`, remote-verified.
 - **PAT at rest: PROVEN encrypted** — `run-as` dump of the SecretStore prefs shows only an IV-prefixed AES/GCM base64 blob; plaintext PAT appears **0** times in app storage.
