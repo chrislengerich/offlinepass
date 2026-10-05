@@ -46,11 +46,11 @@ class MainActivity : ComponentActivity() {
     private var screen by mutableStateOf<Screen>(Screen.SetupChoice)
     private var status by mutableStateOf("")
     private var searchQuery by mutableStateOf("")
-    private var pendingInteraction: CancellableContinuation<Unit>? = null
+    private var pendingInteraction: CancellableContinuation<Intent?>? = null
 
     private val interactionLauncher =
-        registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { _ ->
-            pendingInteraction?.resume(Unit)
+        registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+            pendingInteraction?.resume(result.data)
             pendingInteraction = null
         }
 
@@ -58,12 +58,13 @@ class MainActivity : ComponentActivity() {
         interactionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
     }
 
-    private suspend fun awaitInteraction() {
-        suspendCancellableCoroutine<Unit> { cont ->
+    /** Suspends until the PendingIntent completes; returns its result Intent. */
+    private suspend fun awaitInteraction(): Intent? =
+        suspendCancellableCoroutine { cont ->
             pendingInteraction = cont
             cont.invokeOnCancellation { pendingInteraction = null }
         }
-    }
+    private var lastInteractionData: Intent? = null
 
     /** Retries the op while OpenKeyChain keeps asking for interaction. */
     private suspend fun unlockLoop() {
@@ -325,7 +326,7 @@ class MainActivity : ComponentActivity() {
                     onAddRecipient = {
                         lifecycleScope.launch {
                             var guard = 0
-                            while (guard++ < 5) {
+                            while (guard++ < 3) {
                                 when (val r = VaultSession.pickRecipient()) {
                                     VaultSession.Result.Success -> {
                                         val picked = VaultSession.lastPickedKeyIds
@@ -339,11 +340,26 @@ class MainActivity : ComponentActivity() {
                                         return@launch
                                     }
                                     is VaultSession.Result.Interaction -> {
-                                        launchInteraction(r.pendingIntent); awaitInteraction()
+                                        launchInteraction(r.pendingIntent)
+                                        val data = awaitInteraction()
+                                        // The picker returns the picked keys in
+                                        // the result's key_ids extra — persist
+                                        // them directly (no re-lookup).
+                                        val picked = data?.getLongArrayExtra("key_ids")
+                                            ?.toList()?.takeIf { it.isNotEmpty() }
+                                        if (picked != null) {
+                                            VaultSession.setRecipientKeyIds(
+                                                (VaultSession.recipientKeyIds() + picked).distinct()
+                                            )
+                                            status = "Recipients added: " +
+                                                picked.joinToString(" ") { "0x%016X".format(it) }
+                                            return@launch
+                                        }
                                     }
                                     is VaultSession.Result.Error -> { status = "Recipient: ${r.message}"; return@launch }
                                 }
                             }
+                            status = "Recipient picking aborted."
                         }
                     },
                     onRemoveRecipient = { id ->

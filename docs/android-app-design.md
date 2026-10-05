@@ -338,6 +338,11 @@ summary:
 14. Backlog upgrade: in-app CCID `PSO:SIGN` against the YubiKey's [A]
     subkey so the hardware key signs SSH too (raw USB/CCID + card
     protocol; weeks-scale).
+15. Commit signing today = the vault identity's key (picker-chosen
+    recipients; unsigned fallback). A DEDICATED signing key — picked via
+    OpenKeyChain's `GET_SIGN_KEY_ID` picker (already in OpenPgpClient) —
+    is a separate config field for later; needed when the recipient keys
+    cannot sign (e.g. [CE] applet primaries).
 
 ## 17. References
 
