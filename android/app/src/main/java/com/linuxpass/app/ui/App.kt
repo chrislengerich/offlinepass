@@ -106,11 +106,11 @@ fun SetupChoiceScreen(
             ) { Text("Create empty vault") }
             Button(
                 onClick = { importPicker.launch(arrayOf("*/*")) },
-                enabled = recipientIds.isNotEmpty() && remote.isNotBlank(),
+                enabled = recipientIds.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Import from Proton Pass export") }
             if (remote.isBlank()) Text(
-                "Import needs a remote (the import is encrypted to recipients on save).",
+                "Local-only mode: the import is encrypted to the recipients and kept on this device.",
                 style = MaterialTheme.typography.bodySmall
             )
         } else {

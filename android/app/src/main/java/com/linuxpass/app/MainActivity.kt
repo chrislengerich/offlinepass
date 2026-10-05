@@ -267,7 +267,16 @@ class MainActivity : ComponentActivity() {
                         // then recipients, then the (empty) vault persists on
                         // first save.
                         val open = VaultSession.gitOpenOnly()
-                        if (open is VaultSession.Result.Error) { status = open.message; return@launch }
+                        if (open is VaultSession.Result.Error) {
+                            android.widget.Toast.makeText(this@MainActivity,
+                                "Offline — will sync later", android.widget.Toast.LENGTH_LONG).show()
+                            status = "Offline: repo not fetched. Use Sync now when back online."
+                            if (!File(VaultSession.vaultFilePath()).exists()) {
+                                VaultSession.adopt(Envelope(rev = 0, deviceId = VaultSession.deviceId()))
+                            }
+                            screen = Screen.Search
+                            return@launch
+                        }
                         pickRecipientsUntilDone()
                         screen = Screen.Search
                         status = "New vault ready — Add entry to begin."
@@ -290,7 +299,11 @@ class MainActivity : ComponentActivity() {
                             return@launch
                         }
                         val open = VaultSession.gitOpenOnly()
-                        if (open is VaultSession.Result.Error) { status = open.message; return@launch }
+                        if (open is VaultSession.Result.Error) {
+                            android.widget.Toast.makeText(this@MainActivity,
+                                "Offline — will sync later", android.widget.Toast.LENGTH_LONG).show()
+                            status = "Offline: repo not fetched. Use Sync now when back online."
+                        }
                         VaultSession.adopt(env)
                         status = "Imported ${env.items.size} entries — pick recipients."
                         pickRecipientsUntilDone()
@@ -313,7 +326,16 @@ class MainActivity : ComponentActivity() {
                     status = ""
                     lifecycleScope.launch {
                         val open = VaultSession.gitOpenOnly()  // explicit network step
-                        if (open is VaultSession.Result.Error) { status = open.message; return@launch }
+                        if (open is VaultSession.Result.Error) {
+                            android.widget.Toast.makeText(this@MainActivity,
+                                "Offline — will sync later", android.widget.Toast.LENGTH_LONG).show()
+                            status = "Offline: repo not fetched."
+                            if (!File(VaultSession.vaultFilePath()).exists()) {
+                                VaultSession.adopt(Envelope(rev = 0, deviceId = VaultSession.deviceId()))
+                            }
+                            screen = Screen.Search
+                            return@launch
+                        }
                         unlockLoop()
                         android.widget.Toast.makeText(this@MainActivity, "Vault loaded",
                             android.widget.Toast.LENGTH_SHORT).show()
