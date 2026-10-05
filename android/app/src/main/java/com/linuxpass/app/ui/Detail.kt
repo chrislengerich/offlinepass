@@ -108,6 +108,8 @@ fun EntryDetailScreen(
             enabled = dirty && busy == null,
             modifier = Modifier.fillMaxWidth()
         ) { Text("Save changes") }
+        // Save status sits directly under the button.
+        if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
         if (dirty) Text("Unsaved changes — Save to persist.", style = MaterialTheme.typography.bodySmall)
 
         if (totp != null) {
@@ -134,7 +136,6 @@ fun EntryDetailScreen(
             Text("Delete entry")
         }
         if (busy != null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
 
         if (showRegenConfirm) {
             AlertDialog(
