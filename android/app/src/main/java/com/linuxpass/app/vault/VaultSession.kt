@@ -86,21 +86,21 @@ object VaultSession {
         prefs().edit().putString("recipientKeyIds", ids.joinToString(",")).apply()
     }
 
-    var lastPickedKeyId: Long? = null
+    var lastPickedKeyIds: List<Long> = emptyList()
         private set
 
     /**
      * Recipient PICK via OpenKeyChain's own keyring UI: a lookup for an
-     * unknown user id raises the key-selection screen; the picked key comes
-     * back as its key id (in [lastPickedKeyId]). Returns the picked id, or
-     * Interaction for the UI loop while the picker is up.
+     * unknown user id raises the key-selection screen (multi-select
+     * checkboxes); every picked key comes back in the result's key-id array
+     * (in [lastPickedKeyIds]). Interaction propagates for the UI loop.
      */
     suspend fun pickRecipient(): Result {
         val client = OpenPgpClient(appContext)
         return when (val lookup = client.lookupKeyIds(arrayOf(PICK_SENTINEL))) {
             is OpenPgpClient.KeyLookup.Success -> {
                 if (lookup.keyIds.isNotEmpty()) {
-                    lastPickedKeyId = lookup.keyIds.first()
+                    lastPickedKeyIds = lookup.keyIds.toList()
                     Result.Success
                 } else Result.Error("Pick returned no key")
             }

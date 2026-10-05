@@ -328,11 +328,13 @@ class MainActivity : ComponentActivity() {
                             while (guard++ < 5) {
                                 when (val r = VaultSession.pickRecipient()) {
                                     VaultSession.Result.Success -> {
-                                        VaultSession.lastPickedKeyId?.let { id ->
+                                        val picked = VaultSession.lastPickedKeyIds
+                                        if (picked.isNotEmpty()) {
                                             VaultSession.setRecipientKeyIds(
-                                                (VaultSession.recipientKeyIds() + id).distinct()
+                                                (VaultSession.recipientKeyIds() + picked).distinct()
                                             )
-                                            status = "Recipient added: 0x%016X".format(id)
+                                            status = "Recipients added: " +
+                                                picked.joinToString(" ") { "0x%016X".format(it) }
                                         }
                                         return@launch
                                     }
