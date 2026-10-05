@@ -141,6 +141,18 @@ silent pass.
 - **Pending:** T-D-01/02 with the *real applet keys* + real `10.gpg` (OpenKeychain currently holds only noodlefish + Jiji S as software keys; applet keys need pairing). T-X-01 deferred to that run (desktop holds the real secrets; noodlefish self-encryption can't be desktop-decrypted by design).
 - Platform notes: short screen-timeout stalls the flow → `svc power stayon usb`; scoped-storage EACCES on raw `/sdcard` paths → inputs read from the app's external dir; `S1DecryptActivity` stays non-exported, extras forwarded via `MainActivity`.
 
+**2026-10-04 — End-to-end pass (Pixel 10a, adb-driven; stub vault via `noodlefish@nan.404`, GitHub storage-test repo):**
+- Setup → Load from GitHub: clone → decrypt → **5 entries listed** (search screen, TUI-parity).
+- Entry detail: reveal, **live TOTP ticking** (AWS Console entry), actions all present.
+- **Update password: PASS** — rev 1, push `0805291`, remote-verified.
+- **Add entry: PASS** — `test.example.com`/`testuser`, rev 2, push `fa86961`, remote-verified + listed.
+- **Delete: PASS** — tombstone, rev 3, push `27ef021`, entry gone from list.
+- **QRFT export: PASS** — paste prefilled with the real entry payload, sender auto-started ("chunk 1/2" looping; screenshot).
+- **Autofill: PASS** — service enabled via system picker; fake-login form offered ranked datasets (AWS/GitHub/GitLab); selecting AWS Console filled username + password (screenshot).
+- **USB save: PASS** — SAF snapshot `linuxpass-vault-rev3.gpg` (1174 B), desktop-pulled.
+- Pending: real-applet-keys variant of the above (YubiKey pairing in OpenKeyChain + the real 192 KB vault), USB restore+merge drill, S6 NFC timing.
+- Fixes landed en route: search rows clickable; push-retry on clean tree; `getRootViewNode()` API name; PAT field on first-run setup AND on the locked screen when unstored.
+
 ## 6. Traceability — phase exit criteria
 
 | Milestone (work plan) | Green tests |
