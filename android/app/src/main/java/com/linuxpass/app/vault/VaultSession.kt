@@ -62,7 +62,9 @@ object VaultSession {
     fun init(context: Context) {
         if (::appContext.isInitialized) return
         appContext = context.applicationContext
-        state = if (config() == null && !localVaultFile().exists()) State.NoConfig else State.Locked
+        // A local vault file = the vault exists → Locked (unlock screen).
+        // No local vault → the setup/import screen (no unlock shown).
+        state = if (File(vaultFilePath()).exists()) State.Locked else State.NoConfig
     }
 
     // -- config -------------------------------------------------------------
@@ -164,12 +166,10 @@ object VaultSession {
      */
     suspend fun unlock(): Result {
         val cfg = config()
-        // New-vault flow: no file yet — adopt an empty envelope (first save
-        // creates it, encrypted to the picked recipients).
+        // Unlock only ever runs against an existing local vault (the setup
+        // screen handles the no-vault case).
         if (!File(vaultFilePath()).exists()) {
-            val fresh = Envelope(rev = 0, deviceId = deviceId())
-            adopt(fresh)
-            return Result.Success
+            return Result.Error("No local vault — use the setup screen.")
         }
         busy = "Decrypting vault… (touch your key)"
         try {
