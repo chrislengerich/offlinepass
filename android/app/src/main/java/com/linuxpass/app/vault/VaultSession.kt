@@ -137,14 +137,10 @@ object VaultSession {
      * Persists config. remote == null => local-only mode. Returns immediately;
      * the repo is opened on next unlock.
      */
+    /** Persists config. remote == null => local-only mode (same git repo,
+     * no remotes). Adding/switching a remote later does NOT wipe anything:
+     * the existing history connects + merges via syncNow. */
     fun configure(remoteUrl: String?, recipientEmails: List<String>) {
-        val old = prefs().getString("remoteUrl", null)
-        if (remoteUrl != null && old != null && old != remoteUrl) {
-            // Remote changed: wipe the stale clone from another vault era
-            // (reinit git state — fresh clone on next unlock).
-            gitRoot().deleteRecursively()
-            Log.i(TAG, "remote changed: wiped stale clone")
-        }
         prefs().edit()
             .putString("remoteUrl", remoteUrl)
             .putString("recipientEmails", recipientEmails.joinToString(","))
@@ -158,11 +154,10 @@ object VaultSession {
 
     // -- paths ----------------------------------------------------------------
 
+    /** The repo dir — used in BOTH modes: remote mode has origin configured,
+     * local-only mode is the same git repo without remotes. */
     private fun gitRoot(): File = File(appContext.filesDir, "vault/repo")
-    private fun localRoot(): File = File(appContext.filesDir, "vault/local")
-    private fun vaultFile(): File =
-        if (config()?.remoteUrl != null) File(gitRoot(), "state/10.gpg")
-        else File(localRoot(), "state/10.gpg")
+    private fun vaultFile(): File = File(gitRoot(), "state/10.gpg")
 
     private fun secretStore() = SecretStore(appContext)
 
@@ -279,8 +274,7 @@ object VaultSession {
                 // Materialize the recipients' armored public keys + ledger
                 // into the repo, so git history records exactly who can open
                 // each revision (design: keys/*.public.asc + recipients.txt).
-                val repoRoot = if (cfg.remoteUrl != null) gitRoot() else VaultGitClient().gitInit(localRoot())
-                val keysOk = materializeRecipientKeys(client, repoRoot, keyIds)
+                val keysOk = materializeRecipientKeys(client, gitRoot(), keyIds)
                 if (!keysOk) syncStatus = "Some recipient key files missing (retried next save)"
 
                 val signer = OpenKeyChainSigner(client, keyIds.first())
@@ -302,9 +296,9 @@ object VaultSession {
                         return@withContext Result.Error("Saved locally; push failed: ${e.message}")
                     }
                 } else {
-                    // LOCAL-ONLY: still a git repo — history without a remote.
-                    VaultGitClient().gitInit(localRoot())
-                    VaultGitClient().commitFile(localRoot(), "Update 10.gpg (rev ${env.rev})", signer)
+                    // LOCAL-ONLY: same repo dir, no remotes — history stays on-device.
+                    VaultGitClient().gitInit(gitRoot())
+                    VaultGitClient().commitFile(gitRoot(), "Update 10.gpg (rev ${env.rev})", signer)
                     syncStatus = "Committed locally (rev ${env.rev}, no remote)"
                 }
                 state = State.Unlocked(items)

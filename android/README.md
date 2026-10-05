@@ -28,39 +28,28 @@ UID — and by `adb` only for debug builds via `run-as`).
 /data/data/com.linuxpass.app/                    (app-private, internal)
 ├── files/
 │   ├── vault/
-│   │   ├── repo/                        # REMOTE mode: clone of the vault repo
-│   │   │   ├── .git/                    #   history of ciphertext commits only
-│   │   │   ├── keys/
-│   │   │   │   ├── <KEYID>.public.asc   # recipients' armored public halves
-│   │   │   │   └── recipients.txt       # ledger: emails, key ids, deviceId
-│   │   │   └── state/
-│   │   │       └── 10.gpg               # THE VAULT — OpenPGP ciphertext
-│   │   └── local/                       # LOCAL-ONLY mode: same layout,
-│   │       ├── .git/                    #   git history without a remote
-│   │       ├── keys/                    #   (recipients ledger kept too)
-│   │       └── state/10.gpg
+│   │   └── repo/                        # THE repo — same location in both modes
+│   │       ├── .git/                    #   ciphertext commits only;
+│   │       │                            #   local-only mode: no remotes
+│   │       ├── keys/                    # who can open the vault (ledger)
+│   │       │   ├── <KEYID>.public.asc   #   recipients' armored public halves
+│   │       │   └── recipients.txt       #   emails, key ids, deviceId, timestamp
+│   │       └── state/
+│   │           └── 10.gpg               # THE VAULT — OpenPGP ciphertext
 │   └── cache/                           # transient decrypt buffers (wiped)
 ├── shared_prefs/
-│   ├── vault_config.xml                 # remote URL, recipient emails, deviceId
-│   ├── linuxpass_secret_keys.xml        # PAT: AES-256-GCM blob wrapped by
-│   │                                    #   AndroidKeyStore (TEE-held)
-│   └── recipientKeyIds (in vault_config) # picked via the OpenKeyChain picker
-
-/sdcard/Android/data/com.linuxpass.app/files/   (app external dir)
-├── storage-pat.txt                       # optional: PAT prefill (remove after setup)
-└── id-linuxpass.pub                      # the device's Keystore SSH public key
+│   ├── vault_config.xml                 # remote URL (absent in local-only),
+│   │                                    #   recipient emails, deviceId
+│   └── linuxpass_secret_keys.xml        # the PAT: AES-256-GCM blob wrapped by
+│                                        #   AndroidKeyStore (TEE-held)
+└── (sdcard) Android/data/com.linuxpass.app/files/
+    ├── storage-pat.txt                  # optional PAT prefill (remove after setup)
+    └── id-linuxpass.pub                 # the device's Keystore SSH public key
 ```
 
-**The vault repo layout (both local-only and the remote side):**
-
-```
-├── keys/                                 # who can open the vault (ledger)
-│   ├── <KEYID>.public.asc
-│   ├── ...
-│   └── recipients.txt
-└── state/
-    └── 10.gpg                            # the vault (OpenPGP ciphertext)
-```
+Local-only mode is the **same git repo** without a `remote`; configuring a
+remote later connects it (`git remote add origin`) — history merges via the
+sync flow; nothing is wiped.
 
 **Encryption states, per artifact:**
 

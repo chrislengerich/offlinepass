@@ -43,6 +43,13 @@ class VaultGitClient {
         root.parentFile?.mkdirs()
         if (File(root, Constants.DOT_GIT).exists()) {
             Git.open(root).use { git ->
+                // A local-only repo gaining a remote for the first time:
+                // connect origin (the history merges via syncNow's
+                // divergence handling).
+                if (git.repository.config.getString("remote", "origin", "url") == null) {
+                    git.remoteAdd().setName("origin").setUri(org.eclipse.jgit.transport.URIish(remote)).call()
+                    Log.i(TAG, "connected local repo to origin")
+                }
                 // A remote with no refs yet (first device in an empty repo)
                 // is the normal first-use state, not a failure.
                 runCatching {
