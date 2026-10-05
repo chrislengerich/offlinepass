@@ -18,13 +18,12 @@ import java.io.File
 
 /**
  * S5 — the vendored qrft generator (airgap-qr-offline `generator.html` +
- * vendor libs) served from app assets at a secure origin, so the page's
- * camera-less QR loop runs fully offline. The payload file was written by
- * the app; the user picks it in the page's file chooser (SAF-bridged,
- * initial URI lands in the app's own dir).
+ * vendor libs) served from app assets at a secure origin, fully offline.
+ * The entry payload is prefilled into the page's paste box and the sender
+ * auto-starts on page load.
  */
 @Composable
-fun QrftScreen(payloadFile: File, onBack: () -> Unit) {
+fun QrftScreen(payload: String, onBack: () -> Unit) {
     val context = LocalContext.current
     var fileCallback by remember { mutableStateOf<android.webkit.ValueCallback<Array<Uri>>?>(null) }
 
@@ -40,7 +39,7 @@ fun QrftScreen(payloadFile: File, onBack: () -> Unit) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("← Back") }
-            Text("qrft generator — pick entry-latest.json when prompted", style = MaterialTheme.typography.bodySmall)
+            Text("QRFT sender — scanning device picks this up as a file", style = MaterialTheme.typography.bodySmall)
         }
         AndroidView(
             modifier = Modifier.fillMaxSize(),
@@ -57,6 +56,22 @@ fun QrftScreen(payloadFile: File, onBack: () -> Unit) {
                             view: WebView,
                             request: WebResourceRequest
                         ): WebResourceResponse? = assetLoader.shouldInterceptRequest(request.url)
+
+                        override fun onPageFinished(view: WebView, url: String?) {
+                            // Prefill the paste box (it takes priority over a
+                            // chosen file) and start the sender.
+                            val js = """
+                                (function(){
+                                    var t = document.getElementById('text_input');
+                                    if (!t) return;
+                                    t.value = ${org.json.JSONObject.quote(payload)};
+                                    t.dispatchEvent(new Event('input'));
+                                    var b = document.getElementById('btn_start');
+                                    if (b) b.click();
+                                })()
+                            """.trimIndent()
+                            view.evaluateJavascript(js, null)
+                        }
                     }
                     webChromeClient = object : WebChromeClient() {
                         override fun onShowFileChooser(

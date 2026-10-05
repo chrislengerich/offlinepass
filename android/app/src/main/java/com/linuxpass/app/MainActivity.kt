@@ -295,7 +295,8 @@ class MainActivity : ComponentActivity() {
                 is Screen.Qrft -> {
                     val item = currentDetailItem(s.itemUuid)
                     QrftScreen(
-                        payloadFile = File(getExternalFilesDir(null), "entry-latest.json"),
+                        payload = if (item != null) entryPayload(item)
+                        else File(getExternalFilesDir(null), "entry-latest.json").readText(),
                         onBack = { if (item != null) screen = Screen.Detail(item.itemUuid) else screen = Screen.Search }
                     )
                 }
