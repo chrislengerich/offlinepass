@@ -442,6 +442,14 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     },
+                    onResetRepo = {
+                        lifecycleScope.launch {
+                            status = when (val r = VaultSession.resetRepo()) {
+                                VaultSession.Result.Success -> "Repo reset (fresh clone, state re-applied)."
+                                else -> "Reset: $r"
+                            }
+                        }
+                    },
                     onUsbSave = { usbSaveLauncher.launch("linuxpass-vault-rev${VaultSession.currentRev()}.gpg") },
                     onUsbRestore = { usbRestoreLauncher.launch(arrayOf("application/octet-stream")) },
                     onEnableAutofill = { requestAutofillService() },

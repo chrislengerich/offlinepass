@@ -371,11 +371,45 @@ object VaultSession {
         }
     }
 
+    /** Wipes + re-clones the git state, preserving the current vault
+     * ciphertext (re-applied + pushed when the session is unlocked). This
+     * is the escape hatch for "destination path exists"/corrupted-clone
+     * states. The LOCAL-ONLY vault file is untouched (it's not a repo). */
+    suspend fun resetRepo(): Result {
+        val cfg = config() ?: return Result.Error("Local-only mode: nothing to reset")
+        val pat = pat() ?: return Result.Error("No PAT stored")
+        busy = "Resetting repo…"
+        try {
+            withContext(Dispatchers.IO) {
+                val saved = vaultFile().takeIf { it.exists() }?.readBytes()
+                gitRoot().deleteRecursively()
+                VaultGitClient().open(cfg.remoteUrl!!, pat, gitRoot())
+                saved?.let { bytes ->
+                    val vf = vaultFile()
+                    vf.parentFile?.mkdirs()
+                    vf.writeBytes(bytes)
+                }
+            }
+            // Re-apply the live session state (re-encrypt + merge-aware push)
+            // when the vault is unlocked; otherwise the restored ciphertext
+            // stands as-is.
+            val items = (state as? State.Unlocked)?.items
+            if (items != null) return save(items)
+            syncStatus = "Repo reset (re-cloned)"
+            return Result.Success
+        } catch (e: Exception) {
+            Log.w(TAG, "resetRepo failed: ${e.message}")
+            syncStatus = "Repo reset failed: ${e.message?.take(50)}"
+            return Result.Error("${e.javaClass.simpleName}: ${e.message}")
+        } finally {
+            busy = null
+        }
+    }
+
     /** Fetch + push, with application-level union-merge when the two
      * devices diverged (the M3 convergence path). */
     suspend fun syncNow(): Result {
-        val cfg = config() ?: return Result.Error("Local-only mode: nothing to sync")
-        val remote = cfg.remoteUrl ?: return Result.Error("Local-only mode: nothing to sync")
+        val cfg = config() ?: return Result.Error("Local-only mode: nothing to sync")        val remote = cfg.remoteUrl ?: return Result.Error("Local-only mode: nothing to sync")
         val pat = pat() ?: return Result.Error("No PAT stored")
         busy = "Syncing…"
         try {

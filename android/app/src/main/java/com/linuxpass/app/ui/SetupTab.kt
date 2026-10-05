@@ -20,6 +20,7 @@ fun SetupTabScreen(
     busy: String?,
     onBack: () -> Unit,
     onTestSync: () -> Unit,
+    onResetRepo: () -> Unit,
     onUsbSave: () -> Unit,
     onUsbRestore: () -> Unit,
     onEnableAutofill: () -> Unit,
@@ -55,6 +56,11 @@ fun SetupTabScreen(
             Button(onClick = onTestSync, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
                 Text("Sync now (fetch/push)")
             }
+            Button(
+                onClick = onResetRepo,
+                enabled = busy == null,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Reset local repo (wipe + re-clone)") }
         }
         HorizontalDivider()
 

@@ -17,6 +17,41 @@ Native Android client for the linuxpass vault (design:
 | S5 | Vendored qrft generator interop | not started |
 | S6 | NFC / touch UX timing | pending (needs the real YubiKey applet flow) |
 
+## On-device storage & encryption
+
+Everything lives in **app-private storage** (readable only by the app's
+UID — and by `adb` only for debug builds via `run-as`).
+
+```
+filesDir/
+├── vault/
+│   ├── repo/                  # REMOTE mode: git clone of the vault repo
+│   │   ├── state/10.gpg       #   the vault file — OpenPGP ciphertext
+│   │   └── .git/              #   full history of ciphertext commits only
+│   └── local/
+│       └── 10.gpg             # LOCAL-ONLY mode: same format, no git
+└── vault_config.xml-style prefs:
+    ├── remoteUrl, recipientEmails, recipientKeyIds   # NOT secrets
+    └── deviceId               # per-install UUID (envelope bookkeeping)
+
+shared_prefs/linuxpass_secret_keys.xml
+└── pat → AES-256-GCM blob wrapped by an AndroidKeyStore key
+        (the wrapping key is TEE-held + non-exportable)
+```
+
+**Encryption states, per artifact:**
+
+| Artifact | State |
+|---|---|
+| Vault file (`10.gpg`) | OpenPGP ciphertext (RFC 4880), encrypted to the configured recipients: YubiKey-held keys (desktop `gpg`, touch+PIN; phone OpenKeyChain, touch+PIN) and/or a device-held software key (noodlefish pattern). **Never plaintext on disk.** |
+| Git history | Ciphertext commits only — the history enables rollback/audit without exposing content. |
+| PAT | AES-256-GCM blob; the wrapping key lives in the hardware Keystore. A stolen device + pulled files can't unwrap it. |
+| Decrypted entries | **RAM only**, while the session is unlocked. |
+| QR exports | Plaintext by explicit user choice (screen = trust boundary); generated transiently, never persisted. |
+
+**What a stolen device yields:** vault ciphertext + a wrapped token. No
+plaintext, no keys, no decryptable state.
+
 ## Building
 
 Requires Android SDK (compileSdk 36) + JDK 17 — same toolchain as

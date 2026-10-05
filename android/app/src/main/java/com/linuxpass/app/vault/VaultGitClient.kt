@@ -57,6 +57,9 @@ class VaultGitClient {
                 }
             }
         } else {
+            // Stale debris (a previous clone failed mid-write) would make the
+            // clone fail with "destination path exists and is not empty".
+            if (root.exists()) root.deleteRecursively()
             Log.i(TAG, "Cloning $remote into ${root.name}")
             Git.cloneRepository()
                 .setURI(remote)
