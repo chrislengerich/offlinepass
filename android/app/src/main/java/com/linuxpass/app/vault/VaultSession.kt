@@ -159,9 +159,10 @@ object VaultSession {
     // -- paths ----------------------------------------------------------------
 
     private fun gitRoot(): File = File(appContext.filesDir, "vault/repo")
-    private fun localVaultFile(): File = File(appContext.filesDir, "vault/local/10.gpg")
+    private fun localRoot(): File = File(appContext.filesDir, "vault/local")
     private fun vaultFile(): File =
-        if (config()?.remoteUrl != null) File(gitRoot(), "state/10.gpg") else localVaultFile()
+        if (config()?.remoteUrl != null) File(gitRoot(), "state/10.gpg")
+        else File(localRoot(), "state/10.gpg")
 
     private fun secretStore() = SecretStore(appContext)
 
@@ -275,28 +276,36 @@ object VaultSession {
                 loadedEnvelope = env
                 Log.i(TAG, "encrypted ${target.length()} bytes, rev=${env.rev}")
 
+                // Materialize the recipients' armored public keys + ledger
+                // into the repo, so git history records exactly who can open
+                // each revision (design: keys/*.public.asc + recipients.txt).
+                val repoRoot = if (cfg.remoteUrl != null) gitRoot() else VaultGitClient().gitInit(localRoot())
+                val keysOk = materializeRecipientKeys(client, repoRoot, keyIds)
+                if (!keysOk) syncStatus = "Some recipient key files missing (retried next save)"
+
+                val signer = OpenKeyChainSigner(client, keyIds.first())
                 if (cfg.remoteUrl != null) {
                     busy = "Pushing…"
                     val pat = pat() ?: return@withContext Result.Error("No PAT stored")
                     try {
                         // Sign with the same identity that receives the vault
                         // (falls back to an unsigned commit if that key cannot sign).
-                        val signer = OpenKeyChainSigner(client, keyIds.first())
-                        try {
-                            VaultGitClient().pushBranch(cfg.remoteUrl, pat, gitRoot())
-                            syncStatus = "Pushed rev ${env.rev} (signed)"
-                        } catch (e: Exception) {
-                            Log.w(TAG, "push failed: ${e.javaClass.simpleName}: ${e.message}", e)
-                            syncStatus = "Saved locally; push pending"
-                            return@withContext Result.Error("Saved locally; push failed: ${e.message}")
-                        }
+                        VaultGitClient().commitAndPush(
+                            cfg.remoteUrl, pat, gitRoot(),
+                            "Update 10.gpg (rev ${env.rev})", signer = signer
+                        )
+                        syncStatus = if (keysOk) "Pushed rev ${env.rev} (signed)"
+                                     else "Pushed rev ${env.rev} (signed; key files pending)"
                     } catch (e: Exception) {
-                        // The encrypted file is committed locally; the push
-                        // retries on the next save/sync.
                         Log.w(TAG, "push failed (kept local commit): ${e.message}")
                         syncStatus = "Saved locally; push pending"
                         return@withContext Result.Error("Saved locally; push failed: ${e.message}")
                     }
+                } else {
+                    // LOCAL-ONLY: still a git repo — history without a remote.
+                    VaultGitClient().gitInit(localRoot())
+                    VaultGitClient().commitFile(localRoot(), "Update 10.gpg (rev ${env.rev})", signer)
+                    syncStatus = "Committed locally (rev ${env.rev}, no remote)"
                 }
                 state = State.Unlocked(items)
                 Result.Success
@@ -409,7 +418,8 @@ object VaultSession {
     /** Fetch + push, with application-level union-merge when the two
      * devices diverged (the M3 convergence path). */
     suspend fun syncNow(): Result {
-        val cfg = config() ?: return Result.Error("Local-only mode: nothing to sync")        val remote = cfg.remoteUrl ?: return Result.Error("Local-only mode: nothing to sync")
+        val cfg = config() ?: return Result.Error("Local-only mode: nothing to sync")
+        val remote = cfg.remoteUrl ?: return Result.Error("Local-only mode: nothing to sync")
         val pat = pat() ?: return Result.Error("No PAT stored")
         busy = "Syncing…"
         try {
@@ -492,6 +502,47 @@ object VaultSession {
             }
             else -> Log.w(TAG, "post-pull decrypt failed")
         }
+    }
+
+    /**
+     * Writes the recipients' armored public keys (keys/<keyid>.public.asc)
+     * and the recipients ledger (keys/recipients.txt) into the repo root —
+     * committed with the vault, so git history records exactly which keys
+     * can open each revision. Best-effort: a failed fetch is retried on the
+     * next save; returns true when every key file is present.
+     */
+    private suspend fun materializeRecipientKeys(
+        client: OpenPgpClient,
+        repoRoot: File,
+        keyIds: LongArray
+    ): Boolean {
+        var allPresent = true
+        val keysDir = File(repoRoot, "keys").apply { mkdirs() }
+        for (id in keyIds) {
+            val f = File(keysDir, "%016X.public.asc".format(id))
+            if (f.exists()) continue
+            when (val r = client.fetchPublicKeyArmored(id)) {
+                is OpenPgpClient.PublicKey.Success -> {
+                    f.writeText(r.armored.trimEnd() + "\n")
+                    Log.i(TAG, "wrote recipient key file ${f.name}")
+                }
+                else -> {
+                    Log.w(TAG, "armored key fetch pending for 0x%016X".format(id))
+                    allPresent = false
+                }
+            }
+        }
+        val cfg = config()
+        File(keysDir, "recipients.txt").writeText(
+            buildString {
+                appendLine("# who can open this vault (ledger, informational)")
+                appendLine("recipientEmails: " + (cfg?.recipientEmails?.joinToString(", ") ?: "-"))
+                appendLine("recipientKeyIds: " + keyIds.joinToString(" ") { "0x%016X".format(it) })
+                appendLine("deviceId: " + deviceId())
+                appendLine("updated: ${java.util.Date()}")
+            }
+        )
+        return allPresent
     }
 
     sealed interface DecryptEnvelope {

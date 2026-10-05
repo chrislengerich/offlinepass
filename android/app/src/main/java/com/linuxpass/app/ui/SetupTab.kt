@@ -33,6 +33,32 @@ fun SetupTabScreen(
 ) {
     val cfg = VaultSession.config()
     var patInput by remember { mutableStateOf("") }
+    var confirmDialog by remember { mutableStateOf<String?>(null) }
+
+    confirmDialog?.let { what ->
+        AlertDialog(
+            onDismissRequest = { confirmDialog = null },
+            title = { Text("Confirm reset") },
+            text = {
+                Text(
+                    if (what == "repo") "Wipe the local git clone and re-clone from the remote? "
+                        + "Unpushed work is re-applied automatically if the vault is unlocked."
+                    else "Forget the configuration? The vault files stay on the device; "
+                        + "you'll return to the setup screen."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val action = confirmDialog
+                    confirmDialog = null
+                    if (action == "repo") onResetRepo() else onForget()
+                }) { Text("Reset") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDialog = null }) { Text("Cancel") }
+            }
+        )
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -57,7 +83,7 @@ fun SetupTabScreen(
                 Text("Sync now (fetch/push)")
             }
             Button(
-                onClick = onResetRepo,
+                onClick = { confirmDialog = "repo" },
                 enabled = busy == null,
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Reset local repo (wipe + re-clone)") }
@@ -110,7 +136,7 @@ fun SetupTabScreen(
         ) { Text("Save PAT") }
         HorizontalDivider()
 
-        Button(onClick = onForget, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+        Button(onClick = { confirmDialog = "forget" }, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Forget config (keeps files)")
         }
         if (busy != null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())

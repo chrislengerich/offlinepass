@@ -142,6 +142,19 @@ class VaultGitClient {
         }
     }
 
+    /** Inits a LOCAL git repo (local-only vaults: history without a remote). */
+    fun gitInit(root: File, branch: String = "main"): File {
+        if (!File(root, Constants.DOT_GIT).exists()) {
+            root.mkdirs()
+            Git.init().setDirectory(root).call().use { git ->
+                // Point HEAD at the wanted branch (init defaults to master).
+                git.repository.updateRef(Constants.HEAD).link(Constants.R_HEADS + branch)
+            }
+            Log.i(TAG, "Initialized local git repo at ${root.name}")
+        }
+        return root
+    }
+
     /** Pushes the branch; THROWS (does not swallow) on rejection. */
     fun pushBranch(remote: String, pat: String, root: File, branch: String = "main") {
         Git.open(root).use { git ->
