@@ -21,7 +21,7 @@ import org.json.JSONObject
 /** Compact Proton-JSON payload for one entry — the QR Autofill format. */
 fun entryPayload(item: ProtonItem): String = item.toProtonJson().toString()
 
-/** Renders a payload as a QR bitmap with ZXing (single-frame export). */
+/** Renders a payload as a QR bitmap with ZXing (kept for qrft frame debugging). */
 fun qrBitmap(payload: String, sizePx: Int = 700): Bitmap {
     val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, sizePx, sizePx)
     val bmp = Bitmap.createBitmap(matrix.width, matrix.height, Bitmap.Config.RGB_565)
@@ -33,8 +33,8 @@ fun qrBitmap(payload: String, sizePx: Int = 700): Bitmap {
 
 /**
  * Entry detail: fields, reveal, live TOTP, and the entry options the TUI
- * offers — QR (single-frame), QR (qrft generator), update password, enroll
- * TOTP, delete.
+ * offers — QR export via the vendored qrft generator, update password,
+ * enroll TOTP, delete.
  */
 @Composable
 fun EntryDetailScreen(
@@ -42,8 +42,7 @@ fun EntryDetailScreen(
     status: String,
     busy: String?,
     onBack: () -> Unit,
-    onQrSingleFrame: () -> Unit,
-    onQrQrft: () -> Unit,
+    onExportQr: () -> Unit,
     onUpdatePassword: () -> Unit,
     onEnrollTotp: (String) -> Unit,
     onDelete: () -> Unit
@@ -89,11 +88,8 @@ fun EntryDetailScreen(
         if (item.note.isNotBlank()) Text("Note: ${item.note}")
 
         HorizontalDivider()
-        Button(onClick = onQrSingleFrame, modifier = Modifier.fillMaxWidth()) {
-            Text("Display QR (single frame — QR Autofill)")
-        }
-        Button(onClick = onQrQrft, modifier = Modifier.fillMaxWidth()) {
-            Text("Display QR (qrft generator — low-dependency machines)")
+        Button(onClick = onExportQr, modifier = Modifier.fillMaxWidth()) {
+            Text("Export QR (qrft generator — low-dependency machines)")
         }
         Button(onClick = onUpdatePassword, modifier = Modifier.fillMaxWidth()) { Text("Update password") }
         if (item.totpUri.isBlank()) {
@@ -125,25 +121,5 @@ fun EntryDetailScreen(
                 OutlinedButton(onClick = { showTotpEntry = false }) { Text("Cancel") }
             }
         }
-    }
-}
-
-/** Full-screen single-frame QR for the entry payload. */
-@Composable
-fun QrScreen(payload: String, onBack: () -> Unit) {
-    val bmp = remember(payload) { qrBitmap(payload) }
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        TextButton(onClick = onBack) { Text("← Back") }
-        Text("Scan with QR Autofill (or any QR decoder)", style = MaterialTheme.typography.bodyMedium)
-        Image(
-            bitmap = bmp.asImageBitmap(),
-            contentDescription = "entry QR",
-            modifier = Modifier.fillMaxWidth().background(Color.White).padding(8.dp)
-        )
-        Text("Payload ${payload.length} bytes", style = MaterialTheme.typography.bodySmall)
     }
 }

@@ -18,6 +18,9 @@
         android:theme="@style/Theme.Linuxpass"
         android:allowBackup="false">
         <activity
+            android:name=".spike.FakeLoginActivity"
+            android:exported="false" />
+        <activity
             android:name=".MainActivity"
             android:exported="true">
             <intent-filter>
@@ -33,6 +36,9 @@
             android:exported="false" />
         <activity
             android:name=".spike.S3GitActivity"
+            android:exported="false" />
+        <activity
+            android:name=".spike.FakeLoginActivity"
             android:exported="false" />
 
         <!-- Sharing the re-encrypted spike output back to the desktop. -->

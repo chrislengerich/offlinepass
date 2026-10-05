@@ -23,7 +23,6 @@ import com.linuxpass.app.ui.SearchScreen
 import com.linuxpass.app.ui.SetupTabScreen
 import com.linuxpass.app.ui.AddEntryScreen
 import com.linuxpass.app.ui.EntryDetailScreen
-import com.linuxpass.app.ui.QrScreen
 import com.linuxpass.app.ui.QrftScreen
 import com.linuxpass.app.ui.entryPayload
 import com.linuxpass.app.vault.PasswordGen
@@ -209,8 +208,12 @@ class MainActivity : ComponentActivity() {
                     "https://github.com/planetaltitude/linuxpass-storage-test.git",
                     "noodlefish@nan.404"
                 ),
-                onConfigured = { remote, emails ->
+                prefillPat = runCatching {
+                    File(getExternalFilesDir(null), "storage-pat.txt").readText().trim()
+                }.getOrDefault(""),
+                onConfigured = { remote, emails, pat ->
                     VaultSession.configure(remote, emails)
+                    if (pat.isNotBlank()) VaultSession.savePat(pat)
                     status = ""
                     lifecycleScope.launch { unlockLoop() }
                 },
@@ -220,6 +223,8 @@ class MainActivity : ComponentActivity() {
             VaultSession.State.Locked -> UnlockScreen(
                 status = status,
                 busy = VaultSession.busy,
+                patMissing = VaultSession.config()?.remoteUrl != null && !VaultSession.hasPat(),
+                onPatSave = { VaultSession.savePat(it); status = "PAT stored (encrypted)." },
                 onUnlock = { lifecycleScope.launch { unlockLoop() } }
             )
             is VaultSession.State.Unlocked -> when (val s = screen) {
@@ -241,8 +246,7 @@ class MainActivity : ComponentActivity() {
                         status = status,
                         busy = VaultSession.busy,
                         onBack = { screen = Screen.Search },
-                        onQrSingleFrame = { screen = Screen.Qr(item.itemUuid) },
-                        onQrQrft = {
+                        onExportQr = {
                             lifecycleScope.launch {
                                 val payload = entryPayload(item)
                                 File(getExternalFilesDir(null), "entry-latest.json").writeText(payload)
@@ -288,11 +292,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 )
-                is Screen.Qr -> {
-                    val item = currentDetailItem(s.itemUuid)
-                    if (item == null) screen = Screen.Search
-                    else QrScreen(payload = entryPayload(item), onBack = { screen = Screen.Detail(item.itemUuid) })
-                }
                 is Screen.Qrft -> {
                     val item = currentDetailItem(s.itemUuid)
                     QrftScreen(
@@ -315,6 +314,9 @@ class MainActivity : ComponentActivity() {
                     onUsbSave = { usbSaveLauncher.launch("linuxpass-vault-rev${VaultSession.currentRev()}.gpg") },
                     onUsbRestore = { usbRestoreLauncher.launch(arrayOf("application/octet-stream")) },
                     onEnableAutofill = { requestAutofillService() },
+                    onFakeLogin = {
+                        startActivity(Intent(this, com.linuxpass.app.spike.FakeLoginActivity::class.java))
+                    },
                     onForget = { VaultSession.forgetConfig(); screen = Screen.SetupChoice },
                     patSave = { VaultSession.savePat(it); status = "PAT stored (encrypted)." },
                     autofillEnabled = isAutofillEnabled()

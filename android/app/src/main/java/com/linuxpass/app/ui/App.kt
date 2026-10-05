@@ -1,5 +1,6 @@
 package com.linuxpass.app.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,7 +18,6 @@ sealed class Screen {
     object Search : Screen()
     data class Detail(val itemUuid: String) : Screen()
     object AddEntry : Screen()
-    data class Qr(val itemUuid: String) : Screen()
     data class Qrft(val itemUuid: String) : Screen()
     object Setup : Screen()
 }
@@ -30,12 +30,14 @@ sealed class Screen {
 @Composable
 fun SetupChoiceScreen(
     defaults: Pair<String, String>, // remote, recipient emails
-    onConfigured: (remote: String?, emails: List<String>) -> Unit,
+    prefillPat: String,
+    onConfigured: (remote: String?, emails: List<String>, pat: String) -> Unit,
     status: String,
     onLoadUsb: () -> Unit
 ) {
     var remote by remember { mutableStateOf(defaults.first) }
     var email by remember { mutableStateOf(defaults.second) }
+    var pat by remember { mutableStateOf(prefillPat) }
     var mode by remember { mutableStateOf("load") }
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -56,6 +58,15 @@ fun SetupChoiceScreen(
             label = { Text("OpenKeyChain recipient email(s), comma-separated") }, singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
+        if (mode == "load" && remote.isNotBlank()) {
+            OutlinedTextField(
+                value = pat, onValueChange = { pat = it },
+                label = { Text("Fine-grained PAT (stored encrypted)") },
+                singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
         Text(
             "USB load: no remote configured — local-only mode (the imported file becomes the vault).",
             style = MaterialTheme.typography.bodySmall
@@ -64,7 +75,7 @@ fun SetupChoiceScreen(
             Button(onClick = {
                 val r = remote.trim().ifBlank { null }
                 val emails = email.split(",").map { it.trim() }.filter { it.isNotBlank() }
-                onConfigured(r, emails)
+                onConfigured(r, emails, pat.trim())
             }) { Text(if (mode == "new") "Create (empty vault)" else "Load from GitHub") }
             OutlinedButton(onClick = { onLoadUsb() }) { Text("Load from USB file") }
         }
@@ -72,20 +83,41 @@ fun SetupChoiceScreen(
     }
 }
 
-/** Locked state: one button, one key touch. */
+/** Locked state: one button, one key touch — plus a PAT field when the
+ * remote needs a token that isn't stored yet. */
 @Composable
-fun UnlockScreen(status: String, busy: String?, onUnlock: () -> Unit) {
+fun UnlockScreen(
+    status: String,
+    busy: String?,
+    patMissing: Boolean,
+    onPatSave: (String) -> Unit,
+    onUnlock: () -> Unit
+) {
+    var patInput by remember { mutableStateOf("") }
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(Modifier.height(64.dp))
+        Spacer(Modifier.height(48.dp))
         Text("Vault locked", style = MaterialTheme.typography.headlineSmall)
         Text(
             "Unlocking requires your hardware key (touch + PIN via OpenKeyChain).",
             style = MaterialTheme.typography.bodyMedium
         )
+        if (patMissing) {
+            OutlinedTextField(
+                value = patInput, onValueChange = { patInput = it },
+                label = { Text("Fine-grained PAT (not stored yet)") },
+                singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(onClick = { if (patInput.isNotBlank()) onPatSave(patInput.trim()); patInput = "" },
+                enabled = patInput.isNotBlank()) {
+                Text("Save PAT (encrypted)")
+            }
+        }
         Button(onClick = onUnlock, enabled = busy == null) {
             Text(busy ?: "Unlock")
         }
@@ -133,7 +165,7 @@ fun SearchScreen(
                 ListItem(
                     headlineContent = { Text(item.displayName) },
                     supportingContent = { Text(item.identity.ifBlank { "(no identity)" }) },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().clickable { onOpen(item) },
                     trailingContent = { Text(if (item.totpUri.isNotBlank()) "⏱" else "") }
                 )
                 HorizontalDivider()

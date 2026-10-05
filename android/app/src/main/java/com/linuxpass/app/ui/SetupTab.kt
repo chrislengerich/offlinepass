@@ -20,6 +20,7 @@ fun SetupTabScreen(
     onUsbSave: () -> Unit,
     onUsbRestore: () -> Unit,
     onEnableAutofill: () -> Unit,
+    onFakeLogin: () -> Unit,
     onForget: () -> Unit,
     patSave: (String) -> Unit,
     autofillEnabled: Boolean
@@ -53,6 +54,9 @@ fun SetupTabScreen(
         Text("Autofill", style = MaterialTheme.typography.titleSmall)
         Button(onClick = onEnableAutofill, modifier = Modifier.fillMaxWidth()) {
             Text(if (autofillEnabled) "Autofill: enabled (re-open settings)" else "Enable autofill service")
+        }
+        Button(onClick = onFakeLogin, modifier = Modifier.fillMaxWidth()) {
+            Text("Open fake login (autofill test)")
         }
         HorizontalDivider()
         Text("PAT rotation (stored encrypted)", style = MaterialTheme.typography.titleSmall)
