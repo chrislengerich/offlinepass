@@ -153,6 +153,12 @@ silent pass.
 - Pending: real-applet-keys variant of the above (YubiKey pairing in OpenKeyChain + the real 192 KB vault), USB restore+merge drill, S6 NFC timing.
 - Fixes landed en route: search rows clickable; push-retry on clean tree; `getRootViewNode()` API name; PAT field on first-run setup AND on the locked screen when unstored.
 
+**2026-10-04 — USB restore + storage verification pass (same device):**
+- **USB restore + merge: PASS** — picked the saved rev-3 snapshot from Downloads; decrypt → union-merge with current → rev 4 (1175 B) → push `2a87a9a`, remote-verified.
+- **PAT at rest: PROVEN encrypted** — `run-as` dump of the SecretStore prefs shows only an IV-prefixed AES/GCM base64 blob; plaintext PAT appears **0** times in app storage.
+- Setup tab now shows: sync status line (above Sync now) + "PAT: stored (encrypted in Android Keystore)".
+- Known gap handled: renaming SecretStore prefs orphaned the previously stored PAT (one-time; re-entered via the new locked-screen field).
+
 ## 6. Traceability — phase exit criteria
 
 | Milestone (work plan) | Green tests |
