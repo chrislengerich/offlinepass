@@ -249,18 +249,12 @@ object VaultSession {
                         // (falls back to an unsigned commit if that key cannot sign).
                         val signer = OpenKeyChainSigner(client, keyIds.first())
                         try {
-                            VaultGitClient().commitAndPush(
-                                cfg.remoteUrl, pat, gitRoot(),
-                                "Update 10.gpg (rev ${env.rev})", signer = signer
-                            )
+                            VaultGitClient().pushBranch(cfg.remoteUrl, pat, gitRoot())
                             syncStatus = "Pushed rev ${env.rev} (signed)"
                         } catch (e: Exception) {
-                            Log.w(TAG, "signed commit failed: ${e.javaClass.simpleName}: ${e.message}", e)
-                            VaultGitClient().commitAndPush(
-                                cfg.remoteUrl, pat, gitRoot(),
-                                "Update 10.gpg (rev ${env.rev})"
-                            )
-                            syncStatus = "Pushed rev ${env.rev} (unsigned)"
+                            Log.w(TAG, "push failed: ${e.javaClass.simpleName}: ${e.message}", e)
+                            syncStatus = "Saved locally; push pending"
+                            return@withContext Result.Error("Saved locally; push failed: ${e.message}")
                         }
                     } catch (e: Exception) {
                         // The encrypted file is committed locally; the push
@@ -325,7 +319,8 @@ object VaultSession {
         return save(remaining)
     }
 
-    /** Fetch + push any pending work (Setup tab "Sync now"). */
+    /** Fetch + push, with application-level union-merge when the two
+     * devices diverged (the M3 convergence path). */
     suspend fun syncNow(): Result {
         val cfg = config() ?: return Result.Error("Local-only mode: nothing to sync")
         val remote = cfg.remoteUrl ?: return Result.Error("Local-only mode: nothing to sync")
@@ -333,9 +328,60 @@ object VaultSession {
         busy = "Syncing…"
         try {
             withContext(Dispatchers.IO) {
-                VaultGitClient().commitAndPush(remote, pat, gitRoot(), "sync")
+                val git = VaultGitClient()
+                val root = gitRoot()
+                git.open(remote, pat, root)
+                val vaultRelPath = "state/10.gpg"
+                when (val div = git.headVsRemote(root)) {
+                    is VaultGitClient.Divergence.UpToDate ->
+                        syncStatus = "Already up to date (rev $rev)"
+                    is VaultGitClient.Divergence.AheadOnly -> {
+                        git.pushBranch(remote, pat, root)
+                        syncStatus = "Pushed (rev $rev)"
+                    }
+                    is VaultGitClient.Divergence.BehindOnly -> {
+                        git.resetHardTo(root, "origin/main")
+                        refreshFromVaultFile()
+                        syncStatus = "Pulled remote (rev $rev)"
+                    }
+                    is VaultGitClient.Divergence.Diverged -> {
+                        Log.i(TAG, "diverged: merging ${div.headId.take(7)} with ${div.remoteId.take(7)}")
+                        val remoteEnv = git.readFileAt(root, "origin/main:$vaultRelPath")
+                            ?.let { b -> runCatching { Envelope.fromJson(String(b)) }.getOrNull() }
+                            ?: Envelope(deviceId = cfg.deviceId)
+                        val localEnv = git.readFileAt(root, "HEAD:$vaultRelPath")
+                            ?.let { b -> runCatching { Envelope.fromJson(String(b)) }.getOrNull() }
+                            ?: Envelope(deviceId = cfg.deviceId)
+                        val merged = VaultMerge.unionMerge(localEnv, remoteEnv)
+
+                        // Rebuild the branch on top of origin/main with the
+                        // merged (re-encrypted) vault file.
+                        git.resetHardTo(root, "origin/main")
+                        val client = OpenPgpClient(appContext)
+                        val keyIds = cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()
+                        if (keyIds.isEmpty()) throw IllegalStateException("no recipients")
+                        val plain = File(appContext.cacheDir, "merge-plain.json")
+                        plain.writeText(merged.toJsonObject().toString())
+                        val target = File(root, vaultRelPath)
+                        target.parentFile?.mkdirs()
+                        if (!client.encryptTo(keyIds, plain, target)) {
+                            throw IllegalStateException("encrypt during merge failed")
+                        }
+                        val signer = OpenKeyChainSigner(client, keyIds.first())
+                        try {
+                            git.commitFile(root, "Merge with remote (rev ${merged.rev})", signer)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "merge commit signing failed: ${e.message}")
+                            git.commitFile(root, "Merge with remote (rev ${merged.rev})", null)
+                        }
+                        git.pushBranch(remote, pat, root)
+                        rev = merged.rev
+                        loadedEnvelope = merged
+                        state = State.Unlocked(merged.items)
+                        syncStatus = "Merged + pushed (rev ${merged.rev})"
+                    }
+                }
             }
-            syncStatus = "Synced (rev $rev)"
             return Result.Success
         } catch (e: Exception) {
             Log.w(TAG, "syncNow failed: ${e.javaClass.simpleName}: ${e.message}")
@@ -343,6 +389,18 @@ object VaultSession {
             return Result.Error("${e.javaClass.simpleName}: ${e.message}")
         } finally {
             busy = null
+        }
+    }
+
+    /** Re-decrypts the on-disk vault file into the session (after a pull). */
+    private suspend fun refreshFromVaultFile() {
+        when (val r = decryptEnvelope(vaultFile())) {
+            is VaultSession.DecryptEnvelope.Ok -> {
+                rev = r.env.rev
+                loadedEnvelope = r.env
+                state = State.Unlocked(r.env.items)
+            }
+            else -> Log.w(TAG, "post-pull decrypt failed")
         }
     }
 

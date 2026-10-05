@@ -55,6 +55,7 @@ class S3GitActivity : ComponentActivity() {
                 ) {
                     Text("Spike S3 — JGit HTTPS+PAT transport", style = MaterialTheme.typography.titleMedium)
                     Button(onClick = { runSyncTest() }) { Text("Run git sync test") }
+                    Button(onClick = { runEndpointProbe() }) { Text("Probe push/fetch endpoints") }
                     Text(status.value, style = MaterialTheme.typography.bodyMedium)
                 }
             }
@@ -83,6 +84,35 @@ class S3GitActivity : ComponentActivity() {
                 setStatus("SYNC OK head=$head")
             } catch (e: Exception) {
                 setStatus("SYNC FAILED: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
+    }
+
+    /** Raw HTTP probe of both git smart-HTTP endpoints — separates token
+     * authorization (403) from transport issues. */
+    private fun runEndpointProbe() {
+        lifecycleScope.launch {
+            val pat = pat() ?: run { setStatus("NO PAT"); return@launch }
+            val remote = (intent.getStringExtra("remote")
+                ?: "https://github.com/planetaltitude/linuxpass-storage-test.git").removeSuffix("/")
+            withContext(Dispatchers.IO) {
+                for (service in listOf("git-upload-pack", "git-receive-pack")) {
+                    val conn = java.net.URL("$remote/info/refs?service=$service").openConnection()
+                        as java.net.HttpURLConnection
+                    val auth = java.util.Base64.getEncoder()
+                        .encodeToString("x-access-token:$pat".toByteArray())
+                    conn.setRequestProperty("Authorization", "Basic $auth")
+                    conn.connectTimeout = 15000
+                    conn.readTimeout = 15000
+                    try {
+                        val body = if (conn.responseCode in 200..299) conn.inputStream.bufferedReader().readText() else conn.errorStream?.bufferedReader()?.readText()
+                        setStatus("PROBE $service → HTTP ${conn.responseCode} ${body?.take(100)}")
+                    } catch (e: Exception) {
+                        setStatus("PROBE $service → ${e.javaClass.simpleName}: ${e.message}")
+                    } finally {
+                        conn.disconnect()
+                    }
+                }
             }
         }
     }
