@@ -428,15 +428,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                 }
                             }
                         },
-                        onRegeneratePassword = { newPw ->
-                            lifecycleScope.launch {
-                                item.password = newPw
-                                status = when (val r = saveLoop(unlockedItems())) {
-                                    VaultSession.Result.Success -> "Password regenerated (rev ${VaultSession.currentRev()})."
-                                    else -> "Save: $r"
-                                }
-                            }
-                        },
                         onEnrollTotp = { uri ->
                             lifecycleScope.launch {
                                 item.totpUri = uri

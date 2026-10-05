@@ -30,7 +30,6 @@ fun EntryDetailScreen(
     onBack: () -> Unit,
     onExportQr: () -> Unit,
     onSaveChanges: (ProtonItem) -> Unit,
-    onRegeneratePassword: (String) -> Unit,
     onEnrollTotp: (String) -> Unit,
     onDelete: () -> Unit
 ) {
@@ -146,9 +145,8 @@ fun EntryDetailScreen(
                 confirmButton = {
                     TextButton(onClick = {
                         showRegenConfirm = false
-                        val newPw = com.linuxpass.app.vault.PasswordGen.password()
-                        password = newPw
-                        onRegeneratePassword(newPw)
+                        password = com.linuxpass.app.vault.PasswordGen.password()
+                        // Not saved yet — the user persists via Save changes.
                     }) { Text("Regenerate") }
                 },
                 dismissButton = {
