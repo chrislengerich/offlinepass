@@ -89,7 +89,7 @@ fun EntryDetailScreen(
 
         HorizontalDivider()
         Button(onClick = onExportQr, modifier = Modifier.fillMaxWidth()) {
-            Text("Export QR (qrft generator — low-dependency machines)")
+            Text("Export as QRFT")
         }
         Button(onClick = onUpdatePassword, modifier = Modifier.fillMaxWidth()) { Text("Update password") }
         if (item.totpUri.isBlank()) {
