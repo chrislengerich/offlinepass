@@ -11,8 +11,8 @@ android {
         applicationId = "com.linuxpass.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0-spike"
+        versionCode = 2
+        versionName = "0.9.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -21,6 +21,14 @@ android {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+        // Release-grade build (minified, not debuggable) with the <profileable>
+        // manifest tag (src/profileable/): profilers can attach without the
+        // app being debuggable. Ships unsigned; signed in scripts/release.sh.
+        create("profileable") {
+            initWith(getByName("release"))
+            matchingFallbacks += listOf("release")
+            applicationIdSuffix = ".profileable"
         }
     }
 
@@ -54,6 +62,14 @@ android {
             // travel with the unit tests (offlinecam pattern).
             isIncludeAndroidResources = true
         }
+    }
+
+    lint {
+        // The app uses no Fragments — activity results go through
+        // activity-compose on ComponentActivity, so the "upgrade fragment"
+        // check (225 hits, fires on every ActivityResult contract use)
+        // doesn't apply.
+        disable += "InvalidFragmentVersionForActivityResult"
     }
 }
 
