@@ -31,6 +31,7 @@ class ProtonItem:
     urls: list[str] = field(default_factory=list)
     note: str = ""
     totp_uri: str = ""
+    modify_time: int = 0  # last modification, epoch seconds (Proton modifyTime)
     item_uuid: str = field(default_factory=lambda: str(uuid.uuid4()))
     item_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
@@ -73,7 +74,7 @@ class ProtonItem:
             "aliasEmail": None,
             "contentFormatVersion": 1,
             "createTime": 0,
-            "modifyTime": 0,
+            "modifyTime": self.modify_time,
             "pinned": False,
             "shareCount": 0,
             "files": [],
@@ -92,6 +93,7 @@ class ProtonItem:
             urls=content.get("urls", []),
             note=metadata.get("note", ""),
             totp_uri=content.get("totpUri", ""),
+            modify_time=int(obj.get("modifyTime", 0) or 0),
             item_uuid=metadata.get("itemUuid", str(uuid.uuid4())),
             item_id=obj.get("itemId", str(uuid.uuid4())),
         )

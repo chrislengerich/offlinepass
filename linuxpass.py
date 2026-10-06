@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 from passlib import (
     PasswordStore, ProtonItem,
@@ -217,6 +218,7 @@ class TUI:
         item = ProtonItem(
             name="", username=username, email=email,
             password=pw, urls=[url], note=note,
+            modify_time=int(time.time()),
         )
         self.items.append(item)
         self.items.sort(key=lambda i: i.display_name.lower())
@@ -288,6 +290,7 @@ class TUI:
                     self._show_message("Password update cancelled.")
                 else:
                     item.password = new_pw
+                    item.modify_time = int(time.time())
                     self._save_and_confirm(f"Updated password for: {item.display_name}")
             elif action == "totp":
                 self._enroll_totp(item)
@@ -307,6 +310,7 @@ class TUI:
                 f"Press any key to save."
             )
             item.totp_uri = uri
+            item.modify_time = int(time.time())
             self._save_and_confirm(f"Enrolled TOTP for: {item.display_name}")
         except Exception as e:
             self._show_message(f"TOTP enrollment failed:\n{e}")

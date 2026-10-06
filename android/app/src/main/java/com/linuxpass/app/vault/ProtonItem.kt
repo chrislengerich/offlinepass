@@ -17,6 +17,8 @@ data class ProtonItem(
     var urls: List<String> = emptyList(),
     var note: String = "",
     var totpUri: String = "",
+    /** Last modification, epoch seconds (Proton `modifyTime`). 0 = unknown. */
+    var modifyTime: Long = 0,
     var itemUuid: String = UUID.randomUUID().toString(),
     var itemId: String = UUID.randomUUID().toString()
 ) {
@@ -33,6 +35,15 @@ data class ProtonItem(
         }
 
     val identity: String get() = username.ifBlank { email }
+
+    /** Human-readable last-modified stamp for list/detail rows. */
+    val modifyTimeText: String
+        get() {
+            if (modifyTime <= 0) return "—"
+            return java.time.Instant.ofEpochSecond(modifyTime)
+                .atZone(java.time.ZoneId.systemDefault())
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+        }
 
     fun toProtonJson(): JSONObject {
         val content = JSONObject()
@@ -61,7 +72,7 @@ data class ProtonItem(
             .put("aliasEmail", JSONObject.NULL)
             .put("contentFormatVersion", 1)
             .put("createTime", 0)
-            .put("modifyTime", 0)
+            .put("modifyTime", modifyTime)
             .put("pinned", false)
             .put("shareCount", 0)
             .put("files", JSONArray())
@@ -80,6 +91,8 @@ data class ProtonItem(
                 urls = content.optJSONArray("urls")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(),
                 note = meta.optString("note", ""),
                 totpUri = content.optString("totpUri", ""),
+                modifyTime = if (obj.has("modifyTime")) obj.optLong("modifyTime", 0)
+                             else data.optLong("modifyTime", 0),
                 itemUuid = meta.optString("itemUuid", UUID.randomUUID().toString()),
                 itemId = obj.optString("itemId", UUID.randomUUID().toString())
             )
