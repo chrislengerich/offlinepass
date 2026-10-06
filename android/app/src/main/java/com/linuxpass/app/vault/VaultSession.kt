@@ -66,6 +66,12 @@ object VaultSession {
     var syncStatus by mutableStateOf<String?>(null)
         private set
 
+    /** Remote outcome of the most recent save(): "synced" (pushed),
+     * "pending" (saved locally, offline — background sync will retry), or
+     * "none" (local-only mode). Read by the UI for save toasts. */
+    var lastSaveRemoteState by mutableStateOf("none")
+        private set
+
     /** A commit exists locally that the remote hasn't seen. */
     private var pendingPush = false
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -197,6 +203,13 @@ object VaultSession {
             ?: java.util.UUID.randomUUID().toString().also { prefs.edit().putString("deviceId", it).apply() }
     }
 
+    /** List page secondary sort: within equal names, most recently modified
+     * first. Persisted; default ON. */
+    fun sortByModifiedPref(): Boolean = prefs().getBoolean("sortByModified", true)
+    fun setSortByModifiedPref(on: Boolean) {
+        prefs().edit().putBoolean("sortByModified", on).apply()
+    }
+
     /**
      * Persists config. remote == null => local-only mode. Returns immediately;
      * the repo is opened on next unlock.
@@ -248,8 +261,8 @@ object VaultSession {
             return Result.Error("No local vault — use the setup screen.")
         }
         busy = "Decrypting vault… (touch your key)"
+        val plain = File(appContext.cacheDir, "vault-plain.json")
         try {
-            val plain = File(appContext.cacheDir, "vault-plain.json")
             val client = OpenPgpClient(appContext)
             // OpenKeychain's interaction contract: after the user completes
             // the prompt, retry with the RETURNED intent (it carries the
@@ -277,6 +290,9 @@ object VaultSession {
             Log.w(TAG, "unlock failed: ${e.message}")
             return Result.Error("${e.javaClass.simpleName}: ${e.message}")
         } finally {
+            // The decrypted copy never outlives the call: zeroed + deleted
+            // on every exit path (success, interaction, error, exception).
+            SecureWipe.file(plain)
             busy = null
         }
     }
@@ -325,11 +341,17 @@ object VaultSession {
                 }
 
                 val plain = File(appContext.cacheDir, "vault-plain-next.json")
-                plain.writeText(env.toJsonObject().toString())
                 val target = vaultFile()
-                target.parentFile?.mkdirs()
-                if (!client.encryptTo(keyIds, plain, target)) {
-                    return@withContext Result.Error("Encrypt failed")
+                try {
+                    plain.writeText(env.toJsonObject().toString())
+                    target.parentFile?.mkdirs()
+                    if (!client.encryptTo(keyIds, plain, target)) {
+                        return@withContext Result.Error("Encrypt failed")
+                    }
+                } finally {
+                    // The pre-encrypt plaintext is zeroed + deleted as soon
+                    // as the ciphertext exists.
+                    SecureWipe.file(plain)
                 }
                 rev = env.rev
                 loadedEnvelope = env
@@ -343,6 +365,21 @@ object VaultSession {
 
                 val signId = signingKeyId() ?: keyIds.first()
                 val signer = OpenKeyChainSigner(client, signId)
+                // Pre-flight the commit signature: OpenKeyChain may need an
+                // unlock prompt (or the key may be unavailable entirely).
+                // Surface that as Interaction HERE — the signer inside JGit
+                // can't interact, and a hard failure there aborts the commit
+                // with a bare "commit failed".
+                busy = "Checking sign key…"
+                ensureSignKeyReady(signId)?.let { msg ->
+                    Log.w(TAG, msg)
+                    syncStatus = msg
+                    // The ciphertext file is already written; only the git
+                    // commit is missing — it happens on the next save/sync
+                    // once the sign key is available.
+                    return@withContext Result.Error(msg +
+                        " — vault file saved, commit pending. Check the key in OpenKeyChain or pick another signer in Setup.")
+                }
                 val git = VaultGitClient()
                 if (cfg.remoteUrl == null) git.gitInit(gitRoot())
 
@@ -362,19 +399,23 @@ object VaultSession {
                     }
                     busy = "Pushing…"
                     val pushPat = pat() ?: return@withContext Result.Error("No PAT stored")
+                    lastSaveRemoteState = "pending"
                     try {
                         git.pushBranch(cfg.remoteUrl, pushPat, gitRoot())
                         pendingPush = false
+                        lastSaveRemoteState = "synced"
                         syncStatus = if (keysOk) "Pushed rev ${env.rev} (signed)"
                                      else "Pushed rev ${env.rev} (signed; key files pending)"
                     } catch (e: Exception) {
                         Log.w(TAG, "push failed (kept local commit): ${e.message}")
                         pendingPush = true
+                        lastSaveRemoteState = "pending"
                         syncStatus = "Saved locally; push pending"
                         // NOT an error: the change persisted locally.
                     }
                 } else {
                     // LOCAL-ONLY: same repo dir, no remotes — history stays on-device.
+                    lastSaveRemoteState = "none"
                     git.commitFile(gitRoot(), "Update 10.gpg (rev ${env.rev})", signer)
                     syncStatus = "Committed locally (rev ${env.rev}, no remote)"
                 }
@@ -394,6 +435,29 @@ object VaultSession {
             ?.takeIf { it.isNotEmpty() }
 
     /**
+     * Confirms the commit sign key can actually sign: runs a trial detached
+     * sign, surfacing OpenKeyChain's passphrase / plug-in prompt through the
+     * UI interaction loop (retried with the returned intent, like decrypt).
+     * Returns null when the key signs; otherwise an actionable message.
+     */
+    private suspend fun ensureSignKeyReady(signKeyId: Long): String? {
+        val client = OpenPgpClient(appContext)
+        val probe = "linuxpass commit-sign preflight".toByteArray()
+        var reqData: Intent? = null
+        var guard = 0
+        while (guard++ < 3) {
+            when (val r = client.trySignDetached(probe, keyId = signKeyId, requestData = reqData)) {
+                is OpenPgpClient.SignDetached.Ok -> return null
+                is OpenPgpClient.SignDetached.UserInteraction -> {
+                    reqData = interactionHandler?.invoke(r.pendingIntent)
+                        ?: return "Sign key needs an unlock prompt but the UI layer is absent"
+                }
+                is OpenPgpClient.SignDetached.Error ->
+                    return "Sign key 0x%016X can't sign: ${r.message}".format(signKeyId)
+            }
+        }
+        return "Sign key unlock aborted after retries"
+    }    /**
      * Verifies each recipient email resolves to a key in OpenKeyChain.
      * Returns (resolved map, missing list). Interaction surfaces as
      * Interaction (OpenKeyChain's own key picker) for the UI to launch.
@@ -520,7 +584,17 @@ object VaultSession {
                 // Commit a stranded/dirty vault file FIRST so it participates
                 // in the divergence check + push (a failed push leaves it
                 // uncommitted; without this it never reaches the remote).
-                git.commitDirty(root, "Update 10.gpg (pre-sync)", null)
+                // Signed like every other commit — same key as save().
+                val preSignId = signingKeyId()
+                    ?: (cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()).firstOrNull()
+                if (preSignId != null) {
+                    busy = "Checking sign key…"
+                    ensureSignKeyReady(preSignId)?.let { msg ->
+                        throw IllegalStateException(msg)
+                    }
+                }
+                git.commitDirty(root, "Update 10.gpg (pre-sync)",
+                    preSignId?.let { OpenKeyChainSigner(OpenPgpClient(appContext), it) })
                 when (val div = git.headVsRemote(root)) {
                     is VaultGitClient.Divergence.UpToDate -> {
                         syncStatus = "Already up to date (rev $rev)"
@@ -554,11 +628,15 @@ object VaultSession {
                         val keyIds = cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()
                         if (keyIds.isEmpty()) throw IllegalStateException("no recipients")
                         val plain = File(appContext.cacheDir, "merge-plain.json")
-                        plain.writeText(merged.toJsonObject().toString())
-                        val target = File(root, vaultRelPath)
-                        target.parentFile?.mkdirs()
-                        if (!client.encryptTo(keyIds, plain, target)) {
-                            throw IllegalStateException("encrypt during merge failed")
+                        try {
+                            plain.writeText(merged.toJsonObject().toString())
+                            val target = File(root, vaultRelPath)
+                            target.parentFile?.mkdirs()
+                            if (!client.encryptTo(keyIds, plain, target)) {
+                                throw IllegalStateException("encrypt during merge failed")
+                            }
+                        } finally {
+                            SecureWipe.file(plain)
                         }
                         val signId = signingKeyId() ?: keyIds.first()
                 val signer = OpenKeyChainSigner(client, signId)
@@ -579,7 +657,7 @@ object VaultSession {
             return Result.Success
         } catch (e: Exception) {
             Log.w(TAG, "syncNow failed: ${e.javaClass.simpleName}: ${e.message}")
-            syncStatus = "Sync failed: ${e.message?.take(60)}"
+            syncStatus = "Sync failed: ${e.message?.take(140)}"
             return Result.Error("${e.javaClass.simpleName}: ${e.message}")
         } finally {
             busy = null
@@ -650,20 +728,24 @@ object VaultSession {
         if (!file.exists()) return@withContext DecryptEnvelope.Error("File missing")
         val plain = File(appContext.cacheDir, "restore-plain.json")
         val client = OpenPgpClient(appContext)
-        var reqData: Intent? = null
-        var guard = 0
-        while (guard++ < 2) {
-            when (val r = client.decryptVerify(file, plain, reqData)) {
-                is OpenPgpClient.DecryptResult.Success ->
-                    return@withContext DecryptEnvelope.Ok(Envelope.fromJson(plain.readText()))
-                is OpenPgpClient.DecryptResult.UserInteraction -> {
-                    val h = interactionHandler ?: return@withContext DecryptEnvelope.Error("Interaction needs the UI layer")
-                    reqData = h(r.pendingIntent)
+        try {
+            var reqData: Intent? = null
+            var guard = 0
+            while (guard++ < 2) {
+                when (val r = client.decryptVerify(file, plain, reqData)) {
+                    is OpenPgpClient.DecryptResult.Success ->
+                        return@withContext DecryptEnvelope.Ok(Envelope.fromJson(plain.readText()))
+                    is OpenPgpClient.DecryptResult.UserInteraction -> {
+                        val h = interactionHandler ?: return@withContext DecryptEnvelope.Error("Interaction needs the UI layer")
+                        reqData = h(r.pendingIntent)
+                    }
+                    is OpenPgpClient.DecryptResult.Error -> return@withContext DecryptEnvelope.Error("Decrypt failed (see logcat)")
                 }
-                is OpenPgpClient.DecryptResult.Error -> return@withContext DecryptEnvelope.Error("Decrypt failed (see logcat)")
             }
+            DecryptEnvelope.Error("Decrypt aborted after interaction retry")
+        } finally {
+            SecureWipe.file(plain)
         }
-        DecryptEnvelope.Error("Decrypt aborted after interaction retry")
     }
 
     /** Adopts an already-decrypted envelope as the unlocked session —
@@ -672,5 +754,34 @@ object VaultSession {
         rev = env.rev
         loadedEnvelope = env
         state = State.Unlocked(env.items)
+    }
+
+    /**
+     * Zeros ALL decrypted material: the unlocked item list, the loaded
+     * envelope, and every plaintext temp file the decrypt/encrypt paths
+     * could have left in the cache dir. The session steps back to Locked.
+     *
+     * Called on exit (MainActivity.onDestroy when finishing) and from the
+     * Setup tab's lock action. Java strings are immutable, so the heap
+     * copies are released for GC rather than overwritten; the on-disk
+     * copies, though, are zero-filled byte-for-byte before unlink.
+     */
+    fun zero() {
+        loadedEnvelope?.items?.clear()
+        loadedEnvelope?.deletedItemUuids?.clear()
+        loadedEnvelope?.extraFields?.clear()
+        loadedEnvelope = null
+        rev = 0
+        if (state is State.Unlocked) state = State.Locked
+        if (!::appContext.isInitialized) return
+        val cache = appContext.cacheDir
+        SecureWipe.all(
+            File(cache, "vault-plain.json"),
+            File(cache, "vault-plain-next.json"),
+            File(cache, "merge-plain.json"),
+            File(cache, "restore-plain.json"),
+        )
+        // Hint the VM to collect the just-released plaintext strings.
+        runCatching { System.gc() }
     }
 }
