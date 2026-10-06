@@ -38,10 +38,12 @@ fun EntryDetailScreen(
     var email by remember(item.itemUuid) { mutableStateOf(item.email) }
     var urls by remember(item.itemUuid) { mutableStateOf(item.urls.joinToString(", ")) }
     var password by remember(item.itemUuid) { mutableStateOf(item.password) }
+    var note by remember(item.itemUuid) { mutableStateOf(item.note) }
     var showPassword by remember { mutableStateOf(false) }
 
     val dirty = username != item.username || email != item.email ||
-        urls != item.urls.joinToString(", ") || password != item.password
+        urls != item.urls.joinToString(", ") || password != item.password ||
+        note != item.note
 
     var showRegenConfirm by remember { mutableStateOf(false) }
     var revealed by remember { mutableStateOf(false) }
@@ -96,13 +98,19 @@ fun EntryDetailScreen(
             },
             modifier = Modifier.fillMaxWidth()
         )
+        OutlinedTextField(
+            value = note, onValueChange = { note = it },
+            label = { Text("Notes") },
+            modifier = Modifier.fillMaxWidth()
+        )
         Button(
             onClick = {
                 onSaveChanges(item.copy(
                     username = username.trim(),
                     email = email.trim(),
                     password = password,
-                    urls = urls.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                    urls = urls.split(",").map { it.trim() }.filter { it.isNotBlank() },
+                    note = note
                 ))
             },
             enabled = dirty && busy == null,
@@ -116,7 +124,9 @@ fun EntryDetailScreen(
             val (code, remaining) = totp!!
             Text("TOTP: $code  (${remaining}s)", style = MaterialTheme.typography.titleMedium)
         }
-        if (item.note.isNotBlank()) Text("Note: ${item.note}", style = MaterialTheme.typography.bodySmall)
+        if (item.modifyTime > 0) {
+            Text("Last modified: ${item.modifyTimeText}", style = MaterialTheme.typography.bodySmall)
+        }
 
         HorizontalDivider()
         Button(onClick = { showRegenConfirm = true }, modifier = Modifier.fillMaxWidth()) {
