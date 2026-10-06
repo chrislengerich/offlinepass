@@ -3,3 +3,5 @@ __pycache__/
 test_data_write.json
 test_data_backup.json
 linuxpassstorage_pat
+dist/
+*.keystore
