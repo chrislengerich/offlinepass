@@ -23,7 +23,9 @@ import com.linuxpass.app.ui.SearchScreen
 import com.linuxpass.app.ui.SetupTabScreen
 import com.linuxpass.app.ui.AddEntryScreen
 import com.linuxpass.app.ui.EntryDetailScreen
+import com.linuxpass.app.ui.ExportPickScreen
 import com.linuxpass.app.ui.QrftScreen
+import com.linuxpass.app.ui.QrftScanScreen
 import com.linuxpass.app.ui.entryPayload
 import com.linuxpass.app.vault.Envelope
 import com.linuxpass.app.vault.PasswordGen
@@ -55,6 +57,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 "key_ids_selected=${result.data?.getLongArrayExtra("key_ids_selected")?.contentToString()}")
             pendingInteraction?.resume(result.data)
             pendingInteraction = null
+        }
+
+    /** Import-from-QRFT needs the camera before the scanner WebView opens. */
+    private val cameraPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) screen = Screen.QrftScan
+            else status = "Camera permission denied — cannot import from QRFT."
         }
 
     private fun launchInteraction(pi: PendingIntent) {
@@ -189,8 +198,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
 
     private suspend fun restoreLoop(uri: android.net.Uri) {
+        val staged = File(cacheDir, "restored.gpg")
         try {
-            val staged = File(cacheDir, "restored.gpg")
             contentResolver.openInputStream(uri)?.use { ins ->
                 staged.outputStream().use { ins.copyTo(it) }
             }
@@ -231,6 +240,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
             }
         } catch (e: Exception) {
             status = "Restore failed: ${e.javaClass.simpleName}: ${e.message}"
+        } finally {
+            // Staged ciphertext copy — hygiene: never left in the cache dir.
+            com.linuxpass.app.vault.SecureWipe.file(staged)
         }
     }
 
@@ -253,6 +265,16 @@ class MainActivity : androidx.activity.ComponentActivity() {
     }
 
     // -- lifecycle ------------------------------------------------------------
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (isFinishing) {
+            // Exit: zero the decrypted session (items, envelope, plaintext
+            // temp files). A swipe-away kill reclaims memory with the
+            // process; this covers every deliberate exit.
+            VaultSession.zero()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -329,36 +351,41 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     status = ""
                     lifecycleScope.launch {
                         val staged = File(cacheDir, "import-proton")
-                        contentResolver.openInputStream(uri)?.use { ins ->
-                            staged.outputStream().use { ins.copyTo(it) }
-                        }
-                        // Plaintext Proton export? (No decrypt involved.)
-                        val env = Envelope.parseImport(staged.readText())
-                        if (env == null) {
-                            status = "Not a plaintext Proton Pass export — trying encrypted restore…"
-                            restoreLoop(uri)
-                            return@launch
-                        }
-                        val open = VaultSession.gitOpenOnly()
-                        if (open is VaultSession.Result.Error) {
-                            android.widget.Toast.makeText(this@MainActivity,
-                                "Offline — will sync later", android.widget.Toast.LENGTH_LONG).show()
-                            status = "Offline: repo not fetched. Use Sync now when back online."
-                        }
-                        VaultSession.adopt(env)
-                        status = "Imported ${env.items.size} entries — pick recipients."
-                        pickRecipientsUntilDone()
-                        status = when (val r = saveLoop(env.items)) {
-                            VaultSession.Result.Success -> {
-                                android.widget.Toast.makeText(
-                                    this@MainActivity, "Import complete",
-                                    android.widget.Toast.LENGTH_SHORT
-                                ).show()
-                                "Import complete (rev ${VaultSession.currentRev()})."
+                        try {
+                            contentResolver.openInputStream(uri)?.use { ins ->
+                                staged.outputStream().use { ins.copyTo(it) }
                             }
-                            else -> "Imported locally; save: $r"
+                            // Plaintext Proton export? (No decrypt involved.)
+                            val env = Envelope.parseImport(staged.readText())
+                            if (env == null) {
+                                status = "Not a plaintext Proton Pass export — trying encrypted restore…"
+                                restoreLoop(uri)
+                                return@launch
+                            }
+                            val open = VaultSession.gitOpenOnly()
+                            if (open is VaultSession.Result.Error) {
+                                android.widget.Toast.makeText(this@MainActivity,
+                                    "Offline — will sync later", android.widget.Toast.LENGTH_LONG).show()
+                                status = "Offline: repo not fetched. Use Sync now when back online."
+                            }
+                            VaultSession.adopt(env)
+                            status = "Imported ${env.items.size} entries — pick recipients."
+                            pickRecipientsUntilDone()
+                            status = when (val r = saveLoop(env.items)) {
+                                VaultSession.Result.Success -> {
+                                    android.widget.Toast.makeText(
+                                        this@MainActivity, "Import complete",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                    "Import complete (rev ${VaultSession.currentRev()})."
+                                }
+                                else -> "Imported locally; save: $r"
+                            }
+                            screen = Screen.Search
+                        } finally {
+                            // Plaintext Proton export staging — wiped.
+                            com.linuxpass.app.vault.SecureWipe.file(staged)
                         }
-                        screen = Screen.Search
                     }
                 },
                 onLoadGitHub = { remote, emails, pat ->
@@ -411,14 +438,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         busy = VaultSession.busy,
                         onBack = { screen = Screen.Search },
                         onExportQr = {
-                            lifecycleScope.launch {
-                                val payload = entryPayload(item)
-                                File(getExternalFilesDir(null), "entry-latest.json").writeText(payload)
-                                screen = Screen.Qrft(item.itemUuid)
-                            }
+                            // Payload is passed in memory (recomputed from
+                            // the item on each recomposition) — nothing is
+                            // written to disk for a QR export.
+                            screen = Screen.Qrft(item.itemUuid)
                         },
                         onSaveChanges = { edited ->
                             lifecycleScope.launch {
+                                edited.modifyTime = nowSeconds()
                                 val items = unlockedItems().map {
                                     if (it.itemUuid == edited.itemUuid) edited else it
                                 }
@@ -431,6 +458,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         onEnrollTotp = { uri ->
                             lifecycleScope.launch {
                                 item.totpUri = uri
+                                item.modifyTime = nowSeconds()
                                 status = when (val r = saveLoop(unlockedItems())) {
                                     VaultSession.Result.Success -> "TOTP enrolled."
                                     else -> "Save: $r"
@@ -451,21 +479,60 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onCancel = { screen = Screen.Search },
                     onSave = { item ->
                         lifecycleScope.launch {
-                            status = when (val r = saveLoop(unlockedItems() + item)) {
-                                VaultSession.Result.Success -> { screen = Screen.Search; "Added ${item.displayName}." }
-                                else -> "Save: $r"
+                            item.modifyTime = nowSeconds()
+                            when (val r = saveLoop(unlockedItems() + item)) {
+                                VaultSession.Result.Success -> {
+                                    // Back to the list in BOTH modes; the
+                                    // toast says what reached where.
+                                    screen = Screen.Search
+                                    saveToast("Added ${item.displayName} — saved locally")
+                                    status = "Added ${item.displayName}."
+                                }
+                                else -> {
+                                    // Stay on the form so the entry isn't
+                                    // lost; surface the failure as a toast
+                                    // (the list page has no status line).
+                                    android.widget.Toast.makeText(this@MainActivity,
+                                        "Save failed: $r", android.widget.Toast.LENGTH_LONG).show()
+                                }
                             }
                         }
                     }
                 )
                 is Screen.Qrft -> {
                     val item = currentDetailItem(s.itemUuid)
-                    QrftScreen(
-                        payload = if (item != null) entryPayload(item)
-                        else File(getExternalFilesDir(null), "entry-latest.json").readText(),
-                        onBack = { if (item != null) screen = Screen.Detail(item.itemUuid) else screen = Screen.Search }
+                    if (item == null) {
+                        // The entry is gone (deleted/synced away): nothing to
+                        // render — fall back to the search list.
+                        screen = Screen.Search
+                    } else QrftScreen(
+                        payload = entryPayload(item),
+                        onBack = { screen = Screen.Detail(item.itemUuid) }
                     )
                 }
+                is Screen.QrftPayload -> QrftScreen(
+                    payload = s.payload,
+                    onBack = { screen = Screen.Setup }
+                )
+                Screen.ExportPick -> ExportPickScreen(
+                    items = unlockedItems(),
+                    onBack = { screen = Screen.Setup },
+                    onExport = { picked ->
+                        // The QRFT payload is a JSON array of Proton item
+                        // objects — exactly what Import-from-QRFT (and the
+                        // Proton export import path) parses back.
+                        val arr = org.json.JSONArray()
+                        picked.forEach { arr.put(it.toProtonJson()) }
+                        screen = Screen.QrftPayload(arr.toString())
+                    }
+                )
+                Screen.QrftScan -> QrftScanScreen(
+                    onPayload = { name, payload ->
+                        Log.i(TAG, "QRFT received: $name")
+                        lifecycleScope.launch { importQrftPayload(payload) }
+                    },
+                    onBack = { screen = Screen.Setup }
+                )
                 Screen.Setup -> SetupTabScreen(
                     status = status,
                     busy = VaultSession.busy,
@@ -491,6 +558,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onEnableAutofill = { requestAutofillService() },
                     screenLockOn = VaultSession.screenLockOn,
                     onScreenLockToggle = { on -> handleScreenLockToggle(on) },
+                    onLock = { VaultSession.zero() },
+                    onExportQrft = { screen = Screen.ExportPick },
+                    onImportQrft = { cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA) },
                     onForget = { VaultSession.forgetConfig(); screen = Screen.SetupChoice },
                     patSave = { VaultSession.savePat(it); status = "PAT stored (encrypted)." },
                     autofillEnabled = isAutofillEnabled(),
@@ -559,6 +629,53 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
     private fun currentDetailItem(uuid: String): ProtonItem? =
         unlockedItems().firstOrNull { it.itemUuid == uuid }
+
+    private fun nowSeconds(): Long = System.currentTimeMillis() / 1000
+
+    /** Save toast: what persisted locally vs what reached the remote — the
+     * same message works on airplane mode (local save + pending sync) and
+     * online (local save + pushed). */
+    private fun saveToast(base: String) {
+        val msg = base + when (VaultSession.lastSaveRemoteState) {
+            "synced" -> ", synced"
+            "pending" -> " (offline — sync pending)"
+            else -> "" // local-only mode: no remote exists
+        }
+        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    /** Import-from-QRFT: parse the scanned payload (a Proton JSON export —
+     * array, single item, or envelope), dedupe against the local vault by
+     * itemUuid KEEPING THE LOCAL VERSION on conflict, then save. */
+    private suspend fun importQrftPayload(raw: String) {
+        val env = Envelope.parseImport(raw)
+        if (env == null) {
+            status = "QRFT payload did not parse as a Proton JSON export."
+            android.widget.Toast.makeText(this, status, android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        val localByUuid = unlockedItems().associateBy { it.itemUuid }
+        val fresh = env.items.filter { it.itemUuid !in localByUuid }
+        val skipped = env.items.size - fresh.size
+        if (fresh.isEmpty()) {
+            screen = Screen.Search
+            val msg = "Nothing new — $skipped entr${if (skipped == 1) "y" else "ies"} already present (local version kept)."
+            android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        screen = Screen.Search
+        status = when (val r = saveLoop(unlockedItems() + fresh)) {
+            VaultSession.Result.Success -> {
+                saveToast("Imported ${fresh.size} new entr${if (fresh.size == 1) "y" else "ies"}" +
+                    (if (skipped > 0) " ($skipped already present)" else ""))
+                "Imported ${fresh.size} entries."
+            }
+            else -> "Import: $r"
+        }
+        if (status.startsWith("Import:")) {
+            android.widget.Toast.makeText(this, status, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
 
     companion object {
         private const val TAG = "S1"

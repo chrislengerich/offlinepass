@@ -23,6 +23,12 @@ sealed class Screen {
     data class Detail(val itemUuid: String) : Screen()
     object AddEntry : Screen()
     data class Qrft(val itemUuid: String) : Screen()
+    /** Multi-entry QRFT export, payload already built (Settings flow). */
+    data class QrftPayload(val payload: String) : Screen()
+    /** Entry picker for the multi-entry QRFT export. */
+    object ExportPick : Screen()
+    /** Camera scanner for the import-from-QRFT flow. */
+    object QrftScan : Screen()
     object Setup : Screen()
 }
 
@@ -193,7 +199,9 @@ fun ProtonItem.matches(query: String): Boolean {
     return query.lowercase().split(" ").filter { it.isNotBlank() }.all { it in haystack }
 }
 
-/** Main page: type-to-filter search over plaintext-matched rows (TUI parity). */
+/** Main page: type-to-filter search over plaintext-matched rows (TUI parity).
+ *  Shows the entry count, per-entry last-modified dates, and a toggleable
+ *  secondary sort (within equal names, most recently modified first). */
 @Composable
 fun SearchScreen(
     items: List<ProtonItem>,
@@ -204,6 +212,7 @@ fun SearchScreen(
     onAdd: () -> Unit,
     onSetup: () -> Unit
 ) {
+    var sortByModified by remember { mutableStateOf(VaultSession.sortByModifiedPref()) }
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -218,13 +227,41 @@ fun SearchScreen(
             label = { Text("Search (site / user / email)") },
             singleLine = true, modifier = Modifier.fillMaxWidth()
         )
-        if (busy != null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
         val filtered = items.filter { it.matches(query) }
-        LazyColumn(modifier = Modifier.weight(1f).padding(top = 8.dp)) {
-            items(filtered, key = { it.itemUuid }) { item ->
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                if (query.isBlank()) "${items.size} entries" else "${filtered.size} of ${items.size} entries",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.weight(1f))
+            FilterChip(
+                selected = sortByModified,
+                onClick = {
+                    sortByModified = !sortByModified
+                    VaultSession.setSortByModifiedPref(sortByModified)
+                },
+                label = { Text(if (sortByModified) "Modified ↓" else "Name only") }
+            )
+        }
+        if (busy != null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+        val sorted = if (sortByModified)
+            filtered.sortedWith(compareBy({ it.displayName.lowercase() }, { -it.modifyTime }))
+        else filtered.sortedBy { it.displayName.lowercase() }
+        LazyColumn(modifier = Modifier.weight(1f).padding(top = 4.dp)) {
+            items(sorted, key = { it.itemUuid }) { item ->
                 ListItem(
                     headlineContent = { Text(item.displayName) },
-                    supportingContent = { Text(item.identity.ifBlank { "(no identity)" }) },
+                    supportingContent = {
+                        Column {
+                            Text(item.identity.ifBlank { "(no identity)" })
+                            if (item.modifyTime > 0)
+                                Text("Modified ${item.modifyTimeText}", style = MaterialTheme.typography.bodySmall)
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth().clickable { onOpen(item) },
                     trailingContent = { Text(if (item.totpUri.isNotBlank()) "⏱" else "") }
                 )

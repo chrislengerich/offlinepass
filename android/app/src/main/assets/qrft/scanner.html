@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>QR File Scanner (offline)</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #eee; }
+      .wrap { max-width: 640px; margin: 0 auto; padding: 12px; }
+      #msg { font-size: 1rem; margin: 0 0 8px; color: #ffd75e; min-height: 1.4em; }
+      #progress { font-size: 0.85rem; color: #9fe29f; min-height: 1.2em; margin-bottom: 8px; }
+      video { width: 100%; border-radius: 8px; background: #000; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div id="msg">Starting camera…</div>
+      <div id="progress"></div>
+      <video id="v" autoplay playsinline muted></video>
+    </div>
+    <canvas id="c" hidden></canvas>
+    <script src="vendor/jsQR.js"></script>
+    <script src="vendor/pako.min.js"></script>
+    <script>
+      (function () {
+        var msg = document.getElementById("msg");
+        var progress = document.getElementById("progress");
+        var video = document.getElementById("v");
+        var canvas = document.getElementById("c");
+        var ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+        var chunks = {};          // index -> Uint8Array
+        var total = -1;           // from the metadata frame
+        var name = "";
+        var done = false;
+
+        var b64ToBytes = function (b64) {
+          var bin = atob(b64);
+          var out = new Uint8Array(bin.length);
+          for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+          return out;
+        };
+
+        var stopCamera = function () {
+          try {
+            var s = video.srcObject;
+            if (s) s.getTracks().forEach(function (t) { t.stop(); });
+          } catch (e) {}
+        };
+
+        var finish = function () {
+          done = true;
+          stopCamera();
+          var size = 0;
+          for (var i = 0; i < total; i++) size += chunks[i].length;
+          var raw = new Uint8Array(size);
+          var off = 0;
+          for (var i = 0; i < total; i++) { raw.set(chunks[i], off); off += chunks[i].length; }
+          var bytes;
+          try {
+            bytes = pako.ungzip(raw);
+          } catch (e) {
+            msg.textContent = "Corrupt transfer: " + e.message;
+            return;
+          }
+          var text = new TextDecoder().decode(bytes);
+          progress.textContent = "Complete: " + name + " (" + bytes.length + " bytes).";
+          msg.textContent = "Received \"" + name + "\" — importing…";
+          // Hand the payload to the app (bridge call hops to the main thread).
+          setTimeout(function () {
+            if (window.LinuxpassBridge && window.LinuxpassBridge.onPayload) {
+              window.LinuxpassBridge.onPayload(name, text);
+            } else {
+              msg.textContent = "Bridge missing — payload not delivered.";
+            }
+          }, 300);
+        };
+
+        var handle = function (data) {
+          if (done) return;
+          if (data.charAt(0) === "{") {
+            try {
+              var m = JSON.parse(data);
+              if (typeof m.chunks === "number") {
+                total = m.chunks;
+                name = String(m.name || "payload");
+                msg.textContent = "Receiving \"" + name + "\"";
+                progress.textContent = "0 / " + total + " chunks";
+              }
+            } catch (e) {}
+            return;
+          }
+          var ci = data.indexOf(",");
+          if (ci <= 0 || total < 0) return;
+          var idx = parseInt(data.slice(0, ci), 10);
+          if (isNaN(idx) || idx < 0 || idx >= total) return;
+          if (chunks[idx] === undefined) {
+            chunks[idx] = b64ToBytes(data.slice(ci + 1));
+            var got = Object.keys(chunks).length;
+            progress.textContent = got + " / " + total + " chunks";
+            if (got === total) finish();
+          }
+        };
+
+        var scanLoop = function () {
+          if (done) return;
+          requestAnimationFrame(scanLoop);
+          if (video.readyState < 2 || video.videoWidth === 0) return;
+          var scale = Math.min(1, 720 / video.videoWidth);
+          canvas.width = Math.round(video.videoWidth * scale);
+          canvas.height = Math.round(video.videoHeight * scale);
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          var code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
+          if (code && code.data) handle(code.data);
+        };
+
+        var start = function () {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            msg.textContent = "Camera API unavailable (insecure origin?).";
+            return;
+          }
+          navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment", width: { ideal: 1280 } },
+            audio: false
+          }).then(function (stream) {
+            video.srcObject = stream;
+            video.play();
+            msg.textContent = "Waiting for the sender's QR…";
+            scanLoop();
+          }).catch(function (e) {
+            msg.textContent = "Camera failed: " + (e.message || e.name);
+          });
+        };
+        start();
+      })();
+    </script>
+  </body>
+</html>

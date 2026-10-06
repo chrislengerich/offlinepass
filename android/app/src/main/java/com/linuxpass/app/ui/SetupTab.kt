@@ -34,7 +34,10 @@ fun SetupTabScreen(
     onPickSigner: () -> Unit,
     onClearSigner: () -> Unit,
     screenLockOn: Boolean,
-    onScreenLockToggle: (Boolean) -> Unit
+    onScreenLockToggle: (Boolean) -> Unit,
+    onLock: () -> Unit,
+    onExportQrft: () -> Unit,
+    onImportQrft: () -> Unit
 ) {
     val cfg = VaultSession.config()
     var patInput by remember { mutableStateOf("") }
@@ -128,6 +131,15 @@ fun SetupTabScreen(
         }
         HorizontalDivider()
 
+        Text("QRFT transfer (phone ↔ phone, via camera)", style = MaterialTheme.typography.titleSmall)
+        Button(onClick = onExportQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Export as QRFT (pick entries)")
+        }
+        Button(onClick = onImportQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Import from QRFT (scan)")
+        }
+        HorizontalDivider()
+
         Text("Autofill", style = MaterialTheme.typography.titleSmall)
         Button(onClick = onEnableAutofill, modifier = Modifier.fillMaxWidth()) {
             Text(if (autofillEnabled) "Autofill: enabled (re-open settings)" else "Enable autofill service")
@@ -145,6 +157,9 @@ fun SetupTabScreen(
                 style = MaterialTheme.typography.bodySmall
             )
             Switch(checked = screenLockOn, onCheckedChange = { onScreenLockToggle(it) })
+        }
+        Button(onClick = onLock, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Lock vault (zero decrypted data)")
         }
         HorizontalDivider()
 
