@@ -252,14 +252,20 @@ class OpenPgpClient(private val context: Context) {
                 // Blocks until the service returns; binder calls are already
                 // off the main thread via Dispatchers.IO.
                 val result = api.execute(data, inputFd, pipeId)
+                // Cross-process extras carry lazily-unparceled values —
+                // without the app classloader set, parcelable extras (the
+                // interaction PendingIntent, OpenPgpError) read as null and
+                // Int extras fall back to defaults.
+                result.setExtrasClassLoader(context.classLoader)
                 pump?.join()
                 // The result carries everything the caller needs to diagnose
                 // an interaction cycle: on code 2 the PendingIntent to launch;
                 // on any failure, OpenKeychain's OpenPgpError (id + message).
                 val code = result.getIntExtra(RESULT_CODE, RESULT_CODE_ERROR)
-                val err = runCatching {
-                    result.getParcelableExtra<Parcelable>(RESULT_ERROR) as? org.openintents.openpgp.OpenPgpError
-                }.getOrNull()
+                val err = parcelExtra(
+                    result, RESULT_ERROR,
+                    org.openintents.openpgp.OpenPgpError::class.java
+                )
                 Log.i(
                     TAG,
                     "${data.action}: code $code " +
@@ -279,6 +285,17 @@ class OpenPgpClient(private val context: Context) {
 
     private fun errorResult(): Intent =
         Intent().putExtra(RESULT_CODE, RESULT_CODE_ERROR)
+
+    /**
+     * Typed parcelable read for cross-process result extras. The legacy
+     * `getParcelableExtra(key)` returns null on API 33+ results that carry
+     * lazily-unparceled values (observed: OpenKeyChain's OpenPgpError), and
+     * the typed variant resolves the classloader properly.
+     */
+    private fun <T : Parcelable> parcelExtra(intent: Intent, key: String, clazz: Class<T>): T? =
+        if (android.os.Build.VERSION.SDK_INT >= 33)
+            intent.getParcelableExtra(key, clazz)
+        else @Suppress("DEPRECATION") intent.getParcelableExtra(key) as? T
 
     /**
      * Looks up the key ids for [userIds] (emails). No user interaction is
@@ -302,8 +319,7 @@ class OpenPgpClient(private val context: Context) {
                 }
             }
             RESULT_CODE_USER_INTERACTION_REQUIRED -> {
-                val pendingIntent = result.getParcelableExtra<Parcelable>(RESULT_INTENT)
-                    as? PendingIntent
+                val pendingIntent = parcelExtra(result, RESULT_INTENT, PendingIntent::class.java)
                 if (pendingIntent != null) KeyLookup.UserInteraction(pendingIntent) else KeyLookup.Error
             }
             else -> KeyLookup.Error
@@ -338,8 +354,7 @@ class OpenPgpClient(private val context: Context) {
                 }
             }
             RESULT_CODE_USER_INTERACTION_REQUIRED -> {
-                val pendingIntent = result.getParcelableExtra<Parcelable>(RESULT_INTENT)
-                    as? PendingIntent
+                val pendingIntent = parcelExtra(result, RESULT_INTENT, PendingIntent::class.java)
                 if (pendingIntent != null) PublicKey.UserInteraction(pendingIntent) else PublicKey.Error
             }
             else -> PublicKey.Error
@@ -432,8 +447,7 @@ class OpenPgpClient(private val context: Context) {
                 )
             )
             RESULT_CODE_USER_INTERACTION_REQUIRED -> {
-                val pendingIntent = result.getParcelableExtra<Parcelable>(RESULT_INTENT)
-                    as? PendingIntent
+                val pendingIntent = parcelExtra(result, RESULT_INTENT, PendingIntent::class.java)
                 if (pendingIntent != null) {
                     DecryptResult.UserInteraction(pendingIntent)
                 } else {
@@ -489,7 +503,9 @@ class OpenPgpClient(private val context: Context) {
         )
         return when (result.getIntExtra(RESULT_CODE, RESULT_CODE_ERROR)) {
             RESULT_CODE_SUCCESS -> {
-                val keyId = result.getLongExtra(RESULT_KEY_ID, -1L)
+                // OpenKeyChain returns the picked key in the sign_key_id
+                // extra (OpenPgpApi.EXTRA_SIGN_KEY_ID) — NOT "key_id".
+                val keyId = result.getLongExtra(EXTRA_SIGN_KEY_ID, -1L)
                 if (keyId == -1L) {
                     SignKey.Error
                 } else {
@@ -500,8 +516,7 @@ class OpenPgpClient(private val context: Context) {
                 }
             }
             RESULT_CODE_USER_INTERACTION_REQUIRED -> {
-                val pendingIntent = result.getParcelableExtra<Parcelable>(RESULT_INTENT)
-                    as? PendingIntent
+                val pendingIntent = parcelExtra(result, RESULT_INTENT, PendingIntent::class.java)
                 if (pendingIntent != null) SignKey.NeedsInteraction(pendingIntent) else SignKey.Error
             }
             else -> SignKey.Error
@@ -520,20 +535,58 @@ class OpenPgpClient(private val context: Context) {
     /**
      * Detached PGP signature over [data], armored — OpenKeyChain returns it
      * in the `detached_signature` extra (the output pipe stays empty for
-     * this action). Returns the ASCII-armored signature block, or null.
+     * this action). Structured result so callers can surface OpenKeyChain's
+     * passphrase/plug-in prompt through the UI interaction loop before any
+     * commit depends on the key being unlocked.
      */
-    suspend fun signDetached(data: ByteArray, keyId: Long): String? {
-        if (!connect()) return null
-        val data2 = Intent(ACTION_DETACHED_SIGN).apply {
+    sealed interface SignDetached {
+        data class Ok(val armored: String) : SignDetached
+        data class UserInteraction(val pendingIntent: PendingIntent) : SignDetached
+        data class Error(val message: String) : SignDetached
+    }
+
+    suspend fun trySignDetached(
+        data: ByteArray,
+        keyId: Long,
+        requestData: Intent? = null
+    ): SignDetached {
+        if (!connect()) return SignDetached.Error("OpenKeyChain service unavailable")
+        val intent = requestData ?: Intent(ACTION_DETACHED_SIGN).apply {
             putExtra(EXTRA_SIGN_KEY_ID, keyId)
             putExtra(EXTRA_REQUEST_ASCII_ARMOR, true)
         }
         val sink = ByteArrayOutputStream()
-        val result = execute(data2, data.inputStream(), sink)
-        if (result.getIntExtra(RESULT_CODE, RESULT_CODE_ERROR) != RESULT_CODE_SUCCESS) return null
-        val raw = result.extras?.get("detached_signature") as? ByteArray ?: return null
-        return String(raw, Charsets.UTF_8)
+        val result = execute(intent, data.inputStream(), sink)
+        return when (result.getIntExtra(RESULT_CODE, RESULT_CODE_ERROR)) {
+            RESULT_CODE_SUCCESS -> {
+                val raw = result.extras?.get("detached_signature") as? ByteArray
+                if (raw != null && raw.isNotEmpty()) {
+                    SignDetached.Ok(String(raw, Charsets.UTF_8))
+                } else {
+                    SignDetached.Error("no detached signature returned")
+                }
+            }
+            RESULT_CODE_USER_INTERACTION_REQUIRED -> {
+                val pi = parcelExtra(result, RESULT_INTENT, PendingIntent::class.java)
+                if (pi != null) SignDetached.UserInteraction(pi)
+                else SignDetached.Error("interaction requested but no intent returned")
+            }
+            else -> {
+                val err = parcelExtra(
+                    result, RESULT_ERROR,
+                    org.openintents.openpgp.OpenPgpError::class.java
+                )
+                SignDetached.Error(err?.message?.takeIf { it.isNotBlank() }
+                    ?: "error id ${err?.errorId ?: -1}")
+            }
+        }
     }
+
+    /** Fire-and-forget variant for JGit's synchronous Signer path (which
+     * cannot interact). Returns null on any failure — prefer [trySignDetached]
+     * where a UI interaction loop is available. */
+    suspend fun signDetached(data: ByteArray, keyId: Long): String? =
+        (trySignDetached(data, keyId) as? SignDetached.Ok)?.armored
 
     /** Releases the binding. The client is unusable afterwards. */
     fun close() {
@@ -579,6 +632,9 @@ class OpenPgpClient(private val context: Context) {
             } catch (_: IOException) {
                 // A closed pipe mid-transfer is how a failing call ends.
             } finally {
+                // During decrypt this buffer carried plaintext chunks —
+                // zero it before the thread dies.
+                buffer.fill(0)
                 runCatching { input.close() }
                 runCatching { output.close() }
             }
