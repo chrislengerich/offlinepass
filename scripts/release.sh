@@ -153,24 +153,42 @@ cmd_publish() {
   done
   ( cd "$REPO_ROOT"
     [ -z "$(git status --porcelain)" ] || die "git tree is dirty — commit the release first"
-    git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1 && die "$TAG already exists"
-    # Annotated tag; export LINUXPASS_SIGN_TAG=1 for a GPG-signed tag.
-    if [ "${LINUXPASS_SIGN_TAG:-0}" = "1" ]; then
-      git tag -s "$TAG" -m "linuxpass $TAG"
+    # Resumable: a previous run may have tagged before failing at push/release.
+    head_sha=$(git rev-parse HEAD)
+    if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+      tagged_sha=$(git rev-parse -q --verify "refs/tags/$TAG^{commit}")
+      [ "$tagged_sha" = "$head_sha" ] || die "$TAG exists at $tagged_sha but HEAD is $head_sha"
+      echo "$TAG already tagged at HEAD — resuming"
     else
-      git tag -a "$TAG" -m "linuxpass $TAG"
+      # Annotated tag; export LINUXPASS_SIGN_TAG=1 for a GPG-signed tag.
+      if [ "${LINUXPASS_SIGN_TAG:-0}" = "1" ]; then
+        git tag -s "$TAG" -m "linuxpass $TAG"
+      else
+        git tag -a "$TAG" -m "linuxpass $TAG"
+      fi
     fi
-    git push origin HEAD "$TAG"
+    # Idempotent push: harmless if both (or either) already arrived.
+    git push origin HEAD "$TAG" || die "push failed — fix git auth and re-run publish (it resumes)"
     if command -v gh >/dev/null 2>&1; then
-      gh release create "$TAG" \
-        "$STAGE"/linuxpass-"$VERSION"-debug.apk \
-        "$STAGE"/linuxpass-"$VERSION"-debug.apk.asc \
-        "$STAGE"/linuxpass-"$VERSION"-profileable.apk \
-        "$STAGE"/linuxpass-"$VERSION"-profileable.apk.asc \
-        "$STAGE"/SHA256SUMS.txt \
-        --notes-file "$STAGE/RELEASE_NOTES.md" \
-        --title "linuxpass $TAG"
-      echo "GitHub release created."
+      if gh release view "$TAG" >/dev/null 2>&1; then
+        echo "release $TAG exists — (re-)uploading artifacts"
+        gh release upload "$TAG" --clobber \
+          "$STAGE"/linuxpass-"$VERSION"-debug.apk \
+          "$STAGE"/linuxpass-"$VERSION"-debug.apk.asc \
+          "$STAGE"/linuxpass-"$VERSION"-profileable.apk \
+          "$STAGE"/linuxpass-"$VERSION"-profileable.apk.asc \
+          "$STAGE"/SHA256SUMS.txt
+      else
+        gh release create "$TAG" \
+          "$STAGE"/linuxpass-"$VERSION"-debug.apk \
+          "$STAGE"/linuxpass-"$VERSION"-debug.apk.asc \
+          "$STAGE"/linuxpass-"$VERSION"-profileable.apk \
+          "$STAGE"/linuxpass-"$VERSION"-profileable.apk.asc \
+          "$STAGE"/SHA256SUMS.txt \
+          --notes-file "$STAGE/RELEASE_NOTES.md" \
+          --title "linuxpass $TAG"
+      fi
+      echo "GitHub release in place."
     else
       echo "gh not found — upload $STAGE/* manually:"
       echo "  https://github.com/$(git remote get-url origin | sed -E 's#.*github.com[:/]##;s#\.git$##')/releases/new?tag=$TAG"
