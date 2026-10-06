@@ -60,9 +60,16 @@ scripts/release.sh publish 0.9.0
 ```
 
 `publish` creates the annotated tag (`LINUXPASS_SIGN_TAG=1` for a GPG-signed
-tag), pushes the branch + tag, and creates the GitHub release with both APKs
-+ checksums + release notes via `gh`. Requires `gh auth login` with write
-access to the origin repo.
+tag), pushes the branch + tag (SSH — the security key is the SSH identity;
+expect the touch prompt), and creates the GitHub release with both APKs +
+signatures + checksums + release notes via `gh`. Requires `gh auth login`
+with write access to the origin repo.
+
+`publish` is **resumable** — a failed run (e.g. push denied before the key
+touch) can simply be re-run: an existing tag is reused as-is for the
+release, completed steps are skipped. To move an existing tag to HEAD
+instead, `LINUXPASS_RETAG=1`; to sign the tag with GPG,
+`LINUXPASS_SIGN_TAG=1`.
 
 ## Bumping the version
 

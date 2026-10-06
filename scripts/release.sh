@@ -17,9 +17,12 @@
 # device installs use the debug APK (debug-signed by AGP).
 #
 # The `publish` step requires: a CLEAN git tree (commit the release first),
-# the tag NOT existing, and the `gh` CLI logged in with write access to the
-# origin repo. Artifacts attach to the GitHub release; they are NOT
-# committed into git (dist/ is gitignored).
+# and the `gh` CLI logged in with write access to the origin repo (push is
+# SSH — the security key is the SSH identity, expect the touch prompt).
+# It is RESUMABLE: a tag left behind by a failed run is reused as-is
+# (LINUXPASS_RETAG=1 moves it to HEAD instead), completed steps are
+# skipped. Artifacts attach to the GitHub release; they are NOT committed
+# into git (dist/ is gitignored).
 #
 set -euo pipefail
 
@@ -154,11 +157,23 @@ cmd_publish() {
   ( cd "$REPO_ROOT"
     [ -z "$(git status --porcelain)" ] || die "git tree is dirty — commit the release first"
     # Resumable: a previous run may have tagged before failing at push/release.
+    # An EXISTING tag is reused as-is (publish attaches the release to it);
+    # LINUXPASS_RETAG=1 moves it to HEAD instead.
     head_sha=$(git rev-parse HEAD)
     if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
       tagged_sha=$(git rev-parse -q --verify "refs/tags/$TAG^{commit}")
-      [ "$tagged_sha" = "$head_sha" ] || die "$TAG exists at $tagged_sha but HEAD is $head_sha"
-      echo "$TAG already tagged at HEAD — resuming"
+      if [ "${LINUXPASS_RETAG:-0}" = "1" ]; then
+        if [ "${LINUXPASS_SIGN_TAG:-0}" = "1" ]; then
+          git tag -f -s "$TAG" -m "linuxpass $TAG" "$head_sha"
+        else
+          git tag -f -a "$TAG" -m "linuxpass $TAG" "$head_sha"
+        fi
+        echo "$TAG moved to HEAD ($head_sha)"
+      elif [ "$tagged_sha" != "$head_sha" ]; then
+        echo "note: reusing $TAG at ${tagged_sha:0:7} (HEAD is ${head_sha:0:7}; LINUXPASS_RETAG=1 moves it)"
+      else
+        echo "$TAG already tagged at HEAD"
+      fi
     else
       # Annotated tag; export LINUXPASS_SIGN_TAG=1 for a GPG-signed tag.
       if [ "${LINUXPASS_SIGN_TAG:-0}" = "1" ]; then
@@ -167,7 +182,8 @@ cmd_publish() {
         git tag -a "$TAG" -m "linuxpass $TAG"
       fi
     fi
-    # Idempotent push: harmless if both (or either) already arrived.
+    # Idempotent push: harmless if both (or either) already arrived. The
+    # SSH identity is the security key — expect the touch prompt.
     git push origin HEAD "$TAG" || die "push failed — fix git auth and re-run publish (it resumes)"
     if command -v gh >/dev/null 2>&1; then
       if gh release view "$TAG" >/dev/null 2>&1; then
