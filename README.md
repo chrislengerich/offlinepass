@@ -1,4 +1,4 @@
-# offlinepass
+# offlinepass (alpha)
 
 A low-dependency password manager in the spirit of [Proton Pass](https://proton.me/pass):
 one OpenPGP-encrypted vault file in a git repo, with two clients that
