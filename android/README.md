@@ -1,6 +1,6 @@
-# linuxpass Android
+# offlinepass Android
 
-Native Android client for the linuxpass vault (design:
+Native Android client for the offlinepass vault (design:
 `../docs/android-app-design.md`, work plan: `../docs/work-plan.md`).
 
 ## Status — Phase 0 (spikes)
@@ -51,7 +51,7 @@ UID — and by `adb` only for debug builds via `run-as`).
 **File structure (device):**
 
 ```
-/data/data/com.linuxpass.app/                    (app-private, internal)
+/data/data/com.offlinepass.app/                    (app-private, internal)
 ├── files/
 │   ├── vault/
 │   │   └── repo/                        # THE repo — same location in both modes
@@ -66,11 +66,11 @@ UID — and by `adb` only for debug builds via `run-as`).
 ├── shared_prefs/
 │   ├── vault_config.xml                 # remote URL (absent in local-only),
 │   │                                    #   recipient emails, deviceId
-│   └── linuxpass_secret_keys.xml        # the PAT: AES-256-GCM blob wrapped by
+│   └── offlinepass_secret_keys.xml        # the PAT: AES-256-GCM blob wrapped by
 │                                        #   AndroidKeyStore (TEE-held)
-└── (sdcard) Android/data/com.linuxpass.app/files/
+└── (sdcard) Android/data/com.offlinepass.app/files/
     ├── storage-pat.txt                  # optional PAT prefill (remove after setup)
-    └── id-linuxpass.pub                 # the device's Keystore SSH public key
+    └── id-offlinepass.pub                 # the device's Keystore SSH public key
 ```
 
 Local-only mode is the **same git repo** without a `remote`; configuring a

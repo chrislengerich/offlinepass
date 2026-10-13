@@ -1,4 +1,4 @@
-# linuxpass Android — Testing Plan
+# offlinepass Android — Testing Plan
 
 Status: active
 Date: 2026-10-04
@@ -82,7 +82,7 @@ on hardware.
 | T-X-03 | Envelope field preservation both directions | `rev`/`deviceId`/unknown fields survive desktop save then app save and vice versa |
 | T-X-04 | qrft interop: app-rendered payload → qrft.org scanner page | manual, scripted (desktop browser) |
 | T-X-05 | QR Autofill app scans app-rendered single-frame QR | manual, on phone |
-| T-X-06 | USB snapshot imported by desktop TUI | restored file dropped into `LINUXPASS_FILE`/`LINUXPASS_GIT_DIR`; TUI reads it |
+| T-X-06 | USB snapshot imported by desktop TUI | restored file dropped into `OFFLINEPASS_FILE`/`OFFLINEPASS_GIT_DIR`; TUI reads it |
 
 ### L5 — manual UX scripts (`T-M-*`)
 
@@ -103,7 +103,7 @@ on hardware.
   `test_data.json`), one with TOTP enrolled; encrypted to a **test**
   recipient set. Hardware round-trips additionally use the real vault via
   a manual gate.
-- **Scratch repo:** private GitHub repo `linuxpass-vault-test`, resettable
+- **Scratch repo:** private GitHub repo `offlinepass-vault-test`, resettable
   by force-pushing a seed commit; both the app (test build) and the TUI
   point at it during testing.
 - **Devices:** daily phone (NFC YubiKey A), offline test phone (USB-C
@@ -149,7 +149,7 @@ silent pass.
 - **Delete: PASS** — tombstone, rev 3, push `27ef021`, entry gone from list.
 - **QRFT export: PASS** — paste prefilled with the real entry payload, sender auto-started ("chunk 1/2" looping; screenshot).
 - **Autofill: PASS** — service enabled via system picker; fake-login form offered ranked datasets (AWS/GitHub/GitLab); selecting AWS Console filled username + password (screenshot).
-- **USB save: PASS** — SAF snapshot `linuxpass-vault-rev3.gpg` (1174 B), desktop-pulled.
+- **USB save: PASS** — SAF snapshot `offlinepass-vault-rev3.gpg` (1174 B), desktop-pulled.
 - Pending: real-applet-keys variant of the above (YubiKey pairing in OpenKeyChain + the real 192 KB vault), USB restore+merge drill, S6 NFC timing.
 - Fixes landed en route: search rows clickable; push-retry on clean tree; `getRootViewNode()` API name; PAT field on first-run setup AND on the locked screen when unstored.
 

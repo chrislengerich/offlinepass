@@ -1,4 +1,4 @@
-# linuxpass Android — Work Plan
+# offlinepass Android — Work Plan
 
 Status: active
 Date: 2026-10-04
@@ -19,8 +19,8 @@ Companion docs: `docs/android-app-design.md` (design), `docs/testing-plan.md` (Q
 ## Repo layout (target)
 
 ```
-linuxpass/
-├── linuxpass.py / passlib.py / test_passlib.py   # existing TUI
+offlinepass/
+├── offlinepass.py / passlib.py / test_passlib.py   # existing TUI
 ├── docs/                                          # design, work plan, testing plan
 └── android/                                       # Gradle project (from offlinecam baseline)
     ├── build.gradle.kts / settings.gradle.kts / gradle/
@@ -99,7 +99,7 @@ conflict UI. Exit tests: T-G-02..06, T-M-03.
 | Single-entry packaging | entry → Proton-JSON payload file | M2 |
 | Single-frame QR | ZXing rendering (QR Autofill parity + generic decoders) | packaging |
 | qrft-generator export | vendored `generator.html` in WebView; payload in, looping frames out (sender-side only) | packaging |
-| USB save | SAF `CreateDocument` → `linuxpass-vault-rev<N>.gpg` snapshot | M2 |
+| USB save | SAF `CreateDocument` → `offlinepass-vault-rev<N>.gpg` snapshot | M2 |
 | USB restore | SAF open → decrypt-check → `rev`/`deviceId` compare → conflict UI if diverged → working copy + local commit | M2, merge code |
 | Local-only mode | run without a configured remote; sync disabled; surfaced in UI | restore |
 

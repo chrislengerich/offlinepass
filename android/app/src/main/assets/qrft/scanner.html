@@ -69,8 +69,8 @@
           msg.textContent = "Received \"" + name + "\" — importing…";
           // Hand the payload to the app (bridge call hops to the main thread).
           setTimeout(function () {
-            if (window.LinuxpassBridge && window.LinuxpassBridge.onPayload) {
-              window.LinuxpassBridge.onPayload(name, text);
+            if (window.OfflinepassBridge && window.OfflinepassBridge.onPayload) {
+              window.OfflinepassBridge.onPayload(name, text);
             } else {
               msg.textContent = "Bridge missing — payload not delivered.";
             }

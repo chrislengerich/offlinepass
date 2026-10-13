@@ -164,7 +164,7 @@ def totp_secret_from_input(user_input: str) -> str:
         return user_input
     # Raw secret — wrap in a minimal otpauth URI
     secret = user_input.replace(" ", "").replace("-", "").upper()
-    return f"otpauth://totp/linuxpass?secret={secret}&issuer=linuxpass"
+    return f"otpauth://totp/offlinepass?secret={secret}&issuer=offlinepass"
 
 
 def generate_totp(uri: str, at_time: int | None = None) -> tuple[str, int]:
@@ -210,7 +210,7 @@ class PasswordStore:
 
     def _load_device_id(self) -> str:
         # Stable per clone; untracked marker next to the vault repo.
-        marker = os.path.join(self.git_dir, ".linuxpass-device")
+        marker = os.path.join(self.git_dir, ".offlinepass-device")
         try:
             if os.path.exists(marker):
                 with open(marker) as f:

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# linuxpass release pipeline: build → stage → (you gpg-sign) → verify → publish.
+# offlinepass release pipeline: build → stage → (you gpg-sign) → verify → publish.
 #
 # Usage:
 #   scripts/release.sh build [version]    # assemble + stage dist/v<version>/
@@ -9,7 +9,7 @@
 #   scripts/release.sh publish [version]  # commit-check, tag, push, GH release
 #
 # Signing: each APK gets a detached ASCII-armored GPG signature (.asc
-# sidecar) from the security key. Set LINUXPASS_GPG_KEY=<keyid/email> to
+# sidecar) from the security key. Set OFFLINEPASS_GPG_KEY=<keyid/email> to
 # pick a non-default key (the key's secret half lives on the hardware
 # token — expect the touch prompt). APK-side Android-keystore signing is
 # DEFERRED (app-store mechanics): the profileable APK ships as built
@@ -20,7 +20,7 @@
 # and the `gh` CLI logged in with write access to the origin repo (push is
 # SSH — the security key is the SSH identity, expect the touch prompt).
 # It is RESUMABLE: a tag left behind by a failed run is reused as-is
-# (LINUXPASS_RETAG=1 moves it to HEAD instead), completed steps are
+# (OFFLINEPASS_RETAG=1 moves it to HEAD instead), completed steps are
 # skipped. Artifacts attach to the GitHub release; they are NOT committed
 # into git (dist/ is gitignored).
 #
@@ -29,7 +29,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ANDROID_DIR="$REPO_ROOT/android"
 DIST_ROOT="$REPO_ROOT/dist"
-VERSION="${2:-${LINUXPASS_VERSION:-0.9.0}}"
+VERSION="${2:-${OFFLINEPASS_VERSION:-0.9.0}}"
 TAG="v$VERSION"
 STAGE="$DIST_ROOT/$TAG"
 
@@ -56,7 +56,7 @@ require_stage() {
 }
 
 gpg_key_args() {
-  [ -n "${LINUXPASS_GPG_KEY:-}" ] && echo "--local-user" "$LINUXPASS_GPG_KEY"
+  [ -n "${OFFLINEPASS_GPG_KEY:-}" ] && echo "--local-user" "$OFFLINEPASS_GPG_KEY"
 }
 
 # -- build -------------------------------------------------------------------
@@ -65,19 +65,19 @@ cmd_build() {
   ( cd "$ANDROID_DIR" && ./gradlew :app:assembleDebug :app:assembleProfileable --console=plain )
   mkdir -p "$STAGE"
   cp "$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk" \
-     "$STAGE/linuxpass-$VERSION-debug.apk"
+     "$STAGE/offlinepass-$VERSION-debug.apk"
   cp "$ANDROID_DIR/app/build/outputs/apk/profileable/app-profileable-unsigned.apk" \
-     "$STAGE/linuxpass-$VERSION-profileable.apk"
+     "$STAGE/offlinepass-$VERSION-profileable.apk"
   # Existing signatures survive a rebuild only if the bytes are identical;
   # any stale sidecar for CHANGED artifacts is stale by definition.
   rm -f "$STAGE"/*.asc
   if [ ! -f "$STAGE/RELEASE_NOTES.md" ]; then
     cat > "$STAGE/RELEASE_NOTES.md" <<'NOTES'
-## linuxpass v0.9.0
+## offlinepass v0.9.0
 
 First packaged release of both clients.
 
-### Android (com.linuxpass.app)
+### Android (com.offlinepass.app)
 - Hardware-key unlock (OpenKeyChain/YubiKey) with optional biometric gate
 - Full CRUD: add/edit with editable generated password + notes, TOTP enroll
   with live countdown, tombstoned delete
@@ -92,9 +92,9 @@ First packaged release of both clients.
   files zero-filled and deleted on every decrypt/encrypt
 
 ### Artifacts
-- `linuxpass-vX.Y.Z-debug.apk` — debuggable, signed with the debug key
+- `offlinepass-vX.Y.Z-debug.apk` — debuggable, signed with the debug key
   (installable via adb)
-- `linuxpass-vX.Y.Z-profileable.apk` — minified release + <profileable>
+- `offlinepass-vX.Y.Z-profileable.apk` — minified release + <profileable>
   (profilers can attach). Android-keystore signing is deferred: the APK
   itself is unsigned (not installable until APK-signed); its integrity is
   attested by the GPG detached signature.
@@ -113,7 +113,7 @@ NOTES
 
 cmd_sign() {
   require_stage
-  for apk in "$STAGE"/linuxpass-"$VERSION"-*.apk; do
+  for apk in "$STAGE"/offlinepass-"$VERSION"-*.apk; do
     [ -f "$apk" ] || continue
     if [ -f "$apk.asc" ]; then
       echo "already signed: $(basename "$apk") — keeping the existing .asc"
@@ -133,7 +133,7 @@ cmd_sign() {
 cmd_verify() {
   require_stage
   local found=0
-  for apk in "$STAGE"/linuxpass-"$VERSION"-*.apk; do
+  for apk in "$STAGE"/offlinepass-"$VERSION"-*.apk; do
     [ -f "$apk" ] || continue
     found=1
     echo "== $(basename "$apk")"
@@ -150,7 +150,7 @@ cmd_verify() {
 
 cmd_publish() {
   require_stage
-  for apk in "$STAGE"/linuxpass-"$VERSION"-*.apk; do
+  for apk in "$STAGE"/offlinepass-"$VERSION"-*.apk; do
     [ -f "$apk" ] || continue
     [ -f "$apk.asc" ] || die "$(basename "$apk") not signed — run: scripts/release.sh sign $VERSION"
   done
@@ -158,28 +158,28 @@ cmd_publish() {
     [ -z "$(git status --porcelain)" ] || die "git tree is dirty — commit the release first"
     # Resumable: a previous run may have tagged before failing at push/release.
     # An EXISTING tag is reused as-is (publish attaches the release to it);
-    # LINUXPASS_RETAG=1 moves it to HEAD instead.
+    # OFFLINEPASS_RETAG=1 moves it to HEAD instead.
     head_sha=$(git rev-parse HEAD)
     if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
       tagged_sha=$(git rev-parse -q --verify "refs/tags/$TAG^{commit}")
-      if [ "${LINUXPASS_RETAG:-0}" = "1" ]; then
-        if [ "${LINUXPASS_SIGN_TAG:-0}" = "1" ]; then
-          git tag -f -s "$TAG" -m "linuxpass $TAG" "$head_sha"
+      if [ "${OFFLINEPASS_RETAG:-0}" = "1" ]; then
+        if [ "${OFFLINEPASS_SIGN_TAG:-0}" = "1" ]; then
+          git tag -f -s "$TAG" -m "offlinepass $TAG" "$head_sha"
         else
-          git tag -f -a "$TAG" -m "linuxpass $TAG" "$head_sha"
+          git tag -f -a "$TAG" -m "offlinepass $TAG" "$head_sha"
         fi
         echo "$TAG moved to HEAD ($head_sha)"
       elif [ "$tagged_sha" != "$head_sha" ]; then
-        echo "note: reusing $TAG at ${tagged_sha:0:7} (HEAD is ${head_sha:0:7}; LINUXPASS_RETAG=1 moves it)"
+        echo "note: reusing $TAG at ${tagged_sha:0:7} (HEAD is ${head_sha:0:7}; OFFLINEPASS_RETAG=1 moves it)"
       else
         echo "$TAG already tagged at HEAD"
       fi
     else
-      # Annotated tag; export LINUXPASS_SIGN_TAG=1 for a GPG-signed tag.
-      if [ "${LINUXPASS_SIGN_TAG:-0}" = "1" ]; then
-        git tag -s "$TAG" -m "linuxpass $TAG"
+      # Annotated tag; export OFFLINEPASS_SIGN_TAG=1 for a GPG-signed tag.
+      if [ "${OFFLINEPASS_SIGN_TAG:-0}" = "1" ]; then
+        git tag -s "$TAG" -m "offlinepass $TAG"
       else
-        git tag -a "$TAG" -m "linuxpass $TAG"
+        git tag -a "$TAG" -m "offlinepass $TAG"
       fi
     fi
     # Idempotent push: harmless if both (or either) already arrived. The
@@ -189,20 +189,20 @@ cmd_publish() {
       if gh release view "$TAG" >/dev/null 2>&1; then
         echo "release $TAG exists — (re-)uploading artifacts"
         gh release upload "$TAG" --clobber \
-          "$STAGE"/linuxpass-"$VERSION"-debug.apk \
-          "$STAGE"/linuxpass-"$VERSION"-debug.apk.asc \
-          "$STAGE"/linuxpass-"$VERSION"-profileable.apk \
-          "$STAGE"/linuxpass-"$VERSION"-profileable.apk.asc \
+          "$STAGE"/offlinepass-"$VERSION"-debug.apk \
+          "$STAGE"/offlinepass-"$VERSION"-debug.apk.asc \
+          "$STAGE"/offlinepass-"$VERSION"-profileable.apk \
+          "$STAGE"/offlinepass-"$VERSION"-profileable.apk.asc \
           "$STAGE"/SHA256SUMS.txt
       else
         gh release create "$TAG" \
-          "$STAGE"/linuxpass-"$VERSION"-debug.apk \
-          "$STAGE"/linuxpass-"$VERSION"-debug.apk.asc \
-          "$STAGE"/linuxpass-"$VERSION"-profileable.apk \
-          "$STAGE"/linuxpass-"$VERSION"-profileable.apk.asc \
+          "$STAGE"/offlinepass-"$VERSION"-debug.apk \
+          "$STAGE"/offlinepass-"$VERSION"-debug.apk.asc \
+          "$STAGE"/offlinepass-"$VERSION"-profileable.apk \
+          "$STAGE"/offlinepass-"$VERSION"-profileable.apk.asc \
           "$STAGE"/SHA256SUMS.txt \
           --notes-file "$STAGE/RELEASE_NOTES.md" \
-          --title "linuxpass $TAG"
+          --title "offlinepass $TAG"
       fi
       echo "GitHub release in place."
     else

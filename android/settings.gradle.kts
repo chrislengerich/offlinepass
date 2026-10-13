@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "linuxpass-android"
+rootProject.name = "offlinepass-android"
 include(":app")
