@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.offlinepass.app.crypto.OpenPgpClient
+import com.offlinepass.app.crypto.OpenPgpOps
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +63,13 @@ object VaultSession {
      */
     var interactionHandler: (suspend (PendingIntent) -> Intent?)? = null
 
+    /**
+     * Builds the OpenPGP client used by the save path. Production: the real
+     * OpenKeyChain IPC client. Tests override this to stub OpenKeyChain
+     * (device-only) and exercise the save transaction on the JVM.
+     */
+    internal var openPgpClientFactory: (Context) -> OpenPgpOps = { OpenPgpClient(it) }
+
     /** Human-readable sync state, shown above the Sync-now button. */
     var syncStatus by mutableStateOf<String?>(null)
         private set
@@ -89,6 +97,19 @@ object VaultSession {
         // No local vault → the setup/import screen (no unlock shown).
         state = if (File(vaultFilePath()).exists()) State.Locked else State.NoConfig
         registerConnectivityWatch()
+    }
+
+    /** Test-only: the singleton holds memory across Robolectric tests —
+     * reset it to pristine defaults for [context] (no connectivity watch). */
+    internal fun resetForTest(context: Context) {
+        appContext = context.applicationContext
+        rev = 0
+        loadedEnvelope = null
+        state = if (File(vaultFilePath()).exists()) State.Locked else State.NoConfig
+        pendingPush = false
+        lastSaveRemoteState = "none"
+        syncStatus = null
+        busy = null
     }
 
     /** Background sync: when connectivity returns and a push is pending,
@@ -300,10 +321,18 @@ object VaultSession {
     // -- save ----------------------------------------------------------------
 
     /**
-     * Encrypts (all configured recipients) + writes the vault file + pushes
-     * (remote mode). Local-only mode: just writes the file. Returns
-     * Interaction when OpenKeyChain needs a prompt — the UI launches it and
-     * calls save() again.
+     * Encrypts (all configured recipients) + writes the vault file + commits
+     * to the local git repo + pushes (remote mode). Local-only mode: just
+     * writes + commits. Returns Interaction when OpenKeyChain needs a
+     * prompt — the UI launches it and calls save() again.
+     *
+     * TRANSACTION SEMANTICS: the local git commit is the durability
+     * boundary. Anything that fails BEFORE a commit lands (sign-key
+     * preflight, the commit itself, encryption) rolls the vault file and
+     * the in-memory session state back to the pre-save snapshot and returns
+     * Error — the UI keeps the user on the form and nothing was saved.
+     * Once a commit lands the change is durable; a push failure only marks
+     * the sync pending (the repo — local first — is the source of trust).
      */
     suspend fun save(items: List<ProtonItem>): Result {
         val cfg = config() ?: return Result.Error("No config")
@@ -317,7 +346,7 @@ object VaultSession {
                 // Purge tombstoned entries for good.
                 env.items.removeAll { it.itemUuid in env.deletedItemUuids }
                 env.items.sortBy { it.displayName.lowercase() }
-                val client = OpenPgpClient(appContext)
+                val client = openPgpClientFactory(appContext)
 
                 var keyIds = cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()
                 var lookupReqData: Intent? = null
@@ -342,86 +371,134 @@ object VaultSession {
 
                 val plain = File(appContext.cacheDir, "vault-plain-next.json")
                 val target = vaultFile()
+
+                // -- transaction snapshot (file + session state) ----------
+                // Taken before the first write; restored by rollback() on
+                // any pre-commit failure so disk and memory stay in sync
+                // with the git repo (which never sees the change).
+                val prevFileBytes: ByteArray? = target.takeIf { it.exists() }?.readBytes()
+                val prevRev = rev
+                val prevEnvelope = loadedEnvelope
+                val prevEnvRev = prevEnvelope?.rev
+                val prevEnvItems = prevEnvelope?.items?.toList()
+                val prevState = state
+
+                // Restore the pre-save snapshot; never throws (a rollback
+                // must not mask the original error).
+                fun rollback(reason: String): Result.Error {
+                    try {
+                        if (prevFileBytes != null) target.writeBytes(prevFileBytes)
+                        else target.delete()
+                        rev = prevRev
+                        loadedEnvelope = prevEnvelope
+                        // env aliases loadedEnvelope and was mutated in
+                        // place — put its prior fields back too.
+                        prevEnvelope?.let { e ->
+                            prevEnvRev?.let { e.rev = it }
+                            e.items = prevEnvItems.orEmpty().toMutableList()
+                        }
+                        state = prevState
+                        syncStatus = "Save rolled back — nothing saved: $reason"
+                    } catch (e: Exception) {
+                        Log.w(TAG, "rollback failed: ${e.message}")
+                    }
+                    Log.w(TAG, "save rolled back: $reason")
+                    return Result.Error(reason)
+                }
+
                 try {
-                    plain.writeText(env.toJsonObject().toString())
-                    target.parentFile?.mkdirs()
-                    if (!client.encryptTo(keyIds, plain, target)) {
-                        return@withContext Result.Error("Encrypt failed")
-                    }
-                } finally {
-                    // The pre-encrypt plaintext is zeroed + deleted as soon
-                    // as the ciphertext exists.
-                    SecureWipe.file(plain)
-                }
-                rev = env.rev
-                loadedEnvelope = env
-                Log.i(TAG, "encrypted ${target.length()} bytes, rev=${env.rev}")
-
-                // Materialize the recipients' armored public keys + ledger
-                // into the repo, so git history records exactly who can open
-                // each revision (design: keys/*.public.asc + recipients.txt).
-                val keysOk = materializeRecipientKeys(client, gitRoot(), keyIds)
-                if (!keysOk) syncStatus = "Some recipient key files missing (retried next save)"
-
-                val signId = signingKeyId() ?: keyIds.first()
-                val signer = OpenKeyChainSigner(client, signId)
-                // Pre-flight the commit signature: OpenKeyChain may need an
-                // unlock prompt (or the key may be unavailable entirely).
-                // Surface that as Interaction HERE — the signer inside JGit
-                // can't interact, and a hard failure there aborts the commit
-                // with a bare "commit failed".
-                busy = "Checking sign key…"
-                ensureSignKeyReady(signId)?.let { msg ->
-                    Log.w(TAG, msg)
-                    syncStatus = msg
-                    // The ciphertext file is already written; only the git
-                    // commit is missing — it happens on the next save/sync
-                    // once the sign key is available.
-                    return@withContext Result.Error(msg +
-                        " — vault file saved, commit pending. Check the key in OpenKeyChain or pick another signer in Setup.")
-                }
-                val git = VaultGitClient()
-                if (cfg.remoteUrl == null) git.gitInit(gitRoot())
-
-                // The LOCAL TRUTH FIRST: the change is on disk + committed
-                // regardless of connectivity; the push retries when the
-                // network returns (background sync).
-                state = State.Unlocked(items)
-
-                if (cfg.remoteUrl != null) {
-                    busy = "Committing…"
                     try {
-                        git.commitDirty(gitRoot(), "Update 10.gpg (rev ${env.rev})", signer)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "commit failed: ${e.message}", e)
-                        syncStatus = "Saved (file only); commit failed"
-                        return@withContext Result.Error("Saved; commit failed: ${e.message}")
+                        plain.writeText(env.toJsonObject().toString())
+                        target.parentFile?.mkdirs()
+                        if (!client.encryptTo(keyIds, plain, target)) {
+                            return@withContext rollback("Encrypt failed")
+                        }
+                    } finally {
+                        // The pre-encrypt plaintext is zeroed + deleted as soon
+                        // as the ciphertext exists.
+                        SecureWipe.file(plain)
                     }
-                    busy = "Pushing…"
-                    val pushPat = pat() ?: return@withContext Result.Error("No PAT stored")
-                    lastSaveRemoteState = "pending"
-                    try {
-                        git.pushBranch(cfg.remoteUrl, pushPat, gitRoot())
-                        pendingPush = false
-                        lastSaveRemoteState = "synced"
-                        syncStatus = if (keysOk) "Pushed rev ${env.rev} (signed)"
-                                     else "Pushed rev ${env.rev} (signed; key files pending)"
-                    } catch (e: Exception) {
-                        Log.w(TAG, "push failed (kept local commit): ${e.message}")
-                        pendingPush = true
+                    rev = env.rev
+                    loadedEnvelope = env
+                    Log.i(TAG, "encrypted ${target.length()} bytes, rev=${env.rev}")
+
+                    // Materialize the recipients' armored public keys + ledger
+                    // into the repo, so git history records exactly who can open
+                    // each revision (design: keys/*.public.asc + recipients.txt).
+                    val keysOk = materializeRecipientKeys(client, gitRoot(), keyIds)
+                    if (!keysOk) syncStatus = "Some recipient key files missing (retried next save)"
+
+                    val signId = signingKeyId() ?: keyIds.first()
+                    val signer = OpenKeyChainSigner(client, signId)
+                    // Pre-flight the commit signature: OpenKeyChain may need an
+                    // unlock prompt (or the key may be unavailable entirely).
+                    // Surface that as Interaction HERE — the signer inside JGit
+                    // can't interact, and a hard failure there aborts the commit
+                    // with a bare "commit failed".
+                    busy = "Checking sign key…"
+                    ensureSignKeyReady(signId, client)?.let { msg ->
+                        return@withContext rollback(msg +
+                            " — nothing saved. Check the key in OpenKeyChain or pick another signer in Setup.")
+                    }
+                    val git = VaultGitClient()
+                    if (cfg.remoteUrl == null) git.gitInit(gitRoot())
+
+                    // The LOCAL TRUTH FIRST: the change is on disk + committed
+                    // regardless of connectivity; the push retries when the
+                    // network returns (background sync).
+                    state = State.Unlocked(items)
+
+                    if (cfg.remoteUrl != null) {
+                        busy = "Committing…"
+                        try {
+                            git.commitDirty(gitRoot(), "Update 10.gpg (rev ${env.rev})", signer)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "commit failed: ${e.message}", e)
+                            return@withContext rollback("commit failed: ${e.message} — nothing saved.")
+                        }
+                        busy = "Pushing…"
+                        val pushPat = pat()
+                        if (pushPat == null) {
+                            // The commit already landed: the change is
+                            // durable. No rollback — the push just stays
+                            // pending until a PAT is stored (Setup).
+                            pendingPush = true
+                            lastSaveRemoteState = "pending"
+                            syncStatus = "Committed locally (rev ${env.rev}); push pending — store a PAT in Setup"
+                            return@withContext Result.Success
+                        }
                         lastSaveRemoteState = "pending"
-                        syncStatus = "Saved locally; push pending"
-                        // NOT an error: the change persisted locally.
+                        try {
+                            git.pushBranch(cfg.remoteUrl, pushPat, gitRoot())
+                            pendingPush = false
+                            lastSaveRemoteState = "synced"
+                            syncStatus = if (keysOk) "Pushed rev ${env.rev} (signed)"
+                                         else "Pushed rev ${env.rev} (signed; key files pending)"
+                        } catch (e: Exception) {
+                            Log.w(TAG, "push failed (kept local commit): ${e.message}")
+                            pendingPush = true
+                            lastSaveRemoteState = "pending"
+                            syncStatus = "Saved locally; push pending"
+                            // NOT an error: the change persisted locally.
+                        }
+                    } else {
+                        // LOCAL-ONLY: same repo dir, no remotes — history stays on-device.
+                        lastSaveRemoteState = "none"
+                        git.commitFile(gitRoot(), "Update 10.gpg (rev ${env.rev})", signer)
+                        syncStatus = "Committed locally (rev ${env.rev}, no remote)"
                     }
-                } else {
-                    // LOCAL-ONLY: same repo dir, no remotes — history stays on-device.
-                    lastSaveRemoteState = "none"
-                    git.commitFile(gitRoot(), "Update 10.gpg (rev ${env.rev})", signer)
-                    syncStatus = "Committed locally (rev ${env.rev}, no remote)"
+                    Result.Success
+                } catch (e: Exception) {
+                    // Anything throwing inside the transaction window rolls
+                    // back (the vault file may be half-written or already
+                    // updated without a commit).
+                    Log.w(TAG, "save failed: ${e.message}", e)
+                    rollback("${e.javaClass.simpleName}: ${e.message}")
                 }
-                Result.Success
             }
         } catch (e: Exception) {
+            // Failures before the snapshot (config, key lookup): nothing
+            // was written.
             Log.w(TAG, "save failed: ${e.message}")
             return Result.Error("${e.javaClass.simpleName}: ${e.message}")
         } finally {
@@ -440,8 +517,7 @@ object VaultSession {
      * UI interaction loop (retried with the returned intent, like decrypt).
      * Returns null when the key signs; otherwise an actionable message.
      */
-    private suspend fun ensureSignKeyReady(signKeyId: Long): String? {
-        val client = OpenPgpClient(appContext)
+    private suspend fun ensureSignKeyReady(signKeyId: Long, client: OpenPgpOps): String? {
         val probe = "offlinepass commit-sign preflight".toByteArray()
         var reqData: Intent? = null
         var guard = 0
@@ -589,7 +665,7 @@ object VaultSession {
                     ?: (cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()).firstOrNull()
                 if (preSignId != null) {
                     busy = "Checking sign key…"
-                    ensureSignKeyReady(preSignId)?.let { msg ->
+                    ensureSignKeyReady(preSignId, openPgpClientFactory(appContext))?.let { msg ->
                         throw IllegalStateException(msg)
                     }
                 }
@@ -684,7 +760,7 @@ object VaultSession {
      * next save; returns true when every key file is present.
      */
     private suspend fun materializeRecipientKeys(
-        client: OpenPgpClient,
+        client: OpenPgpOps,
         repoRoot: File,
         keyIds: LongArray
     ): Boolean {

@@ -41,7 +41,7 @@ import kotlin.coroutines.resume
  * settings flow, where a PendingIntent can be launched; after that approval,
  * encrypting to a public key needs no interaction.
  */
-class OpenPgpClient(private val context: Context) {
+class OpenPgpClient(private val context: Context) : OpenPgpOps {
 
     companion object {
         private const val TAG = "OpenPgpClient"
@@ -301,7 +301,7 @@ class OpenPgpClient(private val context: Context) {
      * Looks up the key ids for [userIds] (emails). No user interaction is
      * offered here; the caller decides what to do with an interaction request.
      */
-    suspend fun lookupKeyIds(userIds: Array<String>, requestData: Intent? = null): KeyLookup {
+    override suspend fun lookupKeyIds(userIds: Array<String>, requestData: Intent?): KeyLookup {
         if (!connect()) return KeyLookup.Error
         // After an interaction, the returned intent (with OpenKeychain's call
         // UUIDs) must be the request — see decryptVerify.
@@ -332,7 +332,7 @@ class OpenPgpClient(private val context: Context) {
      * is the key that has to be verified against, and OpenKeychain serves
      * that exact key over the API.
      */
-    suspend fun fetchPublicKeyArmored(keyId: Long): PublicKey {
+    override suspend fun fetchPublicKeyArmored(keyId: Long): PublicKey {
         if (!connect()) return PublicKey.Error
         val data = Intent(ACTION_GET_KEY).apply {
             putExtra(EXTRA_KEY_ID, keyId)
@@ -366,7 +366,7 @@ class OpenPgpClient(private val context: Context) {
      * writing binary (non-armored) output to [target]. No signing, no
      * passphrase: nothing to enter, so nothing to interact over.
      */
-    suspend fun encryptTo(keyIds: LongArray, source: File, target: File): Boolean {
+    override suspend fun encryptTo(keyIds: LongArray, source: File, target: File): Boolean {
         if (!connect()) return false
         val data = Intent(ACTION_ENCRYPT).apply {
             putExtra(EXTRA_KEY_IDS, keyIds)
@@ -545,10 +545,10 @@ class OpenPgpClient(private val context: Context) {
         data class Error(val message: String) : SignDetached
     }
 
-    suspend fun trySignDetached(
+    override suspend fun trySignDetached(
         data: ByteArray,
         keyId: Long,
-        requestData: Intent? = null
+        requestData: Intent?
     ): SignDetached {
         if (!connect()) return SignDetached.Error("OpenKeyChain service unavailable")
         val intent = requestData ?: Intent(ACTION_DETACHED_SIGN).apply {
@@ -581,12 +581,6 @@ class OpenPgpClient(private val context: Context) {
             }
         }
     }
-
-    /** Fire-and-forget variant for JGit's synchronous Signer path (which
-     * cannot interact). Returns null on any failure — prefer [trySignDetached]
-     * where a UI interaction loop is available. */
-    suspend fun signDetached(data: ByteArray, keyId: Long): String? =
-        (trySignDetached(data, keyId) as? SignDetached.Ok)?.armored
 
     /** Releases the binding. The client is unusable afterwards. */
     fun close() {

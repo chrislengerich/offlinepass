@@ -1,6 +1,6 @@
 package com.offlinepass.app.vault
 
-import com.offlinepass.app.crypto.OpenPgpClient
+import com.offlinepass.app.crypto.OpenPgpOps
 import kotlinx.coroutines.runBlocking
 import org.eclipse.jgit.api.errors.CanceledException
 import org.eclipse.jgit.api.errors.UnsupportedSigningFormatException
@@ -23,7 +23,7 @@ import java.io.IOException
  * hardware token behind it) does the signing.
  */
 class OpenKeyChainSigner(
-    private val client: OpenPgpClient,
+    private val client: OpenPgpOps,
     private val keyId: Long
 ) : Signer {
 
