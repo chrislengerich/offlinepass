@@ -68,13 +68,25 @@ object PgpSshBridge {
         return sshString(sigName.toByteArray()) + sshString(raw)
     }
 
+    data class RawSig(val bytes: ByteArray, val hashAlg: Int)
+
     /** The RAW signature bytes (no SSH framing) for the given OpenSSH
      *  algorithm — RSA padded to modulus size, ECDSA as 0x04||r||s,
-     *  Ed25519 as r||s. */
-    fun extractRawSignature(armored: String, sshAlgorithm: String): ByteArray {
+     *  Ed25519 as r||s — plus the PGP hash algorithm used. */
+    fun extractRawSignature(armored: String, sshAlgorithm: String): RawSig {
         val (pubkeyAlg, hashAlg, mpis) = parsePgpSignature(armored)
-        return rawSignatureBytes(pubkeyAlg, hashAlg, mpis,
-            SshPublicKeyLine(sshAlgorithm, ByteArray(0), ""))
+        return RawSig(
+            rawSignatureBytes(pubkeyAlg, hashAlg, mpis,
+                SshPublicKeyLine(sshAlgorithm, ByteArray(0), "")),
+            hashAlg)
+    }
+
+    /** The SSH signature-algorithm name matching a PGP hash for an
+     *  ssh-rsa key: SHA-256 → rsa-sha2-256, SHA-512 → rsa-sha2-512. */
+    fun rsaSigNameForHash(hashAlg: Int): String = when (hashAlg) {
+        HASH_SHA256 -> "rsa-sha2-256"
+        HASH_SHA512 -> "rsa-sha2-512"
+        else -> throw PgpSshBridgeException("unsupported PGP hash algorithm $hashAlg (need SHA-256/512)")
     }
 
     private data class PgpSig(val pubkeyAlg: Int, val hashAlg: Int, val mpis: List<ByteArray>)

@@ -27,22 +27,34 @@ class YubiKeySshIdentity(
     override fun getPublicKeyBlob(): ByteArray = parsed.wireBlob
 
     override fun getSignature(data: ByteArray, algorithm: String): ByteArray? {
-        // JSch negotiates the signature algorithm (preferring rsa-sha2-512
-        // for RSA keys) and embeds the returned bytes verbatim. Our
-        // OpenKeyChain signature is SHA-256-based: sign only when the
-        // negotiated algorithm matches, else return null — JSch then
-        // retries with the next algorithm in its list (rsa-sha2-256).
-        val raw = openKeyChainRawSignature(data) ?: return null
-        return if (algorithm == "rsa-sha2-256")
-            sshString("rsa-sha2-256".toByteArray()) + sshString(raw)
-        else null
+        // JSch negotiates the algorithm and embeds our returned bytes
+        // verbatim — so the blob's INNER algorithm name must match the
+        // signature's ACTUAL hash (from the PGP packet), not JSch's
+        // preference. A correctly self-labeled rsa-sha2-* blob is accepted
+        // by GitHub regardless of which name JSch asked for.
+        val sig = openKeyChainSig(data) ?: return null
+        android.util.Log.i("YubiKeySsh",
+            "ssh sig: jsch asked=$algorithm, pgpHash=${sig.hashAlg} → labeled=${sig.sigName}")
+        return sig.wire
     }
 
     override fun getSignature(data: ByteArray): ByteArray {
-        val raw = openKeyChainRawSignature(data)
+        val sig = openKeyChainSig(data)
             ?: throw IOException("OpenKeyChain signing failed")
-        return sshString("rsa-sha2-256".toByteArray()) + sshString(raw)
+        return sig.wire
     }
+
+    private fun openKeyChainSig(data: ByteArray): WireSig? {
+        val raw = openKeyChainRawSignature(data) ?: return null
+        val sigName = try {
+            PgpSshBridge.rsaSigNameForHash(raw.hashAlg)
+        } catch (e: PgpSshBridge.PgpSshBridgeException) {
+            android.util.Log.w("YubiKeySsh", "unsupported PGP hash: ${raw.hashAlg}")
+            return null
+        }
+        return WireSig(sigName, sshString(sigName.toByteArray()) + sshString(raw.bytes))
+    }
+    private data class WireSig(val sigName: String, val wire: ByteArray)
 
     private fun sshString(b: ByteArray): ByteArray {
         val out = ByteArray(4 + b.size)
