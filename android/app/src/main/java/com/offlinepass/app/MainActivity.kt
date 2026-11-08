@@ -540,12 +540,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
         if (line != null) {
             VaultSession.yubikeySshLineDraft = line
-            status = "Signing subkey selected (0x%016X) — OpenSSH line populated."
+            status = ("Signing subkey selected (0x%016X) — OpenSSH line populated.")
                 .format(keyId)
         } else {
-            status = "Signing subkey selected (0x%016X) — the OpenSSH line " +
+            status = ("Signing subkey selected (0x%016X) — the OpenSSH line " +
                 "could not be fetched; paste it from the desktop " +
-                "(gpg --export-ssh-key).".format(keyId)
+                "(gpg --export-ssh-key).").format(keyId)
         }
     }
 

@@ -166,7 +166,7 @@ fun SetupChoiceScreen(
                         if (!remote.startsWith("git@") && !remote.startsWith("ssh://"))
                             remote = "git@github.com:"
                     },
-                    label = { Text("YubiKey SSH", maxLines = 1) }
+                    label = { Text("GPG (OpenKeychain)", maxLines = 1) }
                 )
                 FilterChip(
                     modifier = Modifier.weight(1f),
@@ -197,10 +197,11 @@ fun SetupChoiceScreen(
                     }
                 }
                 VaultSession.SSH_SYNC_YUBIKEY -> {
-                    Text("The clone authenticates with your YubiKey's OpenPGP " +
-                        "subkey via OpenKeyChain — pick the key below and touch; " +
-                        "the key id and OpenSSH line fill in automatically. GitHub " +
-                        "must have that same line enrolled (deploy key with write " +
+                    Text("The clone authenticates with a GPG key via OpenKeychain — " +
+                        "any signing-capable subkey of a key OpenKeychain holds: " +
+                        "a software key on this phone, or a hardware key (e.g., " +
+                        "YubiKey; each sync asks for the touch). GitHub must have " +
+                        "the same OpenSSH line enrolled (deploy key with write " +
                         "access, or the account SSH key).",
                         style = MaterialTheme.typography.bodySmall)
                     Button(onClick = onPickAuthSubkey, modifier = Modifier.fillMaxWidth()) {

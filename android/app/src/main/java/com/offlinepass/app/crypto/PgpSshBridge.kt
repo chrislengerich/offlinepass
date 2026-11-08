@@ -181,7 +181,10 @@ object PgpSshBridge {
     private fun dearmor(armored: String): ByteArray {
         val b64 = armored.lines()
             .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("-") && !it.contains(":") }
+            .filter { it.isNotEmpty() && !it.startsWith("-") && !it.contains(":") &&
+                // The armor CRC24 checksum ("=XXXX") is not part of the
+                // base64 body.
+                !it.startsWith("=") }
             .joinToString("")
         return runCatching { Base64.getDecoder().decode(b64) }
             .getOrElse { throw PgpSshBridgeException("armor is not valid base64") }

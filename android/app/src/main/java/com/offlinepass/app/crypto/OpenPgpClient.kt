@@ -347,6 +347,9 @@ class OpenPgpClient(private val context: Context) : OpenPgpOps {
                 // and enrollment would then publish armor-less bytes as an
                 // identity, so the shape is checked before it is handed over.
                 if (armored.contains("BEGIN PGP PUBLIC KEY BLOCK")) {
+                    Log.i(TAG, "GET_KEY armor: len=" + armored.length +
+                        " head=[" + armored.take(60).replace('\n', '|') + "]" +
+                        " tail=[" + armored.takeLast(60).replace('\n', '|') + "]")
                     PublicKey.Success(armored.trim())
                 } else {
                     Log.w(TAG, "GET_KEY returned no armored public key for 0x${keyId.toString(16)}")
