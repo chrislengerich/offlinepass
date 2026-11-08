@@ -26,6 +26,11 @@ import java.io.OutputStream
  */
 object KeystoreSshSessionFactory {
 
+    /** Diagnostics from the most recent SSH session (handshake failure or
+     *  exec stderr tail) — surfaced in sync failure messages because
+     *  JGit's "remote hung up unexpectedly" hides GitHub's actual reason. */
+    @Volatile var lastSessionDiagnostics: String = ""
+
     fun register() {
         if (SshSessionFactory.getInstance() !is Factory) SshSessionFactory.setInstance(Factory())
     }
@@ -52,7 +57,14 @@ object KeystoreSshSessionFactory {
             val session = jsch.getSession(user, uri.host, port)
             session.setConfig("StrictHostKeyChecking", "accept-new")
             session.timeout = tms * 1000
-            session.connect(tms * 1000)
+            try {
+                session.connect(tms * 1000)
+            } catch (e: Exception) {
+                // Handshake failures (auth refused, network) die BEFORE the
+                // exec channel exists — record them here.
+                lastSessionDiagnostics = "SSH handshake failed: ${e.message}"
+                throw e
+            }
             return JschRemoteSession(session)
         }
     }
@@ -78,9 +90,38 @@ object KeystoreSshSessionFactory {
         private val stdout: InputStream = channel.inputStream
         private val stderr: InputStream = channel.errStream
         private val stdin: OutputStream = channel.outputStream
+        private val stderrCollector = StringBuilder()
+        private val collectorDone = java.util.concurrent.CountDownLatch(1)
 
         init {
             channel.connect(timeout * 1000)
+            Thread {
+                try {
+                    val buf = ByteArray(4096)
+                    while (!channel.isClosed && !channel.isEOF) {
+                        val n = stderr.read(buf)
+                        if (n <= 0) break
+                        synchronized(stderrCollector) {
+                            if (stderrCollector.length < 4096) stderrCollector.append(String(buf, 0, n))
+                        }
+                    }
+                } catch (_: Exception) {
+                } finally {
+                    collectorDone.countDown()
+                }
+            }.apply { isDaemon = true; start() }
+        }
+
+        /** Bounded stderr tail + exit status — surfaces GitHub's actual
+         *  rejection reason (read-only deploy key, permissions, etc.). */
+        fun diagnostics(): String = runCatching {
+            collectorDone.await(2, java.util.concurrent.TimeUnit.SECONDS)
+        }.let {
+            synchronized(stderrCollector) {
+                val tail = stderrCollector.toString().trim().take(800)
+                val exit = if (channel.isClosed) "exit=${channel.exitStatus}" else "still-running"
+                if (tail.isEmpty()) "[$exit, no stderr]" else "[$exit, stderr: $tail]"
+            }
         }
 
         override fun getOutputStream(): OutputStream = stdin
@@ -105,6 +146,17 @@ object KeystoreSshSessionFactory {
 
         override fun destroy() {
             channel.disconnect()
+        }
+
+        init {
+            // When the exec channel closes, publish its stderr tail + exit
+            // status as the session diagnostics.
+            Thread {
+                collectorDone.await()
+                val tail = synchronized(stderrCollector) { stderrCollector.toString().trim().take(800) }
+                lastSessionDiagnostics = "exec exit=${channel.exitStatus}" +
+                    (if (tail.isNotEmpty()) ", stderr: $tail" else "")
+            }.apply { isDaemon = true; start() }
         }
     }
 

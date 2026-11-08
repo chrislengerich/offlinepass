@@ -144,6 +144,40 @@ object VaultSession {
      *  by MainActivity; must run on Main. */
     var syncAuthGate: (suspend () -> Boolean)? = null
 
+    /** Last successful screenlock gate (for the key's validity window). */
+    private var lastSshGateSuccessAt: Long = 0L
+
+    /** Runs the screenlock gate unless it already succeeded within the
+     *  key's validity window (prevents the double prompt from
+     *  connectRemote → syncNow). Returns null when satisfied. */
+    private suspend fun sshGateIfNeeded(): String? {
+        if (System.currentTimeMillis() - lastSshGateSuccessAt < 55_000) return null
+        val gate = syncAuthGate ?: return "Sync auth gate unavailable"
+        busy = "Screen lock…"
+        val ok = try { gate() } catch (e: Exception) { false }
+        busy = null
+        if (!ok) return "Screen lock declined"
+        lastSshGateSuccessAt = System.currentTimeMillis()
+        return null
+    }
+
+    /** Logs a sync/save failure to files/debug-sync.log (this ROM suppresses
+     *  Log.w stack traces) and returns the enriched error message with the
+     *  captured SSH session diagnostics (GitHub's actual rejection reason). */
+    private fun logSyncFailure(where: String, e: Exception): String {
+        val diag = com.offlinepass.app.crypto.KeystoreSshSessionFactory.lastSessionDiagnostics
+        val stack = Log.getStackTraceString(e)
+        runCatching {
+            val f = File(appContext.filesDir, "debug-sync.log")
+            if (f.length() > 256_000) f.writeText("")
+            f.appendText("[${System.currentTimeMillis()}] $where: " +
+                "${e.javaClass.simpleName}: ${e.message}\n$stack\ndiag: $diag\n\n")
+        }
+        Log.w(TAG, "$where failed: ${e.message} | diag: $diag", e)
+        return if (diag.isNotBlank()) "${e.javaClass.simpleName}: ${e.message} — $diag"
+        else "${e.javaClass.simpleName}: ${e.message}"
+    }
+
     /** UI hook confirming the FIRST push to an empty remote (the remote
      *  main branch gets created by the push). Set by MainActivity. */
     var firstPushGate: (suspend () -> Boolean)? = null
@@ -818,11 +852,7 @@ object VaultSession {
             } else {
                 if (!SshKeyManager().hasKeyPair())
                     return Result.Error("Enroll the screenlock SSH key first (Setup)")
-                val gate = syncAuthGate ?: return Result.Error("Sync auth gate unavailable")
-                busy = "Screen lock…"
-                val ok = try { gate() } catch (e: Exception) { false }
-                if (!ok) { busy = null; return Result.Error("Screen lock declined — still local-only") }
-                busy = null
+                sshGateIfNeeded()?.let { return Result.Error("$it — still local-only") }
             }
         } else {
             savePat(pat)
@@ -833,8 +863,8 @@ object VaultSession {
             withContext(Dispatchers.IO) { VaultGitClient().open(remote, pat, gitRoot()) }
         } catch (e: Exception) {
             configure(null, cfg.recipientEmails)
-            Log.w(TAG, "connectRemote: open failed: ${e.message}")
-            return Result.Error("Connect failed: ${e.message?.take(60)} — still local-only")
+            val msg = logSyncFailure("connectRemote", e)
+            return Result.Error("Connect failed: ${msg.take(120)} — still local-only")
         } finally {
             busy = null
         }
@@ -898,22 +928,15 @@ object VaultSession {
         val useSsh = VaultGitClient().isSshRemote(remote)
         if (useSsh) {
             // Enrollment + gate depend on the active SSH identity mode.
-            val enrolled: Boolean
             if (sshSyncMode() == SSH_SYNC_YUBIKEY) {
-                enrolled = yubikeySshLine() != null && yubikeyAuthSubkeyId() != null
-                if (!enrolled)
+                if (yubikeySshLine() == null || yubikeyAuthSubkeyId() == null)
                     return Result.Error("Enroll the YubiKey SSH key first (Setup → paste the SSH line)")
                 // The gate is the YubiKey touch inside the OpenKeyChain
                 // interaction during the handshake — no pre-auth needed.
             } else {
-                enrolled = SshKeyManager().hasKeyPair()
-                if (!enrolled)
+                if (!SshKeyManager().hasKeyPair())
                     return Result.Error("Enroll the screenlock SSH key first (Setup)")
-                val gate = syncAuthGate ?: return Result.Error("Sync auth gate unavailable")
-                busy = "Screen lock…"
-                val ok = try { gate() } catch (e: Exception) { false }
-                busy = null
-                if (!ok) return Result.Error("Screen lock declined — sync aborted")
+                sshGateIfNeeded()?.let { return Result.Error("$it — sync aborted") }
             }
         }
         val pat = if (useSsh) "" else (pat() ?: return Result.Error("No PAT stored"))
@@ -1021,9 +1044,9 @@ object VaultSession {
             }
             return Result.Success
         } catch (e: Exception) {
-            Log.w(TAG, "syncNow failed: ${e.javaClass.simpleName}: ${e.message}", e)
-            syncStatus = "Sync failed: ${e.message?.take(140)}"
-            return Result.Error("${e.javaClass.simpleName}: ${e.message}")
+            val msg = logSyncFailure("syncNow", e)
+            syncStatus = "Sync failed: ${msg.take(200)}"
+            return Result.Error(msg)
         } finally {
             busy = null
         }
