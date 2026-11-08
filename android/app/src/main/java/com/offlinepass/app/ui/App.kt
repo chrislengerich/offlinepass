@@ -56,7 +56,8 @@ fun SetupChoiceScreen(
     onLoadUsb: () -> Unit,
     onShowSshKey: () -> Unit = {},
     onPickAuthSubkey: () -> Unit = {},
-    onEnrollYubikeySsh: (sshLine: String, subkeyId: String) -> Unit = { _, _ -> }
+    onEnrollYubikeySsh: (sshLine: String, subkeyId: String) -> Unit = { _, _ -> },
+    onClearStatus: () -> Unit = {}
 ) {
     var remote by remember {
         // Prepopulate the URL per the DEFAULT sync-auth choice: an https
@@ -149,6 +150,7 @@ fun SetupChoiceScreen(
                     modifier = Modifier.weight(1f),
                     selected = loadAuth == VaultSession.SSH_SYNC_SCREENLOCK,
                     onClick = {
+                        onClearStatus()
                         loadAuth = VaultSession.SSH_SYNC_SCREENLOCK
                         if (!remote.startsWith("git@") && !remote.startsWith("ssh://"))
                             remote = "git@github.com:"
@@ -159,6 +161,7 @@ fun SetupChoiceScreen(
                     modifier = Modifier.weight(1f),
                     selected = loadAuth == VaultSession.SSH_SYNC_YUBIKEY,
                     onClick = {
+                        onClearStatus()
                         loadAuth = VaultSession.SSH_SYNC_YUBIKEY
                         if (!remote.startsWith("git@") && !remote.startsWith("ssh://"))
                             remote = "git@github.com:"
@@ -169,6 +172,7 @@ fun SetupChoiceScreen(
                     modifier = Modifier.weight(1f),
                     selected = loadAuth == "pat",
                     onClick = {
+                        onClearStatus()
                         loadAuth = "pat"
                         if (!remote.startsWith("https://") && !remote.startsWith("http://"))
                             remote = "https://github.com/"
