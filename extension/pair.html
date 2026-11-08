@@ -29,6 +29,7 @@
     <pre id="record"></pre>
     <p class="hint">Pairing creates a non-resident WebAuthn credential — no passkey slots are used and nothing on the key is overwritten (GPG/PIV keys and existing passkeys stay untouched). If the key has no FIDO2 PIN yet, Chrome asks you to set one; that PIN is shared with your existing passkeys and is separate from the OpenPGP/PIV PINs. Every decrypt needs that PIN + a touch. Keep this key safe: pastes encrypted to it can only be decrypted with it. To unpair, use the phone's Setup → Paste devices.</p>
   </div>
+  <script src="vendor/pako.min.js"></script>
   <script src="vendor/qrcode.min.js"></script>
   <script src="lib/qrft.js"></script>
   <script src="lib/wrap.js"></script>
