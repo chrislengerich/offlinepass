@@ -339,10 +339,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         // JSch negotiates the RSA signature algorithm (it prefers
                         // rsa-sha2-512 for ssh-rsa keys) — the signature must be
                         // computed with EXACTLY that hash, labeled accordingly.
+                        // A failure here (e.g. the key's digest set lacks
+                        // SHA-512) returns null so JSch retries with the next
+                        // algorithm in its list (rsa-sha2-256) — the key
+                        // supports that one.
                         override fun getSignature(data: ByteArray, algorithm: String): ByteArray? =
                             when (algorithm) {
-                                "rsa-sha2-512" -> signRsa(data, "SHA512withRSA", "rsa-sha2-512")
-                                "rsa-sha2-256" -> signRsa(data, "SHA256withRSA", "rsa-sha2-256")
+                                "rsa-sha2-512" -> runCatching { signRsa(data, "SHA512withRSA", "rsa-sha2-512") }.getOrNull()
+                                "rsa-sha2-256" -> runCatching { signRsa(data, "SHA256withRSA", "rsa-sha2-256") }.getOrNull()
                                 else -> null // unknown → JSch tries the next algorithm
                             }
                         override fun getSignature(data: ByteArray): ByteArray =
