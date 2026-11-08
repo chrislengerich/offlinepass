@@ -162,7 +162,9 @@ fun SetupTabScreen(
             )
         }
         if (showConnect) {
-            var url by remember { mutableStateOf("https://github.com/") }
+            // Default: screenlock SSH key with the git@ prefix prepopulated —
+            // the preferred, least-privilege sync path (a PAT is the fallback).
+            var url by remember { mutableStateOf("git@github.com:") }
             var pat by remember { mutableStateOf("") }
             var auth by remember { mutableStateOf("ssh") } // "ssh" | "pat"
             val isSshUrl = url.startsWith("git@") || url.startsWith("ssh://")
