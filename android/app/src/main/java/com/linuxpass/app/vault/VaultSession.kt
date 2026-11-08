@@ -363,7 +363,33 @@ object VaultSession {
                 val keysOk = materializeRecipientKeys(client, gitRoot(), keyIds)
                 if (!keysOk) syncStatus = "Some recipient key files missing (retried next save)"
 
-                val signId = signingKeyId() ?: keyIds.first()
+                // Sign key: the stored signer, or — when none was picked yet —
+                // OpenKeyChain's own picker. Never default to a recipient
+                // key id: lookupKeyIds returns ENCRYPTION subkeys, which
+                // cannot sign (the old `keyIds.first()` default failed the
+                // preflight on every save of a fresh vault).
+                var signId = signingKeyId()
+                if (signId == null) {
+                    var reqData: Intent? = null
+                    var pickGuard = 0
+                    while (signId == null && pickGuard++ < 3) {
+                        when (val sk = client.pickSignKey(reqData)) {
+                            is OpenPgpClient.SignKey.Picked -> {
+                                prefs().edit()
+                                    .putString("signingKeyId", sk.keyId.toString())
+                                    .putString("signingKeyUserId", sk.userId)
+                                    .apply()
+                                signId = sk.keyId
+                            }
+                            is OpenPgpClient.SignKey.NeedsInteraction ->
+                                reqData = interactionHandler?.invoke(sk.pendingIntent)
+                                    ?: return@withContext Result.Error("Sign-key picker needs the UI layer")
+                            OpenPgpClient.SignKey.Error ->
+                                return@withContext Result.Error("No signing key available — pick one in Setup.")
+                        }
+                    }
+                    if (signId == null) return@withContext Result.Error("Sign-key selection aborted after retries")
+                }
                 val signer = OpenKeyChainSigner(client, signId)
                 // Pre-flight the commit signature: OpenKeyChain may need an
                 // unlock prompt (or the key may be unavailable entirely).

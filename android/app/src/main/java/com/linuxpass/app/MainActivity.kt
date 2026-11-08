@@ -39,6 +39,7 @@ import com.linuxpass.app.vault.VaultSession
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.coroutines.resume
 
@@ -277,6 +278,27 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
     // -- lifecycle ------------------------------------------------------------
 
+    /** The vault layer can't launch activities: the UI performs the
+     *  OpenKeyChain interaction and returns the RESULT intent (which carries
+     *  OpenKeyChain's call UUIDs for its crypto-input cache).
+     *
+     *  Reassigned on EVERY resume: the handler is an app-scoped singleton,
+     *  and a launcher auto-unregisters when its activity instance is
+     *  destroyed (stacked instances, "don't keep activities", recreation
+     *  during OpenKeyChain prompts) — a stale handler made every later
+     *  interaction fail with "Attempting to launch an unregistered
+     *  ActivityResultLauncher". The Main-thread hop matters too: save()
+     *  invokes the handler from Dispatchers.IO. */
+    override fun onResume() {
+        super.onResume()
+        VaultSession.interactionHandler = { pi ->
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                launchInteraction(pi)
+                awaitInteraction()
+            }
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         if (isFinishing) {
@@ -290,13 +312,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         VaultSession.init(applicationContext)
-        // The vault layer can't launch activities: the UI performs the
-        // OpenKeyChain interaction and returns the RESULT intent (which
-        // carries OpenKeyChain's call UUIDs for its crypto-input cache).
-        VaultSession.interactionHandler = { pi ->
-            launchInteraction(pi)
-            awaitInteraction()
-        }
         // Spike extras forward (S1/S3 keep working).
         val keys = listOf("path", "email", "exportKey", "probeSign", "autostart")
         val received = keys.mapNotNull { k -> intent.getStringExtra(k)?.let { k to it } }.toMap()
