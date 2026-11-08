@@ -151,16 +151,10 @@ fun SetupTabScreen(
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
-                        Text("2. Paste the key's OpenSSH public line — from the " +
-                            "desktop with the key plugged in: gpg --export-ssh-key " +
-                            "<key-id> (or ssh-add -L). If that key is already on " +
-                            "GitHub (desktop pushes), no GitHub changes are needed.",
+                        Text("2. The OpenSSH public line is fetched from " +
+                            "OpenKeyChain automatically. If that key is already " +
+                            "on GitHub (desktop pushes), no GitHub changes are needed.",
                             style = MaterialTheme.typography.bodySmall)
-                        OutlinedTextField(
-                            value = sshLine, onValueChange = { sshLine = it },
-                            label = { Text("OpenSSH public line (ssh-rsa AAAA…)") },
-                            modifier = Modifier.fillMaxWidth()
-                        )
                     }
                 },
                 confirmButton = {

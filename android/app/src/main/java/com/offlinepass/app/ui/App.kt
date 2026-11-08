@@ -203,11 +203,6 @@ fun SetupChoiceScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    OutlinedTextField(
-                        value = sshLine, onValueChange = { sshLine = it },
-                        label = { Text("OpenSSH public line (gpg --export-ssh-key)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
                 }
                 "pat" -> OutlinedTextField(
                     value = pat, onValueChange = { pat = it },
