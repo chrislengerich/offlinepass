@@ -138,7 +138,7 @@ fun SetupTabScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("1. Choose key in OpenKeyChain — its picker lists all " +
                             "keys (hardware-backed badged). Pick the YubiKey and touch — " +
-                            "the SIGNING subkey's key id fills in.",
+                            "the subkey's key id fills in.",
                             style = MaterialTheme.typography.bodySmall)
                         Button(
                             onClick = onPickAuthSubkey,
@@ -147,11 +147,11 @@ fun SetupTabScreen(
                         ) { Text("Choose key in OpenKeyChain") }
                         OutlinedTextField(
                             value = subkeyId, onValueChange = { subkeyId = it },
-                            label = { Text("Signing subkey key id (auto-filled by the picker)") },
+                            label = { Text("Subkey key id (auto-filled by the picker)") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
-                        Text("2. The OpenSSH line of the SIGNING subkey is fetched from " +
+                        Text("2. The subkey's OpenSSH line is fetched from " +
                             "OpenKeyChain automatically. GitHub must have the SAME line " +
                             "enrolled (deploy key with write access, or the account SSH key) " +
                             "— if your desktop pushes used a different subkey, re-add.",

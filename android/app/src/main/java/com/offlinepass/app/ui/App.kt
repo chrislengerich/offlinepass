@@ -197,7 +197,7 @@ fun SetupChoiceScreen(
                     }
                 }
                 VaultSession.SSH_SYNC_YUBIKEY -> {
-                    Text("The clone authenticates with the YubiKey's signing " +
+                    Text("The clone authenticates with your YubiKey's OpenPGP " +
                         "subkey via OpenKeyChain — pick the key below and touch; " +
                         "the key id and OpenSSH line fill in automatically. GitHub " +
                         "must have that same line enrolled (deploy key with write " +
@@ -208,7 +208,7 @@ fun SetupChoiceScreen(
                     }
                     OutlinedTextField(
                         value = subkeyId, onValueChange = { subkeyId = it },
-                        label = { Text("Signing subkey key id (auto-filled by the picker)") },
+                        label = { Text("Subkey key id (auto-filled by the picker)") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )

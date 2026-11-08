@@ -564,6 +564,10 @@ class OpenPgpClient(private val context: Context) : OpenPgpOps {
             RESULT_CODE_SUCCESS -> {
                 val raw = result.extras?.get("detached_signature") as? ByteArray
                 if (raw != null && raw.isNotEmpty()) {
+                    val resolved = result.getLongExtra(EXTRA_SIGN_KEY_ID, -1L)
+                    Log.i(TAG, "DETACHED_SIGN ok: requested=" +
+                        (keyId?.let { "%016X".format(it) } ?: "none") +
+                        ", resolved=" + (if (resolved != -1L) "%016X".format(resolved) else "none"))
                     SignDetached.Ok(String(raw, Charsets.UTF_8))
                 } else {
                     SignDetached.Error("no detached signature returned")
