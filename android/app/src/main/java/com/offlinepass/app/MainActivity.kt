@@ -303,6 +303,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
         VaultSession.keystoreSignerHook = { bytes ->
             withContext(kotlinx.coroutines.Dispatchers.Main) { screenLockSignFlow(bytes) }
         }
+        // SSH syncs open the key's 60s validity window with a screen-lock
+        // interaction (biometric or device credential) before the transport.
+        VaultSession.syncAuthGate = { biometricGate() }
     }
 
     /** Screen-lock signature flow (platform BiometricPrompt, mirroring
@@ -695,6 +698,23 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             status = when (val r = VaultSession.connectRemote(remote, pat)) {
                                 VaultSession.Result.Success -> "Remote connected — synced."
                                 else -> r.toString()
+                            }
+                        }
+                    },
+                    onShowSshKey = {
+                        lifecycleScope.launch {
+                            try {
+                                val info = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    com.offlinepass.app.crypto.SshKeyManager().ensureKeyPair()
+                                }
+                                val payload = org.json.JSONObject()
+                                    .put("type", "offlinepass-ssh-pubkey")
+                                    .put("sshKey", info.openSshLine)
+                                    .put("fp", info.algorithm)
+                                    .toString()
+                                screen = Screen.QrftPayload(payload)
+                            } catch (e: Exception) {
+                                status = "SSH key enrollment failed: ${e.message}"
                             }
                         }
                     },

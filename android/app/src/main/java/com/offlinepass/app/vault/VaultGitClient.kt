@@ -39,6 +39,17 @@ class VaultGitClient {
         data class Diverged(val headId: String, val remoteId: String) : Divergence()
     }
 
+    /** SSH-form remote (git@host:path or ssh://...)? The JSch/Keystore
+     *  identity authenticates; PAT credentials are HTTPS-only. */
+    fun isSshRemote(remote: String): Boolean =
+        remote.startsWith("git@") || remote.startsWith("ssh://")
+
+    init {
+        // JGit 7 has no bundled JSch transport; register ours once so SSH
+        // remotes ride the Keystore-gated identity.
+        com.offlinepass.app.crypto.KeystoreSshSessionFactory.register()
+    }
+
     fun open(remote: String, pat: String, root: File, branch: String = "main"): File {
         root.parentFile?.mkdirs()
         if (File(root, Constants.DOT_GIT).exists()) {
@@ -55,7 +66,7 @@ class VaultGitClient {
                 runCatching {
                     git.fetch()
                         .setRemote(remote)
-                        .setCredentialsProvider(TokenCredentials(pat))
+                        .also { if (!isSshRemote(remote)) it.setCredentialsProvider(TokenCredentials(pat)) }
                         .setTagOpt(TagOpt.NO_TAGS)
                         .setTimeout(30)
                         .call()
@@ -75,7 +86,7 @@ class VaultGitClient {
             Git.cloneRepository()
                 .setURI(remote)
                 .setDirectory(root)
-                .setCredentialsProvider(TokenCredentials(pat))
+                .also { if (!isSshRemote(remote)) it.setCredentialsProvider(TokenCredentials(pat)) }
                 .setTimeout(30)
                 .call()
                 .close()
@@ -172,7 +183,7 @@ class VaultGitClient {
             val results = git.push()
                 .setRemote(remote)
                 .setRefSpecs(RefSpec("refs/heads/$branch:refs/heads/$branch"))
-                .setCredentialsProvider(TokenCredentials(pat))
+                .also { if (!isSshRemote(remote)) it.setCredentialsProvider(TokenCredentials(pat)) }
                 .setTimeout(30)
                 .call()
             for (result in results) for (u in result.remoteUpdates) {

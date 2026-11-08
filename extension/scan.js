@@ -110,6 +110,10 @@ function handlePayload(name, text) {
     offerRestore(obj.device).catch((e) => { msgEl.textContent = "Restore failed: " + (e.message || e.name); });
     return;
   }
+  if (obj && obj.type === "offlinepass-ssh-pubkey") {
+    showSshPubkey(obj).catch((e) => { msgEl.textContent = "SSH key display failed: " + (e.message || e.name); });
+    return;
+  }
   if (obj && obj.type === "offlinepass-wrap") {
     prepareDecrypt(text).catch((e) => {
       msgEl.textContent = "Decrypt failed: " + (e.message || e.name);
@@ -221,6 +225,42 @@ function bestMatch(items) {
     if (s > bestScore) { best = it; bestScore = s; }
   }
   return best;
+}
+
+/** SSH-sync enrollment: the phone shows its screenlock keystore key's
+ *  OpenSSH public line; the user copies it into GitHub as a repo deploy
+ *  key (write access) so syncs authenticate without a PAT. */
+async function showSshPubkey(obj) {
+  done = true;
+  stopCamera();
+  video.remove();
+  progressEl.textContent = "";
+  const line = String(obj.sshKey || "");
+  if (!line.includes(" ")) { msgEl.textContent = "Malformed SSH public key."; return; }
+  msgEl.textContent = "Public key captured — copy it into GitHub:";
+  const key = document.createElement("div");
+  key.className = "kv";
+  const kv = document.createElement("span"); kv.className = "v";
+  kv.style.wordBreak = "break-all";
+  kv.textContent = line;
+  key.append(kv);
+  entriesEl.append(key);
+  const btns = document.createElement("div");
+  const copy = document.createElement("button");
+  copy.textContent = "Copy public key";
+  copy.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(line);
+    copy.textContent = "Copied"; copy.disabled = true;
+  });
+  btns.append(copy);
+  entriesEl.append(btns);
+  const hint = document.createElement("div"); hint.className = "kv";
+  hint.innerHTML = "GitHub → the vault repo → <b>Settings → Deploy keys</b> → " +
+    "Add deploy key → paste → tick <b>Allow write access</b> → Add. Then on the " +
+    "phone: Setup → Connect remote → git@github.com:&lt;owner&gt;/&lt;repo&gt;.git → " +
+    "every sync opens with the screen lock.";
+  hint.style.color = "#9aa3b2";
+  entriesEl.append(hint);
 }
 
 /** R2: the phone's "Show pairing QR" re-displays a pairing record (the

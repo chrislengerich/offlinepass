@@ -45,6 +45,7 @@ fun SetupTabScreen(
     pairedDevices: List<com.offlinepass.app.vault.DeviceRecord> = emptyList(),
     onShowDeviceQr: (com.offlinepass.app.vault.DeviceRecord) -> Unit = {},
     onConnectRemote: (String, String) -> Unit = { _, _ -> },
+    onShowSshKey: () -> Unit = {},
     onRemoveDevice: (String) -> Unit = {}
 ) {
     val cfg = VaultSession.config()
@@ -98,10 +99,20 @@ fun SetupTabScreen(
             Button(onClick = { showConnect = true }, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
                 Text("Connect remote (sync online)")
             }
+            Button(onClick = onShowSshKey, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+                Text("Sync via screenlock SSH key (show public key QR)")
+            }
+            Text(
+                "Scan the QR with the offlinepass extension, add the key on GitHub " +
+                    "(repo → Settings → Deploy keys → Allow write access), then connect " +
+                    "with a git@ remote — syncs open with a screen-lock prompt.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
         if (showConnect) {
             var url by remember { mutableStateOf("https://github.com/") }
             var pat by remember { mutableStateOf("") }
+            val isSsh = url.startsWith("git@") || url.startsWith("ssh://")
             AlertDialog(
                 onDismissRequest = { showConnect = false },
                 title = { Text("Connect remote") },
@@ -111,25 +122,33 @@ fun SetupTabScreen(
                             style = MaterialTheme.typography.bodySmall)
                         OutlinedTextField(
                             value = url, onValueChange = { url = it },
-                            label = { Text("Remote URL (HTTPS)") }, singleLine = true,
+                            label = { Text("Remote URL (HTTPS, or git@ for SSH)") }, singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
-                        OutlinedTextField(
-                            value = pat, onValueChange = { pat = it },
-                            label = { Text("Fine-grained PAT (Contents: read/write)") },
-                            singleLine = true,
-                            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        if (isSsh) {
+                            Text(
+                                "SSH remote: syncs authenticate with this device's " +
+                                    "screenlock keystore key (enroll below) — no PAT.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        } else {
+                            OutlinedTextField(
+                                value = pat, onValueChange = { pat = it },
+                                label = { Text("Fine-grained PAT (Contents: read/write)") },
+                                singleLine = true,
+                                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     }
                 },
                 confirmButton = {
                     TextButton(
                         onClick = {
                             showConnect = false
-                            onConnectRemote(url.trim(), pat.trim())
+                            onConnectRemote(url.trim(), if (isSsh) "" else pat.trim())
                         },
-                        enabled = url.isNotBlank() && pat.isNotBlank()
+                        enabled = url.isNotBlank() && (isSsh || pat.isNotBlank())
                     ) { Text("Connect") }
                 },
                 dismissButton = { TextButton(onClick = { showConnect = false }) { Text("Cancel") } }

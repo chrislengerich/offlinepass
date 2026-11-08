@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.offlinepass.app.crypto.OpenPgpClient
 import com.offlinepass.app.crypto.OpenPgpOps
+import com.offlinepass.app.crypto.SshKeyManager
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -88,6 +89,11 @@ object VaultSession {
      *  sign, runs the BiometricPrompt interaction, returns the signature
      *  (or null on decline). Set by MainActivity; hops to Main itself. */
     var keystoreSignerHook: (suspend (ByteArray) -> ByteArray?)? = null
+
+    /** UI hook for the screenlock auth that precedes SSH-key syncs (the
+     *  key's 60s validity window opens on a successful interaction). Set
+     *  by MainActivity; must run on Main. */
+    var syncAuthGate: (suspend () -> Boolean)? = null
 
     /** Human-readable sync state, shown above the Sync-now button. */
     var syncStatus by mutableStateOf<String?>(null)
@@ -704,7 +710,8 @@ object VaultSession {
     suspend fun gitOpenOnly(): Result {
         val cfg = config() ?: return Result.Error("No config")
         val remote = cfg.remoteUrl ?: return Result.Success  // local-only: nothing to open
-        val pat = pat() ?: return Result.Error("No PAT stored")
+        val useSsh = VaultGitClient().isSshRemote(remote)
+        val pat = if (useSsh) "" else (pat() ?: return Result.Error("No PAT stored"))
         busy = "Opening repo…"
         try {
             withContext(Dispatchers.IO) { VaultGitClient().open(remote, pat, gitRoot()) }
@@ -724,8 +731,22 @@ object VaultSession {
     suspend fun connectRemote(remote: String, pat: String): Result {
         val cfg = config() ?: return Result.Error("No config")
         if (cfg.remoteUrl != null) return Result.Error("A remote is already configured")
-        if (remote.isBlank() || pat.isBlank()) return Result.Error("Remote URL and PAT are required")
-        savePat(pat)
+        val useSsh = VaultGitClient().isSshRemote(remote)
+        if (remote.isBlank()) return Result.Error("Remote URL is required")
+        if (!useSsh && pat.isBlank()) return Result.Error("A PAT is required for HTTPS remotes")
+        if (useSsh && !SshKeyManager().hasKeyPair())
+            return Result.Error("Enroll the screenlock SSH key first (Setup)")
+        if (useSsh) {
+            // The sync that follows runs only within the key's screenlock
+            // window — demand the biometric/credential interaction now.
+            val gate = syncAuthGate ?: return Result.Error("Sync auth gate unavailable")
+            busy = "Screen lock…"
+            val ok = try { gate() } catch (e: Exception) { false }
+            if (!ok) { busy = null; return Result.Error("Screen lock declined — still local-only") }
+            busy = null
+        } else {
+            savePat(pat)
+        }
         configure(remote, cfg.recipientEmails)
         busy = "Connecting remote…"
         try {
@@ -756,13 +777,15 @@ object VaultSession {
      * states. The LOCAL-ONLY vault file is untouched (it's not a repo). */
     suspend fun resetRepo(): Result {
         val cfg = config() ?: return Result.Error("Local-only mode: nothing to reset")
-        val pat = pat() ?: return Result.Error("No PAT stored")
+        val remote = cfg.remoteUrl ?: return Result.Error("Local-only mode: nothing to reset")
+        val pat = if (VaultGitClient().isSshRemote(remote)) "" else
+            (pat() ?: return Result.Error("No PAT stored"))
         busy = "Resetting repo…"
         try {
             withContext(Dispatchers.IO) {
                 val saved = vaultFile().takeIf { it.exists() }?.readBytes()
                 gitRoot().deleteRecursively()
-                VaultGitClient().open(cfg.remoteUrl!!, pat, gitRoot())
+                VaultGitClient().open(remote, pat, gitRoot())
                 saved?.let { bytes ->
                     val vf = vaultFile()
                     vf.parentFile?.mkdirs()
@@ -786,11 +809,23 @@ object VaultSession {
     }
 
     /** Fetch + push, with application-level union-merge when the two
-     * devices diverged (the M3 convergence path). */
+     * devices diverged (the M3 convergence path). SSH remotes authenticate
+     * with the screenlock keystore key — the biometric gate opens the
+     * key's 60s validity window, then the sync runs; no PAT involved. */
     suspend fun syncNow(): Result {
         val cfg = config() ?: return Result.Error("Local-only mode: nothing to sync")
         val remote = cfg.remoteUrl ?: return Result.Error("Local-only mode: nothing to sync")
-        val pat = pat() ?: return Result.Error("No PAT stored")
+        val useSsh = VaultGitClient().isSshRemote(remote)
+        if (useSsh && !SshKeyManager().hasKeyPair())
+            return Result.Error("Enroll the screenlock SSH key first (Setup)")
+        if (useSsh) {
+            val gate = syncAuthGate ?: return Result.Error("Sync auth gate unavailable")
+            busy = "Screen lock…"
+            val ok = try { gate() } catch (e: Exception) { false }
+            busy = null
+            if (!ok) return Result.Error("Screen lock declined — sync aborted")
+        }
+        val pat = if (useSsh) "" else (pat() ?: return Result.Error("No PAT stored"))
         busy = "Syncing…"
         try {
             withContext(Dispatchers.IO) {
@@ -801,17 +836,24 @@ object VaultSession {
                 // Commit a stranded/dirty vault file FIRST so it participates
                 // in the divergence check + push (a failed push leaves it
                 // uncommitted; without this it never reaches the remote).
-                // Signed like every other commit — same key as save().
-                val preSignId = signingKeyId()
-                    ?: (cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()).firstOrNull()
-                if (preSignId != null) {
-                    busy = "Checking sign key…"
-                    ensureSignKeyReady(preSignId, openPgpClientFactory(appContext))?.let { msg ->
-                        throw IllegalStateException(msg)
-                    }
+                // Signed with the SAME signer mode as save(): screenlock or
+                // OpenKeyChain.
+                val preSigner: org.eclipse.jgit.lib.Signer? = if (commitSigningMode() == SIGNING_SCREENLOCK) {
+                    val hook = keystoreSignerHook
+                        ?: throw IllegalStateException("Screenlock signer unavailable")
+                    com.offlinepass.app.crypto.KeystoreCommitSigner(hook)
+                } else {
+                    val preSignId = signingKeyId()
+                        ?: (cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()).firstOrNull()
+                    if (preSignId != null) {
+                        busy = "Checking sign key…"
+                        ensureSignKeyReady(preSignId, openPgpClientFactory(appContext))?.let { msg ->
+                            throw IllegalStateException(msg)
+                        }
+                        OpenKeyChainSigner(OpenPgpClient(appContext), preSignId)
+                    } else null
                 }
-                git.commitDirty(root, "Update 10.gpg (pre-sync)",
-                    preSignId?.let { OpenKeyChainSigner(OpenPgpClient(appContext), it) })
+                git.commitDirty(root, "Update 10.gpg (pre-sync)", preSigner)
                 when (val div = git.headVsRemote(root)) {
                     is VaultGitClient.Divergence.UpToDate -> {
                         syncStatus = "Already up to date (rev $rev)"

@@ -46,6 +46,12 @@ class SshKeyManager(
                 // purge and regenerate as RSA.
                 ks.deleteEntry(alias)
                 android.util.Log.w(TAG, "deleted unsupported '$alg' key under alias")
+            } else if (!isScreenlockGated(ks)) {
+                // A pre-screenlock key (spike-era) has no user-auth
+                // constraint: its signatures would work without the device
+                // screen lock. Purge and regenerate gated.
+                ks.deleteEntry(alias)
+                android.util.Log.w(TAG, "purged non-screenlock-gated key; regenerating")
             }
         }
         if (!ks.containsAlias(alias)) generate(ks)
@@ -56,6 +62,24 @@ class SshKeyManager(
         val comment = "offlinepass-android-${android.os.Build.MODEL?.replace(" ", "-")}"
         return PublicKeyInfo(pub.algorithm, pub, wire, "$alg ${Base64.getEncoder().encodeToString(wire)} $comment")
     }
+
+    fun hasKeyPair(): Boolean = runCatching { load().containsAlias(alias) }.getOrDefault(false)
+
+    /** True when the enrolled key requires user authentication (the
+     *  screenlock gate); a pre-gating key is purged and regenerated. */
+    private fun isScreenlockGated(ks: KeyStore): Boolean = runCatching {
+        val priv = ks.getKey(alias, null) as PrivateKey
+        val ki = try {
+            java.security.KeyFactory.getInstance(priv.algorithm, provider)
+                .getKeySpec(priv, android.security.keystore.KeyInfo::class.java)
+                    as android.security.keystore.KeyInfo
+        } catch (e: Exception) {
+            java.security.KeyFactory.getInstance(priv.algorithm)
+                .getKeySpec(priv, android.security.keystore.KeyInfo::class.java)
+                    as android.security.keystore.KeyInfo
+        }
+        ki.isUserAuthenticationRequired
+    }.getOrDefault(false)
 
     fun keyAlgorithm(): String {
         val pub = load().getCertificate(alias).publicKey
@@ -106,6 +130,11 @@ class SshKeyManager(
                 .setKeySize(3072)
                 .setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1)
                 .setDigests(KeyProperties.DIGEST_SHA256)
+                // Screenlock gate: signatures work only within 60s of a
+                // successful device-credential/biometric interaction —
+                // "sync takes place after a biometric auth".
+                .setUserAuthenticationRequired(true)
+                .setUserAuthenticationValidityDurationSeconds(60)
                 .build()
         )
         kpg.generateKeyPair()
