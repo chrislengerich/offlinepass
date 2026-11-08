@@ -236,6 +236,13 @@ fun SetupChoiceScreen(
                 enabled = loadReady,
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Load from GitHub") }
+            // TEMPORARY diagnostic: the load button's gate inputs, on screen.
+            Text(
+                "auth=$loadAuth, keyIdLen=${subkeyId.trim().length}, " +
+                    "lineLen=${sshLine.length}, idPicked=${VaultSession.pickedAuthSubkeyId != null}, " +
+                    "lineDraft=${VaultSession.yubikeySshLineDraft != null}",
+                style = MaterialTheme.typography.bodySmall
+            )
             Text(
                 "Recipients are NOT configured here: the loaded repo carries its " +
                     "recipients (keys/*.public.asc, seeded into Setup on load).",
