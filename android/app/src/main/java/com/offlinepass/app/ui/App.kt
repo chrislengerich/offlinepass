@@ -200,11 +200,6 @@ fun SetupChoiceScreen(
                         label = { Text("Auth subkey key id (16 hex)") }, singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Button(
-                        onClick = { onEnrollYubikeySsh(sshLine.trim(), subkeyId.trim()) },
-                        enabled = sshLine.contains(" ") && subkeyId.trim().length == 16,
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Enroll YubiKey SSH key") }
                 }
                 "pat" -> OutlinedTextField(
                     value = pat, onValueChange = { pat = it },
@@ -215,8 +210,27 @@ fun SetupChoiceScreen(
                 )
             }
 
-            // Recipients are NOT configured here: the loaded repo carries
-            // its recipients (keys/*.public.asc seeded into Setup on load).
+            // 3. The final action: completes the load with the chosen auth
+            // (enabled once the auth's inputs are filled). Recipients are
+            // NOT configured here: the loaded repo carries its recipients
+            // (keys/*.public.asc, seeded into Setup on load).
+            val loadReady = when (loadAuth) {
+                VaultSession.SSH_SYNC_SCREENLOCK -> true // the key self-generates via the QR flow
+                VaultSession.SSH_SYNC_YUBIKEY -> sshLine.contains(" ") && subkeyId.trim().length == 16
+                else -> pat.isNotBlank()
+            }
+            Button(
+                onClick = {
+                    onLoadGitHub(remote.trim(), emptyList(), if (loadAuth == "pat") pat.trim() else "")
+                },
+                enabled = loadReady,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Load from GitHub") }
+            Text(
+                "Recipients are NOT configured here: the loaded repo carries its " +
+                    "recipients (keys/*.public.asc, seeded into Setup on load).",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
     }

@@ -130,7 +130,7 @@ fun SetupTabScreen(
             }
             AlertDialog(
                 onDismissRequest = { showYubikey = false },
-                title = { Text("YubiKey SSH enrollment") },
+                title = { Text("YubiKey SSH auth") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("1. Choose key in OpenKeyChain — its picker lists all " +
@@ -162,12 +162,9 @@ fun SetupTabScreen(
                 },
                 confirmButton = {
                     TextButton(
-                        onClick = {
-                            showYubikey = false
-                            onEnrollYubikeySsh(sshLine.trim(), subkeyId.trim())
-                        },
+                        onClick = { showYubikey = false },
                         enabled = sshLine.contains(" ") && subkeyId.trim().length == 16
-                    ) { Text("Enroll") }
+                    ) { Text("Use this key") }
                 },
                 dismissButton = { TextButton(onClick = { showYubikey = false }) { Text("Cancel") } }
             )
