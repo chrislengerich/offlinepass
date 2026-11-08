@@ -3,8 +3,10 @@ package com.offlinepass.app.crypto
 import com.jcraft.jsch.ChannelExec
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.Session
+import com.offlinepass.app.vault.VaultSession
 import org.eclipse.jgit.transport.RemoteSession
 import org.eclipse.jgit.transport.SshSessionFactory
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 
@@ -37,27 +39,13 @@ object KeystoreSshSessionFactory {
             fs: org.eclipse.jgit.util.FS?,
             tms: Int
         ): RemoteSession {
-            val manager = SshKeyManager()
-            val info = manager.ensureKeyPair()
+            // The active SSH identity: screenlock keystore key or the
+            // YubiKey auth subkey (OpenKeyChain) — chosen by the enrolled
+            // mode. VaultSession builds it; null → nothing enrolled.
+            val identity = VaultSession.sshIdentityProvider()
+                ?: throw IOException("No SSH identity enrolled (Setup)")
             val jsch = JSch()
-            jsch.addIdentity(object : com.jcraft.jsch.Identity {
-                override fun getAlgName(): String = info.algorithm  // "ssh-rsa"
-                override fun getName(): String = "offlinepass-android"
-                override fun getPublicKeyBlob(): ByteArray = info.wireBlob
-                override fun getSignature(data: ByteArray): ByteArray {
-                    // The identity signs the auth data with the Keystore key;
-                    // the SSH wire expects string(algorithm) + string(sig),
-                    // with the modern rsa-sha2-256 algorithm name.
-                    val sig = manager.newSigner()
-                    sig.update(data)
-                    val raw = sig.sign()
-                    val wireAlg = if (info.algorithm == "Ed25519") "ssh-ed25519" else "rsa-sha2-256"
-                    return sshString(wireAlg.toByteArray()) + sshString(raw)
-                }
-                override fun setPassphrase(passphrase: ByteArray?): Boolean = true
-                override fun isEncrypted(): Boolean = false
-                override fun clear() {}
-            }, null)
+            jsch.addIdentity(identity, null)
 
             val port = if (uri.port > 0) uri.port else 22
             val user = uri.user ?: "git"

@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import com.offlinepass.app.crypto.OpenPgpClient
 import com.offlinepass.app.crypto.OpenPgpOps
 import com.offlinepass.app.crypto.SshKeyManager
+import com.offlinepass.app.crypto.YubiKeySshIdentity
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -89,6 +90,54 @@ object VaultSession {
      *  sign, runs the BiometricPrompt interaction, returns the signature
      *  (or null on decline). Set by MainActivity; hops to Main itself. */
     var keystoreSignerHook: (suspend (ByteArray) -> ByteArray?)? = null
+
+    /** SSH sync identities: the SCREENLOCK keystore key or the YUBIKEY's
+     *  OpenPGP auth subkey (via OpenKeyChain — the key already enrolled in
+     *  GitHub). Whichever was enrolled last wins; both are exclusive of
+     *  the HTTPS/PAT path. */
+    const val SSH_SYNC_SCREENLOCK = "screenlock"
+    const val SSH_SYNC_YUBIKEY = "yubikey"
+
+    fun sshSyncMode(): String =
+        prefs().getString("sshSyncMode", null) ?: SSH_SYNC_SCREENLOCK
+
+    fun setSshSyncMode(mode: String) {
+        prefs().edit().putString("sshSyncMode", mode).apply()
+    }
+
+    fun yubikeySshLine(): String? = prefs().getString("yubikeySshLine", null)
+    fun yubikeyAuthSubkeyId(): Long? = prefs().getString("yubikeyAuthSubkeyId", null)?.toLongOrNull()
+
+    /** Persists the YubiKey SSH enrollment (public line + auth subkey id)
+     *  and activates the YubiKey SSH sync mode. */
+    fun setYubikeySsh(sshLine: String, subkeyIdHex: String) {
+        prefs().edit()
+            .putString("yubikeySshLine", sshLine)
+            .putString("yubikeyAuthSubkeyId", subkeyIdHex)
+            .putString("sshSyncMode", SSH_SYNC_YUBIKEY)
+            .apply()
+    }
+
+    /** Provides the JSch identity for the ACTIVE ssh sync mode: the
+     *  screenlock keystore key, or the YubiKey auth subkey via
+     *  OpenKeyChain (its interaction — the YubiKey touch — is the gate).
+     *  Set by MainActivity; returns null when the mode isn't enrolled. */
+    var sshIdentityProvider: () -> com.jcraft.jsch.Identity? = { null }
+
+    /** Builds the active SSH identity for a sync, or null when the chosen
+     *  mode isn't fully enrolled. */
+    fun buildSshIdentity(client: OpenPgpClient): com.jcraft.jsch.Identity? {
+        return when (sshSyncMode()) {
+            SSH_SYNC_YUBIKEY -> {
+                val line = yubikeySshLine() ?: return null
+                val subkeyId = yubikeyAuthSubkeyId() ?: return null
+                val interaction = interactionHandler
+                    ?: throw IllegalStateException("Interaction needs the UI layer")
+                YubiKeySshIdentity(client, subkeyId, line, interaction)
+            }
+            else -> null // screenlock mode uses the Keystore identity directly
+        }
+    }
 
     /** UI hook for the screenlock auth that precedes SSH-key syncs (the
      *  key's 60s validity window opens on a successful interaction). Set
@@ -737,13 +786,19 @@ object VaultSession {
         if (useSsh && !SshKeyManager().hasKeyPair())
             return Result.Error("Enroll the screenlock SSH key first (Setup)")
         if (useSsh) {
-            // The sync that follows runs only within the key's screenlock
-            // window — demand the biometric/credential interaction now.
-            val gate = syncAuthGate ?: return Result.Error("Sync auth gate unavailable")
-            busy = "Screen lock…"
-            val ok = try { gate() } catch (e: Exception) { false }
-            if (!ok) { busy = null; return Result.Error("Screen lock declined — still local-only") }
-            busy = null
+            // Enrollment + gate depend on the active SSH identity mode.
+            if (sshSyncMode() == SSH_SYNC_YUBIKEY) {
+                if (yubikeySshLine() == null || yubikeyAuthSubkeyId() == null)
+                    return Result.Error("Enroll the YubiKey SSH key first (Setup → paste the SSH line)")
+            } else {
+                if (!SshKeyManager().hasKeyPair())
+                    return Result.Error("Enroll the screenlock SSH key first (Setup)")
+                val gate = syncAuthGate ?: return Result.Error("Sync auth gate unavailable")
+                busy = "Screen lock…"
+                val ok = try { gate() } catch (e: Exception) { false }
+                if (!ok) { busy = null; return Result.Error("Screen lock declined — still local-only") }
+                busy = null
+            }
         } else {
             savePat(pat)
         }
@@ -816,14 +871,25 @@ object VaultSession {
         val cfg = config() ?: return Result.Error("Local-only mode: nothing to sync")
         val remote = cfg.remoteUrl ?: return Result.Error("Local-only mode: nothing to sync")
         val useSsh = VaultGitClient().isSshRemote(remote)
-        if (useSsh && !SshKeyManager().hasKeyPair())
-            return Result.Error("Enroll the screenlock SSH key first (Setup)")
         if (useSsh) {
-            val gate = syncAuthGate ?: return Result.Error("Sync auth gate unavailable")
-            busy = "Screen lock…"
-            val ok = try { gate() } catch (e: Exception) { false }
-            busy = null
-            if (!ok) return Result.Error("Screen lock declined — sync aborted")
+            // Enrollment + gate depend on the active SSH identity mode.
+            val enrolled: Boolean
+            if (sshSyncMode() == SSH_SYNC_YUBIKEY) {
+                enrolled = yubikeySshLine() != null && yubikeyAuthSubkeyId() != null
+                if (!enrolled)
+                    return Result.Error("Enroll the YubiKey SSH key first (Setup → paste the SSH line)")
+                // The gate is the YubiKey touch inside the OpenKeyChain
+                // interaction during the handshake — no pre-auth needed.
+            } else {
+                enrolled = SshKeyManager().hasKeyPair()
+                if (!enrolled)
+                    return Result.Error("Enroll the screenlock SSH key first (Setup)")
+                val gate = syncAuthGate ?: return Result.Error("Sync auth gate unavailable")
+                busy = "Screen lock…"
+                val ok = try { gate() } catch (e: Exception) { false }
+                busy = null
+                if (!ok) return Result.Error("Screen lock declined — sync aborted")
+            }
         }
         val pat = if (useSsh) "" else (pat() ?: return Result.Error("No PAT stored"))
         busy = "Syncing…"

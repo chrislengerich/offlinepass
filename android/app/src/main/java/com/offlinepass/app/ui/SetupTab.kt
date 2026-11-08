@@ -46,6 +46,7 @@ fun SetupTabScreen(
     onShowDeviceQr: (com.offlinepass.app.vault.DeviceRecord) -> Unit = {},
     onConnectRemote: (String, String) -> Unit = { _, _ -> },
     onShowSshKey: () -> Unit = {},
+    onEnrollYubikeySsh: (String, String) -> Unit = { _, _ -> },
     onRemoveDevice: (String) -> Unit = {}
 ) {
     val cfg = VaultSession.config()
@@ -93,6 +94,7 @@ fun SetupTabScreen(
         // Local-only vault: offer to attach a remote (git-synced backup +
         // cross-device sync) without touching the local history.
         var showConnect by remember { mutableStateOf(false) }
+        var showYubikey by remember { mutableStateOf(false) }
         if (cfg?.remoteUrl == null) {
             Text("Local-only: entries commit on this device only.",
                 style = MaterialTheme.typography.bodySmall)
@@ -102,11 +104,61 @@ fun SetupTabScreen(
             Button(onClick = onShowSshKey, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
                 Text("Sync via screenlock SSH key (show public key QR)")
             }
+            Button(onClick = { showYubikey = true }, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+                Text("Sync via YubiKey SSH (OpenKeyChain)")
+            }
+            if (VaultSession.sshSyncMode() == VaultSession.SSH_SYNC_YUBIKEY) {
+                Text("YubiKey SSH enrolled — every sync asks for the YubiKey touch.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
             Text(
-                "Scan the QR with the offlinepass extension, add the key on GitHub " +
+                "Sync via screenlock SSH key: scan the QR with the offlinepass extension, add the key on GitHub " +
                     "(repo → Settings → Deploy keys → Allow write access), then connect " +
-                    "with a git@ remote — syncs open with a screen-lock prompt.",
+                    "with a git@ remote — syncs open with a screen-lock prompt. " +
+                    "Sync via YubiKey SSH: paste the auth subkey's OpenSSH line (desktop: gpg --export-ssh-key) " +
+                    "and its key id — every sync asks for the YubiKey touch.",
                 style = MaterialTheme.typography.bodySmall
+            )
+        }
+        if (showYubikey) {
+            var sshLine by remember { mutableStateOf(VaultSession.yubikeySshLine() ?: "") }
+            var subkeyId by remember { mutableStateOf(VaultSession.yubikeyAuthSubkeyId()?.toString() ?: "") }
+            AlertDialog(
+                onDismissRequest = { showYubikey = false },
+                title = { Text("YubiKey SSH enrollment") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "From the desktop with the key plugged in:\n" +
+                                "gpg --export-ssh-key <auth-subkey-id>\n" +
+                                "(or ssh-add -L) — paste the line and the auth " +
+                                "subkey's key id. If that SSH key is already on " +
+                                "GitHub, no enrollment is needed there.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        OutlinedTextField(
+                            value = sshLine, onValueChange = { sshLine = it },
+                            label = { Text("OpenSSH public line (ssh-rsa AAAA…)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = subkeyId, onValueChange = { subkeyId = it },
+                            label = { Text("Auth subkey key id (16 hex)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showYubikey = false
+                            onEnrollYubikeySsh(sshLine.trim(), subkeyId.trim())
+                        },
+                        enabled = sshLine.contains(" ") && subkeyId.trim().length == 16
+                    ) { Text("Enroll") }
+                },
+                dismissButton = { TextButton(onClick = { showYubikey = false }) { Text("Cancel") } }
             )
         }
         if (showConnect) {

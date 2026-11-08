@@ -306,6 +306,56 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // SSH syncs open the key's 60s validity window with a screen-lock
         // interaction (biometric or device credential) before the transport.
         VaultSession.syncAuthGate = { biometricGate() }
+        // The active SSH identity: screenlock keystore key, or the YubiKey
+        // auth subkey via OpenKeyChain (the interaction = the YubiKey touch).
+        VaultSession.sshIdentityProvider = {
+            when (VaultSession.sshSyncMode()) {
+                VaultSession.SSH_SYNC_YUBIKEY -> {
+                    val line = VaultSession.yubikeySshLine()
+                    val subkey = VaultSession.yubikeyAuthSubkeyId()
+                    if (line == null || subkey == null) null
+                    else com.offlinepass.app.crypto.YubiKeySshIdentity(
+                        com.offlinepass.app.crypto.OpenPgpClient(applicationContext),
+                        subkey, line
+                    ) { pi ->
+                        withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            launchInteraction(pi)
+                            awaitInteraction()
+                        }
+                    }
+                }
+                else -> {
+                    val manager = com.offlinepass.app.crypto.SshKeyManager()
+                    val info = manager.ensureKeyPair()
+                    object : com.jcraft.jsch.Identity {
+                        override fun getAlgName(): String = info.algorithm
+                        override fun getName(): String = "offlinepass-android"
+                        override fun getPublicKeyBlob(): ByteArray = info.wireBlob
+                        override fun getSignature(data: ByteArray): ByteArray {
+                            val sig = manager.newSigner()
+                            sig.update(data)
+                            val raw = sig.sign()
+                            val wireAlg = if (info.algorithm == "Ed25519") "ssh-ed25519" else "rsa-sha2-256"
+                            return wireString(wireAlg.toByteArray()) + wireString(raw)
+                        }
+                        override fun setPassphrase(passphrase: ByteArray?): Boolean = true
+                        override fun isEncrypted(): Boolean = false
+                        override fun clear() {}
+                    }
+                }
+            }
+        }
+    }
+
+    /** SSH wire string (4-byte length + bytes). */
+    private fun wireString(b: ByteArray): ByteArray {
+        val out = ByteArray(4 + b.size)
+        out[0] = ((b.size ushr 24) and 0xFF).toByte()
+        out[1] = ((b.size ushr 16) and 0xFF).toByte()
+        out[2] = ((b.size ushr 8) and 0xFF).toByte()
+        out[3] = (b.size and 0xFF).toByte()
+        b.copyInto(out, 4)
+        return out
     }
 
     /** Screen-lock signature flow (platform BiometricPrompt, mirroring
@@ -716,6 +766,16 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             } catch (e: Exception) {
                                 status = "SSH key enrollment failed: ${e.message}"
                             }
+                        }
+                    },
+                    onEnrollYubikeySsh = { sshLine, subkeyId ->
+                        val keyId = subkeyId.toLongOrNull(16)
+                        if (keyId == null) {
+                            status = "Auth subkey id must be 16 hex digits."
+                        } else {
+                            VaultSession.setYubikeySsh(sshLine, subkeyId)
+                            status = "YubiKey SSH enrolled — connect the git@ remote and sync " +
+                                "(each sync asks for the YubiKey touch)."
                         }
                     },
                     pairedDevices = VaultSession.pairedDevices(),
