@@ -48,20 +48,39 @@
           if (done || data === sent) return;
           if (data.charAt(0) !== "{") return;
           var m;
-          try { m = JSON.parse(data); } catch (e) { return; }
-          if (!m || m.type !== "offlinepass-device" || !m.device) return;
+          try { m = JSON.parse(data); } catch (e) {
+            progress.textContent = "decoded " + data.length + " chars — not JSON, keep scanning";
+            console.log("pairscan: rejected (not JSON): " + data.slice(0, 60));
+            return;
+          }
+          if (!m || m.device === undefined) {
+            progress.textContent = "decoded JSON without a device record — keep scanning";
+            console.log("pairscan: rejected (no device field): " + data.slice(0, 60));
+            return;
+          }
+          if (m.type !== "offlinepass-device") {
+            progress.textContent = "decoded " + data.length + " chars, wrong type: " + m.type;
+            console.log("pairscan: rejected (type): " + m.type);
+            return;
+          }
           var keyId = String(m.device.keyId || "");
-          if (!/^[0-9a-f]{16}$/.test(keyId)) { progress.textContent = "Malformed record — keep scanning."; return; }
+          if (!/^[0-9a-f]{16}$/.test(keyId)) {
+            progress.textContent = "malformed record (keyId '" + keyId + "') — keep scanning";
+            console.log("pairscan: rejected (keyId): " + keyId);
+            return;
+          }
           sent = data;
           done = true;
           stopCamera();
           progress.textContent = "Paired key " + keyId + " captured.";
           msg.textContent = "Handing the record to the app…";
+          console.log("pairscan: accepted, keyId " + keyId);
           setTimeout(function () {
             if (window.LinuxpassBridge && window.LinuxpassBridge.onPairRecord) {
               window.LinuxpassBridge.onPairRecord(data);
             } else {
               msg.textContent = "Bridge missing — record not delivered.";
+              console.log("pairscan: bridge missing");
               done = false;
             }
           }, 300);

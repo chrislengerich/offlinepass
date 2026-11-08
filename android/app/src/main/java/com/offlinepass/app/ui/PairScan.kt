@@ -69,6 +69,7 @@ private class PairBridge(handler: (String) -> Unit) {
 
     @JavascriptInterface
     fun onPairRecord(text: String) {
+        android.util.Log.i("PairScan", "bridge fired, " + text.length + " chars")
         handlerRef(text)
     }
 }
