@@ -184,12 +184,22 @@ fun SetupTabScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilterChip(
                                 selected = auth == "ssh",
-                                onClick = { auth = "ssh" },
+                                onClick = {
+                                    auth = "ssh"
+                                    // Prepopulate the GitHub SSH prefix unless
+                                    // the URL is already SSH-form.
+                                    if (!url.startsWith("git@") && !url.startsWith("ssh://"))
+                                        url = "git@github.com:"
+                                },
                                 label = { Text("Screenlock SSH key") }
                             )
                             FilterChip(
                                 selected = auth == "pat",
-                                onClick = { auth = "pat" },
+                                onClick = {
+                                    auth = "pat"
+                                    if (!url.startsWith("https://") && !url.startsWith("http://"))
+                                        url = "https://github.com/"
+                                },
                                 label = { Text("PAT (HTTPS)") }
                             )
                         }
