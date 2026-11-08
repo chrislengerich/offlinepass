@@ -57,65 +57,88 @@ object PgpSshBridge {
     }
 
     /**
-     * Converts an OpenPGP detached signature (armored) over [dataLength]
-     * bytes into the SSH signature blob for the given public-key line.
-     * Returns string(signatureAlgorithm) + string(signature bytes).
+     * Converts an OpenPGP detached signature (armored) into the SSH
+     * signature blob for the given public-key line:
+     * string(signatureAlgorithm) + string(signature bytes).
      */
     fun openPgpToSshSignature(armored: String, publicKeyLine: SshPublicKeyLine): ByteArray {
+        val (pubkeyAlg, hashAlg, mpis) = parsePgpSignature(armored)
+        val raw = rawSignatureBytes(pubkeyAlg, hashAlg, mpis, publicKeyLine)
+        val sigName = signatureAlgorithmName(publicKeyLine.algorithm, pubkeyAlg, hashAlg)
+        return sshString(sigName.toByteArray()) + sshString(raw)
+    }
+
+    /** The RAW signature bytes (no SSH framing) for the given OpenSSH
+     *  algorithm — RSA padded to modulus size, ECDSA as 0x04||r||s,
+     *  Ed25519 as r||s. */
+    fun extractRawSignature(armored: String, sshAlgorithm: String): ByteArray {
+        val (pubkeyAlg, hashAlg, mpis) = parsePgpSignature(armored)
+        return rawSignatureBytes(pubkeyAlg, hashAlg, mpis,
+            SshPublicKeyLine(sshAlgorithm, ByteArray(0), ""))
+    }
+
+    private data class PgpSig(val pubkeyAlg: Int, val hashAlg: Int, val mpis: List<ByteArray>)
+
+    private fun parsePgpSignature(armored: String): PgpSig {
         val packet = dearmorFirstSignaturePacket(armored)
         val body = parsePacketBody(packet)
-
         val version = body[0].toInt() and 0xFF
         if (version != 4) throw PgpSshBridgeException("unsupported OpenPGP signature version $version")
-        // body[1] = signature type, body[2] = pubkey alg, body[3] = hash alg
         val pubkeyAlg = body[2].toInt() and 0xFF
         val hashAlg = body[3].toInt() and 0xFF
-
         var p = 4
-        val hashedLen = u16(body, p); p += 2
-        p += hashedLen
-        val unhashedLen = u16(body, p); p += 2
-        p += unhashedLen
-
+        p += 2 + u16(body, p)             // hashed subpacket length + data
+        p += 2 + u16(body, p)             // unhashed subpacket length + data
         val mpis = mutableListOf<ByteArray>()
         when (pubkeyAlg) {
-            PK_ALG_RSA -> mpis += readMpi(body, p).let { (mpi, next) -> mpi.also { p = next } }
+            PK_ALG_RSA -> mpis += readMpi(body, p).first
             PK_ALG_ECDSA, PK_ALG_EDDSA -> {
                 val (r, p2) = readMpi(body, p)
-                val (s, p3) = readMpi(body, p2)
-                mpis += r; mpis += s; p = p3
+                val (s, _) = readMpi(body, p2)
+                mpis += r; mpis += s
             }
             else -> throw PgpSshBridgeException("unsupported OpenPGP pubkey algorithm $pubkeyAlg")
         }
+        return PgpSig(pubkeyAlg, hashAlg, mpis)
+    }
 
-        return when (publicKeyLine.algorithm) {
-            "ssh-rsa" -> {
-                if (pubkeyAlg != PK_ALG_RSA)
-                    throw PgpSshBridgeException("signature algorithm mismatch: expected RSA, got $pubkeyAlg")
-                val sigName = when (hashAlg) {
-                    HASH_SHA256 -> "rsa-sha2-256"
-                    HASH_SHA512 -> "rsa-sha2-512"
-                    else -> throw PgpSshBridgeException("unsupported PGP hash algorithm $hashAlg (need SHA-256/512)")
-                }
-                sshString(sigName.toByteArray()) + sshString(padLeft(mpis[0], rsaModulusSize(publicKeyLine.wireBlob)))
+    private fun signatureAlgorithmName(sshAlgorithm: String, pubkeyAlg: Int, hashAlg: Int): String {
+        if (sshAlgorithm == "ssh-rsa") {
+            if (pubkeyAlg != PK_ALG_RSA)
+                throw PgpSshBridgeException("signature algorithm mismatch: expected RSA, got $pubkeyAlg")
+            return when (hashAlg) {
+                HASH_SHA256 -> "rsa-sha2-256"
+                HASH_SHA512 -> "rsa-sha2-512"
+                else -> throw PgpSshBridgeException("unsupported PGP hash algorithm $hashAlg (need SHA-256/512)")
             }
-            "ecdsa-sha2-nistp256" -> {
-                if (pubkeyAlg != PK_ALG_ECDSA)
-                    throw PgpSshBridgeException("signature algorithm mismatch: expected ECDSA, got $pubkeyAlg")
-                if (hashAlg != HASH_SHA256)
-                    throw PgpSshBridgeException("nistp256 needs SHA-256 signatures, got hash $hashAlg")
-                val r = padLeft(mpis[0], 32); val s = padLeft(mpis[1], 32)
-                sshString("ecdsa-sha2-nistp256".toByteArray()) +
-                    sshString(byteArrayOf(0x04) + r + s)
-            }
-            "ssh-ed25519" -> {
-                if (pubkeyAlg != PK_ALG_EDDSA)
-                    throw PgpSshBridgeException("signature algorithm mismatch: expected EdDSA, got $pubkeyAlg")
-                sshString("ssh-ed25519".toByteArray()) +
-                    sshString(padLeft(mpis[0], 32) + padLeft(mpis[1], 32))
-            }
-            else -> throw PgpSshBridgeException("unsupported SSH algorithm ${publicKeyLine.algorithm}")
         }
+        return sshAlgorithm
+    }
+
+    private fun rawSignatureBytes(
+        pubkeyAlg: Int,
+        hashAlg: Int,
+        mpis: List<ByteArray>,
+        line: SshPublicKeyLine
+    ): ByteArray = when (line.algorithm) {
+        "ssh-rsa" -> {
+            if (pubkeyAlg != PK_ALG_RSA)
+                throw PgpSshBridgeException("signature algorithm mismatch: expected RSA, got $pubkeyAlg")
+            padLeft(mpis[0], rsaModulusSize(line.wireBlob))
+        }
+        "ecdsa-sha2-nistp256" -> {
+            if (pubkeyAlg != PK_ALG_ECDSA)
+                throw PgpSshBridgeException("signature algorithm mismatch: expected ECDSA, got $pubkeyAlg")
+            if (hashAlg != HASH_SHA256)
+                throw PgpSshBridgeException("nistp256 needs SHA-256 signatures, got hash $hashAlg")
+            byteArrayOf(0x04) + padLeft(mpis[0], 32) + padLeft(mpis[1], 32)
+        }
+        "ssh-ed25519" -> {
+            if (pubkeyAlg != PK_ALG_EDDSA)
+                throw PgpSshBridgeException("signature algorithm mismatch: expected EdDSA, got $pubkeyAlg")
+            padLeft(mpis[0], 32) + padLeft(mpis[1], 32)
+        }
+        else -> throw PgpSshBridgeException("unsupported SSH algorithm ${line.algorithm}")
     }
 
     // -- packet-level helpers -------------------------------------------------
