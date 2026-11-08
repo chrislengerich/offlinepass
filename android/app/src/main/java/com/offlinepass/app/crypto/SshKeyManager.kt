@@ -67,6 +67,7 @@ class SshKeyManager(
         // byte-identical to what this device generated.
         val fp = "SHA256:" + Base64.getEncoder().withoutPadding()
             .encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(wire))
+        android.util.Log.i(TAG, "identity fingerprint: $fp")
         return PublicKeyInfo(pub.algorithm, pub, wire, "$alg ${Base64.getEncoder().encodeToString(wire)} $comment", fp)
     }
 
@@ -76,17 +77,22 @@ class SshKeyManager(
      *  screenlock gate); a pre-gating key is purged and regenerated. */
     private fun isScreenlockGated(ks: KeyStore): Boolean = runCatching {
         val priv = ks.getKey(alias, null) as PrivateKey
-        val ki = try {
-            java.security.KeyFactory.getInstance(priv.algorithm, provider)
-                .getKeySpec(priv, android.security.keystore.KeyInfo::class.java)
-                    as android.security.keystore.KeyInfo
-        } catch (e: Exception) {
-            java.security.KeyFactory.getInstance(priv.algorithm)
-                .getKeySpec(priv, android.security.keystore.KeyInfo::class.java)
-                    as android.security.keystore.KeyInfo
-        }
-        ki.isUserAuthenticationRequired
-    }.getOrDefault(false)
+        // ONLY the AndroidKeyStore KeyFactory can handle its own keys —
+        // the default provider's cannot (and throwing here would purge a
+        // good key on every call, churning the git identity).
+        val ki = java.security.KeyFactory.getInstance(priv.algorithm, provider)
+            .getKeySpec(priv, android.security.keystore.KeyInfo::class.java)
+                as android.security.keystore.KeyInfo
+        val gated = ki.isUserAuthenticationRequired
+        android.util.Log.i(TAG, "screenlock gate check: gated=$gated, " +
+            "validity=${ki.userAuthenticationValidityDurationSeconds}s")
+        gated
+    }.getOrElse { e ->
+        // A check failure must NEVER purge the key: the deployed GitHub
+        // deploy key would stop matching. Assume gated and continue.
+        android.util.Log.w(TAG, "screenlock gate check failed (keeping key): ${e.message}")
+        true
+    }
 
     fun keyAlgorithm(): String {
         val pub = load().getCertificate(alias).publicKey

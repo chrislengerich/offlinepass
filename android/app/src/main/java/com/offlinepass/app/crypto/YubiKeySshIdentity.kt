@@ -34,7 +34,7 @@ class YubiKeySshIdentity(
         // by GitHub regardless of which name JSch asked for.
         val sig = openKeyChainSig(data) ?: return null
         android.util.Log.i("YubiKeySsh",
-            "ssh sig: jsch asked=$algorithm, pgpHash=${sig.hashAlg} → labeled=${sig.sigName}")
+            "ssh sig: jsch asked=$algorithm, labeled=" + sig.sigName)
         return sig.wire
     }
 
@@ -69,7 +69,7 @@ class YubiKeySshIdentity(
     /** Signs [data] with the auth subkey via OpenKeyChain (handling the
      *  interaction loop) and returns the RAW signature bytes extracted
      *  from the OpenPGP packet. */
-    private fun openKeyChainRawSignature(data: ByteArray): ByteArray? {
+    private fun openKeyChainRawSignature(data: ByteArray): PgpSshBridge.RawSig? {
         var reqData: android.content.Intent? = null
         var guard = 0
         while (guard++ < 3) {
