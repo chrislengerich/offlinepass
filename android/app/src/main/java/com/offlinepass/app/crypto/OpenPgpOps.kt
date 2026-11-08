@@ -15,7 +15,7 @@ interface OpenPgpOps {
 
     suspend fun encryptTo(keyIds: LongArray, source: java.io.File, target: java.io.File): Boolean
 
-    suspend fun fetchPublicKeyArmored(keyId: Long): OpenPgpClient.PublicKey
+    suspend fun fetchPublicKeyArmored(keyId: Long, requestData: android.content.Intent? = null): OpenPgpClient.PublicKey
 
     suspend fun trySignDetached(
         data: ByteArray,

@@ -482,28 +482,37 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     VaultSession.pickedAuthSubkeyId = keyId
                     // The OpenSSH line: fetched from OpenKeyChain (the same
                     // proven call that materializes the recipients' keys) and
-                    // converted by the bridge — no paste needed.
-                    val fetch = com.offlinepass.app.crypto.OpenPgpClient(applicationContext)
-                        .fetchPublicKeyArmored(keyId)
-                    when (fetch) {
-                        is com.offlinepass.app.crypto.OpenPgpClient.PublicKey.Success -> {
-                            val line = runCatching {
-                                com.offlinepass.app.crypto.PgpSshBridge.sshLineForKeyMaterial(
-                                    fetch.armored, keyId, "offlinepass-yubikey")
-                            }.getOrNull()
-                            if (line != null) {
-                                VaultSession.yubikeySshLineDraft = line
-                                status = "Auth subkey selected (0x%016X) — OpenSSH line populated."
-                                    .format(keyId)
-                            } else {
-                                status = "Auth subkey selected (0x%016X) — the key " +
-                                    "material could not be converted to an SSH line."
-                                        .format(keyId)
+                    // converted by the bridge — no paste needed. The fetch may
+                    // need a prompt (the key-access interaction): loop it.
+                    val fetchClient = com.offlinepass.app.crypto.OpenPgpClient(applicationContext)
+                    var fetchReq: Intent? = null
+                    var fetchGuard = 0
+                    var line: String? = null
+                    while (fetchGuard++ < 3 && line == null) {
+                        when (val fr = fetchClient.fetchPublicKeyArmored(keyId, fetchReq)) {
+                            is com.offlinepass.app.crypto.OpenPgpClient.PublicKey.Success ->
+                                line = runCatching {
+                                    com.offlinepass.app.crypto.PgpSshBridge.sshLineForKeyMaterial(
+                                        fr.armored, keyId, "offlinepass-yubikey")
+                                }.getOrElse {
+                                    Log.w(TAG, "key material -> SSH line: ${it.message}")
+                                    null
+                                }
+                            is com.offlinepass.app.crypto.OpenPgpClient.PublicKey.UserInteraction -> {
+                                launchInteraction(fr.pendingIntent)
+                                fetchReq = awaitInteraction()
                             }
+                            else -> break
                         }
-                        else -> status = "Auth subkey selected (0x%016X) — the public " +
-                            "key could not be fetched; paste the OpenSSH line manually."
-                                .format(keyId)
+                    }
+                    if (line != null) {
+                        VaultSession.yubikeySshLineDraft = line
+                        status = "Signing subkey selected (0x%016X) — OpenSSH line populated."
+                            .format(keyId)
+                    } else {
+                        status = "Signing subkey selected (0x%016X) — the OpenSSH line " +
+                            "could not be fetched; paste it from the desktop " +
+                            "(gpg --export-ssh-key).".format(keyId)
                     }
                     return
                 }

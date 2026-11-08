@@ -332,9 +332,9 @@ class OpenPgpClient(private val context: Context) : OpenPgpOps {
      * is the key that has to be verified against, and OpenKeychain serves
      * that exact key over the API.
      */
-    override suspend fun fetchPublicKeyArmored(keyId: Long): PublicKey {
+    override suspend fun fetchPublicKeyArmored(keyId: Long, requestData: Intent?): PublicKey {
         if (!connect()) return PublicKey.Error
-        val data = Intent(ACTION_GET_KEY).apply {
+        val data = requestData ?: Intent(ACTION_GET_KEY).apply {
             putExtra(EXTRA_KEY_ID, keyId)
             putExtra(EXTRA_REQUEST_ASCII_ARMOR, true)
         }
