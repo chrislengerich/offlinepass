@@ -139,10 +139,13 @@ checklist (all paired keys pre-selected) → looping QR of the wrapped paste.
 
 **Receive (Chromebook):** toolbar → *Scan a paste* (the target tab is
 captured when the popup opens) → camera scans the phone's screen →
-*Decrypt (touch key)* — the prompt names the expected key → entry summary
-with reveal/copy/TOTP → *Fill in tab* → content script fills username +
-password (no auto-submit). Passwords are dropped from memory after
-fill/copy; TOTP is copy-only.
+*Decrypt (touch key)* — the prompt names the expected key → the paste
+routes itself: if an entry's URLs match the target tab (scheme-insensitive,
+host-only, `www.`-stripped, subdomain-aware; exact host preferred) the
+extension **auto-fills immediately** — no further click — and closes;
+otherwise the entry cards appear (Fill / Reveal / Copy / TOTP-copy; fill
+also closes the window outright). Passwords are dropped from memory after
+fill; TOTP is copy-only.
 
 **Restore pairing (Chromebook/profile loss, or second Chromebook):** phone
 Setup → Paste devices → *Show QR* → extension scan window → *Restore
