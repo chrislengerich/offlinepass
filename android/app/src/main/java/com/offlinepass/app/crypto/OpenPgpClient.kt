@@ -547,12 +547,15 @@ class OpenPgpClient(private val context: Context) : OpenPgpOps {
 
     override suspend fun trySignDetached(
         data: ByteArray,
-        keyId: Long,
+        keyId: Long?,
         requestData: Intent?
     ): SignDetached {
         if (!connect()) return SignDetached.Error("OpenKeyChain service unavailable")
         val intent = requestData ?: Intent(ACTION_DETACHED_SIGN).apply {
-            putExtra(EXTRA_SIGN_KEY_ID, keyId)
+            // A null keyId omits the key selection: OpenKeyChain opens its
+            // OWN key picker (all keys, hardware badges shown) — the chosen
+            // key's id comes back inside the signature's issuer subpacket.
+            if (keyId != null) putExtra(EXTRA_SIGN_KEY_ID, keyId)
             putExtra(EXTRA_REQUEST_ASCII_ARMOR, true)
         }
         val sink = ByteArrayOutputStream()

@@ -66,7 +66,7 @@ class VaultSaveTransactionTest {
             )
 
         override suspend fun trySignDetached(
-            data: ByteArray, keyId: Long, requestData: android.content.Intent?
+            data: ByteArray, keyId: Long?, requestData: android.content.Intent?
         ): OpenPgpClient.SignDetached = signResult
 
         override suspend fun pickSignKey(

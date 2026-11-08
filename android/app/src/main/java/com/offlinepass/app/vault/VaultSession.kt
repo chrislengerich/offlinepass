@@ -152,6 +152,10 @@ object VaultSession {
      *  by MainActivity; must run on Main. */
     var syncAuthGate: (suspend () -> Boolean)? = null
 
+    /** The auth subkey id picked in OpenKeyChain (reactive — the Setup
+     *  enrollment dialog prepopulates its field from this). */
+    var pickedAuthSubkeyId by mutableStateOf<Long?>(null)
+
     /** Last successful screenlock gate (for the key's validity window). */
     private var lastSshGateSuccessAt: Long = 0L
 

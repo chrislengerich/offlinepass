@@ -204,6 +204,30 @@ object PgpSshBridge {
         return packet.copyOfRange(hdrLen, packet.size)
     }
 
+    /** The signing key id from an OpenPGP detached signature's ISSUER
+     *  subpacket (type 16, 8 bytes — normally in the unhashed area). Used
+     *  after a keyless sign request to learn WHICH key OpenKeyChain used. */
+    fun issuingKeyId(armored: String): Long? {
+        val packet = dearmorFirstSignaturePacket(armored)
+        val body = parsePacketBody(packet)
+        var p = 4
+        val hashedLen = u16(body, p); p += 2 + hashedLen
+        val unhashedLen = u16(body, p); p += 2
+        val unhashedEnd = p + unhashedLen
+        while (p + 1 <= unhashedEnd && p < body.size) {
+            val len = body[p].toInt() and 0xFF
+            val type = body[p + 1].toInt() and 0xFF
+            if (type == 16 && len == 8) {  // ISSUER
+                val id = (0 until 8).fold(0L) { acc, k ->
+                    (acc shl 8) or (body[p + 2 + k].toLong() and 0xFF)
+                }
+                return if (id != 0L) id else null
+            }
+            p += 2 + len
+        }
+        return null
+    }
+
     private fun u16(b: ByteArray, p: Int): Int = ((b[p].toInt() and 0xFF) shl 8) or (b[p + 1].toInt() and 0xFF)
 
     /** OpenPGP MPI: 2-byte BIT LENGTH + big-endian value. Returns (bytes, nextPos). */

@@ -460,6 +460,41 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
     }
 
+    /** Keyless DETACHED_SIGN: OpenKeyChain opens ITS OWN key picker (all
+     *  keys, hardware badges shown); the user picks the YubiKey's auth
+     *  subkey and touches — a test signature proves the path and the
+     *  response's issuer subpacket reveals the used key id. */
+    private suspend fun pickAuthSubkey() {
+        var reqData: Intent? = null
+        var guard = 0
+        while (guard++ < 3) {
+            when (val r = com.offlinepass.app.crypto.OpenPgpClient(applicationContext)
+                .trySignDetached("offlinepass auth-subkey test".toByteArray(), null, reqData)
+            ) {
+                is com.offlinepass.app.crypto.OpenPgpClient.SignDetached.Ok -> {
+                    val keyId = com.offlinepass.app.crypto.PgpSshBridge
+                        .issuingKeyId(r.armored)
+                    if (keyId != null) {
+                        VaultSession.pickedAuthSubkeyId = keyId
+                        status = "Auth subkey selected (0x%016X).".format(keyId)
+                    } else {
+                        status = "Could not read the selected key's id."
+                    }
+                    return
+                }
+                is com.offlinepass.app.crypto.OpenPgpClient.SignDetached.UserInteraction -> {
+                    launchInteraction(r.pendingIntent)
+                    reqData = awaitInteraction()
+                }
+                is com.offlinepass.app.crypto.OpenPgpClient.SignDetached.Error -> {
+                    status = "Key selection failed: ${r.message}"
+                    return
+                }
+            }
+        }
+        status = "Key selection aborted after retries."
+    }
+
     /** Persists the YubiKey SSH enrollment (works pre-load: prefs only). */
     private fun enrollYubikeySsh(sshLine: String, subkeyId: String) {
         val keyId = subkeyId.toLongOrNull(16)
@@ -866,6 +901,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     },
                     onShowSshKey = { showSshKeyQr(Screen.Setup) },
                     onEnrollYubikeySsh = { line, subkeyId -> enrollYubikeySsh(line, subkeyId) },
+                    onPickAuthSubkey = {
+                        lifecycleScope.launch { pickAuthSubkey() }
+                    },
                     pairedDevices = VaultSession.pairedDevices(),
                     onShowDeviceQr = { device ->
                         // R2: the vault record IS the pairing backup — show

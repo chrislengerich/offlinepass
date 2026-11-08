@@ -49,6 +49,7 @@ fun SetupTabScreen(
     onRotateSshKey: () -> Unit = {},
     onRemoveYubikeySsh: () -> Unit = {},
     onEnrollYubikeySsh: (String, String) -> Unit = { _, _ -> },
+    onPickAuthSubkey: () -> Unit = {},
     onRemoveDevice: (String) -> Unit = {}
 ) {
     val cfg = VaultSession.config()
@@ -123,29 +124,38 @@ fun SetupTabScreen(
         }
         if (showYubikey) {
             var sshLine by remember { mutableStateOf(VaultSession.yubikeySshLine() ?: "") }
-            var subkeyId by remember { mutableStateOf(VaultSession.yubikeyAuthSubkeyId()?.toString() ?: "") }
+            var subkeyId by remember(VaultSession.pickedAuthSubkeyId) {
+                mutableStateOf(VaultSession.pickedAuthSubkeyId?.let { "%016X".format(it) }
+                    ?: VaultSession.yubikeyAuthSubkeyId()?.toString() ?: "")
+            }
             AlertDialog(
                 onDismissRequest = { showYubikey = false },
                 title = { Text("YubiKey SSH enrollment") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            "From the desktop with the key plugged in:\n" +
-                                "gpg --export-ssh-key <auth-subkey-id>\n" +
-                                "(or ssh-add -L) — paste the line and the auth " +
-                                "subkey's key id. If that SSH key is already on " +
-                                "GitHub, no enrollment is needed there.",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        OutlinedTextField(
-                            value = sshLine, onValueChange = { sshLine = it },
-                            label = { Text("OpenSSH public line (ssh-rsa AAAA…)") },
+                        Text("1. Choose key in OpenKeyChain — its picker lists all " +
+                            "keys (hardware-backed badged). Pick the YubiKey's AUTH " +
+                            "subkey (capability [A]) and touch — the key id fills in.",
+                            style = MaterialTheme.typography.bodySmall)
+                        Button(
+                            onClick = onPickAuthSubkey,
+                            enabled = busy == null,
                             modifier = Modifier.fillMaxWidth()
-                        )
+                        ) { Text("Choose key in OpenKeyChain") }
                         OutlinedTextField(
                             value = subkeyId, onValueChange = { subkeyId = it },
                             label = { Text("Auth subkey key id (16 hex)") },
                             singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text("2. Paste the key's OpenSSH public line — from the " +
+                            "desktop with the key plugged in: gpg --export-ssh-key " +
+                            "<key-id> (or ssh-add -L). If that key is already on " +
+                            "GitHub (desktop pushes), no GitHub changes are needed.",
+                            style = MaterialTheme.typography.bodySmall)
+                        OutlinedTextField(
+                            value = sshLine, onValueChange = { sshLine = it },
+                            label = { Text("OpenSSH public line (ssh-rsa AAAA…)") },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }

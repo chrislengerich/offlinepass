@@ -19,7 +19,7 @@ interface OpenPgpOps {
 
     suspend fun trySignDetached(
         data: ByteArray,
-        keyId: Long,
+        keyId: Long?,
         requestData: android.content.Intent? = null
     ): OpenPgpClient.SignDetached
 
