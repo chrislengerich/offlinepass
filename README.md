@@ -174,8 +174,20 @@ cd android && ./gradlew :app:assembleDebug
   a record to restore a pairing on a new Chromebook; *"Remove"* unpairs.
   Protocol and threat model: [`docs/extension-protocol.md`](docs/extension-protocol.md).
 - **Sync** — explicit "Sync now" with divergence detection: behind →
-  fast-forward, diverged → union-merge and re-encrypt; local-only mode runs
-  the same repo without a remote.
+  fast-forward, diverged → union-merge and re-encrypt. Three sync-auth
+  options (Setup → Connect remote):
+  - **Screenlock SSH key (default, recommended)** — a Keystore RSA key
+    gated by the device screen lock; enrolled as a GitHub **deploy key**
+    (per-repo, least privilege); every sync opens with the screen lock.
+  - **YubiKey SSH** — the OpenPGP auth subkey already enrolled in GitHub
+    (desktop gpg-agent pushes); every sync asks for the YubiKey touch via
+    OpenKeyChain.
+  - **PAT (HTTPS, deprecated)** — a fine-grained token; kept for
+    compatibility, but prefer either SSH option — no token to leak, and
+    the signatures are screenlock-gated.
+  Local-only mode runs the same repo without a remote; a remote can be
+  attached later (Setup → Connect remote) — new vaults always start
+  local-only.
 - **Setup tab** — remote config, recipients (OpenKeyChain picker), commit
   signer, USB save/restore, autofill enablement, screen-lock gate,
   lock-vault action.

@@ -200,7 +200,7 @@ fun SetupTabScreen(
                             FilterChip(
                                 selected = !isSsh,
                                 onClick = { auth = "pat" },
-                                label = { Text("PAT (HTTPS)") }
+                                label = { Text("PAT (HTTPS, deprecated)") }
                             )
                         }
                         Text("Remote: $built", style = MaterialTheme.typography.bodySmall)
@@ -232,7 +232,10 @@ fun SetupTabScreen(
                                 visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                                 modifier = Modifier.fillMaxWidth()
                             )
-                            Text("The PAT is stored encrypted by the Connect action itself.",
+                            Text("Deprecated: prefer the screenlock SSH key — it is stronger " +
+                                "(per-repo deploy key, screenlock-gated signatures) and there is no " +
+                                "token to leak. The PAT is still stored encrypted by the Connect " +
+                                "action itself.",
                                 style = MaterialTheme.typography.bodySmall)
                         }
                     }
