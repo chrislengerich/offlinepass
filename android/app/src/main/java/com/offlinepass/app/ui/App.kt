@@ -57,7 +57,15 @@ fun SetupChoiceScreen(
     onShowSshKey: () -> Unit = {},
     onEnrollYubikeySsh: (sshLine: String, subkeyId: String) -> Unit = { _, _ -> }
 ) {
-    var remote by remember { mutableStateOf(defaultRemote) }
+    var remote by remember {
+        // Prepopulate the URL per the DEFAULT sync-auth choice: an https
+        // default viewed as an SSH choice becomes the git@ form.
+        val initial = if (VaultSession.sshSyncMode() != "pat" &&
+            defaultRemote.startsWith("https://")
+        ) defaultRemote.replaceFirst("https://", "git@").replaceFirst("/", ":")
+        else defaultRemote
+        mutableStateOf(initial)
+    }
     var email by remember { mutableStateOf(defaultEmails) }
     var pat by remember { mutableStateOf(prefillPat) }
     var mode by remember { mutableStateOf("load") }
@@ -114,31 +122,34 @@ fun SetupChoiceScreen(
             // Sync-auth choice first — the remote URL's scheme follows it.
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
+                    modifier = Modifier.weight(1f),
                     selected = loadAuth == VaultSession.SSH_SYNC_SCREENLOCK,
                     onClick = {
                         loadAuth = VaultSession.SSH_SYNC_SCREENLOCK
                         if (!remote.startsWith("git@") && !remote.startsWith("ssh://"))
                             remote = "git@github.com:"
                     },
-                    label = { Text("Screenlock SSH key") }
+                    label = { Text("Screenlock SSH", maxLines = 1) }
                 )
                 FilterChip(
+                    modifier = Modifier.weight(1f),
                     selected = loadAuth == VaultSession.SSH_SYNC_YUBIKEY,
                     onClick = {
                         loadAuth = VaultSession.SSH_SYNC_YUBIKEY
                         if (!remote.startsWith("git@") && !remote.startsWith("ssh://"))
                             remote = "git@github.com:"
                     },
-                    label = { Text("YubiKey SSH") }
+                    label = { Text("YubiKey SSH", maxLines = 1) }
                 )
                 FilterChip(
+                    modifier = Modifier.weight(1f),
                     selected = loadAuth == "pat",
                     onClick = {
                         loadAuth = "pat"
                         if (!remote.startsWith("https://") && !remote.startsWith("http://"))
                             remote = "https://github.com/"
                     },
-                    label = { Text("PAT (HTTPS, deprecated)") }
+                    label = { Text("PAT (HTTPS)", maxLines = 1) }
                 )
             }
             OutlinedTextField(

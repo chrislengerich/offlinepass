@@ -193,14 +193,16 @@ fun SetupTabScreen(
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilterChip(
+                                modifier = Modifier.weight(1f),
                                 selected = isSsh,
                                 onClick = { auth = "ssh" },
-                                label = { Text("Screenlock SSH key") }
+                                label = { Text("Screenlock SSH key", maxLines = 1) }
                             )
                             FilterChip(
+                                modifier = Modifier.weight(1f),
                                 selected = !isSsh,
                                 onClick = { auth = "pat" },
-                                label = { Text("PAT (HTTPS, deprecated)") }
+                                label = { Text("PAT (HTTPS, deprecated)", maxLines = 1) }
                             )
                         }
                         Text("Remote: $built", style = MaterialTheme.typography.bodySmall)
