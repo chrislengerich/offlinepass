@@ -27,14 +27,18 @@ class YubiKeySshIdentity(
     override fun getPublicKeyBlob(): ByteArray = parsed.wireBlob
 
     override fun getSignature(data: ByteArray, algorithm: String): ByteArray? {
-        // JSch negotiates the algorithm and embeds our returned bytes
-        // verbatim — so the blob's INNER algorithm name must match the
-        // signature's ACTUAL hash (from the PGP packet), not JSch's
-        // preference. A correctly self-labeled rsa-sha2-* blob is accepted
-        // by GitHub regardless of which name JSch asked for.
+        // JSch negotiates the algorithm (rsa-sha2-512 first for RSA keys)
+        // and embeds the returned bytes verbatim. The blob's INNER algorithm
+        // name must match the signature's ACTUAL hash (from the PGP
+        // packet): SHA-256 -> rsa-sha2-256, SHA-512 -> rsa-sha2-512. On a
+        // mismatch return null so JSch retries with the next algorithm.
         val sig = openKeyChainSig(data) ?: return null
-        android.util.Log.i("YubiKeySsh",
-            "ssh sig: jsch asked=$algorithm, labeled=" + sig.sigName)
+        if (sig.sigName != algorithm) {
+            android.util.Log.i("YubiKeySsh",
+                "alg mismatch: jsch asked=$algorithm, ours=" + sig.sigName + " - retrying")
+            return null
+        }
+        android.util.Log.i("YubiKeySsh", "ssh sig offered: alg=" + sig.sigName)
         return sig.wire
     }
 

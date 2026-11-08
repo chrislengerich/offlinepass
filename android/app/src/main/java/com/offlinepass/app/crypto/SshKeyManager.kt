@@ -99,6 +99,13 @@ class SshKeyManager(
         return pub.algorithm
     }
 
+    /** A fresh Signature instance with an EXPLICIT JCE algorithm — used by
+     *  the SSH identity to match the negotiated rsa-sha2-256/512 hash. */
+    fun newSignerFor(jceAlgorithm: String): Signature {
+        val priv = load().getKey(alias, null) as PrivateKey
+        return Signature.getInstance(jceAlgorithm).apply { initSign(priv) }
+    }
+
     /** A fresh Signature instance over the Keystore private key. */
     fun newSigner(): Signature {
         val priv = load().getKey(alias, null) as PrivateKey

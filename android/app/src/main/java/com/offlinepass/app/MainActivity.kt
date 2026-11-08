@@ -336,12 +336,21 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         override fun getAlgName(): String = info.algorithm
                         override fun getName(): String = "offlinepass-android"
                         override fun getPublicKeyBlob(): ByteArray = info.wireBlob
-                        override fun getSignature(data: ByteArray): ByteArray {
-                            val sig = manager.newSigner()
+                        // JSch negotiates the RSA signature algorithm (it prefers
+                        // rsa-sha2-512 for ssh-rsa keys) — the signature must be
+                        // computed with EXACTLY that hash, labeled accordingly.
+                        override fun getSignature(data: ByteArray, algorithm: String): ByteArray? =
+                            when (algorithm) {
+                                "rsa-sha2-512" -> signRsa(data, "SHA512withRSA", "rsa-sha2-512")
+                                "rsa-sha2-256" -> signRsa(data, "SHA256withRSA", "rsa-sha2-256")
+                                else -> null // unknown → JSch tries the next algorithm
+                            }
+                        override fun getSignature(data: ByteArray): ByteArray =
+                            signRsa(data, "SHA256withRSA", "rsa-sha2-256")
+                        private fun signRsa(data: ByteArray, jceAlg: String, wireAlg: String): ByteArray {
+                            val sig = manager.newSignerFor(jceAlg)
                             sig.update(data)
-                            val raw = sig.sign()
-                            val wireAlg = if (info.algorithm == "Ed25519") "ssh-ed25519" else "rsa-sha2-256"
-                            return wireString(wireAlg.toByteArray()) + wireString(raw)
+                            return wireString(wireAlg.toByteArray()) + wireString(sig.sign())
                         }
                         override fun setPassphrase(passphrase: ByteArray?): Boolean = true
                         override fun isEncrypted(): Boolean = false
