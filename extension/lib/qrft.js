@@ -118,6 +118,8 @@ window.LpQrft = (function () {
       this.got = 0;
       this.rawBytes = 0;
     }
+    /** Which chunks have landed (for the receiver's progress display). */
+    peekChunk(i) { return this.chunks[i]; }
     /** @returns null (keep scanning) or {name, bytes, text} */
     push(data) {
       if (this.error) return null;

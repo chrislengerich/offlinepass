@@ -25,6 +25,18 @@ function stopCamera() {
 }
 
 const reassembler = new LpQrft.Reassembler();
+let lastGot = -1;
+let lastProgressAt = 0;
+
+function progressText() {
+  if (reassembler.total < 0) return "waiting for the sender's metadata frame…";
+  const missing = [];
+  for (let i = 0; i < reassembler.total; i++) {
+    if (reassembler.peekChunk(i) === undefined) missing.push(i + 1);
+  }
+  const base = reassembler.got + " / " + reassembler.total + " chunks";
+  return missing.length ? base + " — waiting for chunk " + missing.join(", ") : base;
+}
 
 function scanLoop() {
   if (done) return;
@@ -35,7 +47,7 @@ function scanLoop() {
   canvas.height = Math.round(video.videoHeight * scale);
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
   const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
+  const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "attemptBoth" });
   if (code && code.data) {
     if (reassembler.error) {
       // Hostile/broken transfer: stop scanning, show why (H3).
@@ -51,7 +63,15 @@ function scanLoop() {
       msgEl.textContent = "Bad transfer: " + reassembler.error;
       return;
     }
-    progressEl.textContent = reassembler.got + " / " + reassembler.total + " chunks";
+    progressEl.textContent = progressText();
+    const now = performance.now();
+    if (reassembler.got !== lastGot) {
+      lastGot = reassembler.got;
+      lastProgressAt = now;
+    } else if (reassembler.total > 0 && now - lastProgressAt > 5000) {
+      progressEl.textContent = progressText() +
+        " — no progress in 5s: hold the phone steady, or slow the sender (its speed selector)";
+    }
     if (res) handlePayload(res.name, res.text);
   }
 }
