@@ -305,20 +305,21 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
     }
 
-    /** Screen-lock signature flow: try to sign immediately (covers the
-     *  no-auth-enforced case), otherwise present BiometricPrompt with the
-     *  Signature as a CryptoObject — the unlock is bound to THIS exact
-     *  operation. Returns null on decline/failure (save rolls back). */
+    /** Screen-lock signature flow (platform BiometricPrompt, mirroring
+     *  biometricGate). For a per-operation auth key the prompt MUST come
+     *  before any sign() attempt: calling sign() first starts and aborts
+     *  the Keystore operation, and the post-auth retry then fails with
+     *  INVALID_OPERATION_HANDLE. The CryptoObject binds the screen-lock
+     *  interaction to THIS exact Keystore signature operation. Returns
+     *  null on decline or failure (save rolls back). */
     private suspend fun screenLockSignFlow(bytes: ByteArray): ByteArray? =
         suspendCancellableCoroutine { cont ->
             try {
                 val signature = com.offlinepass.app.crypto.KeystoreSigner.prepare(bytes)
-                // Fast path: if no auth is enforced on the key, sign() completes.
-                runCatching { com.offlinepass.app.crypto.KeystoreSigner.finish(signature) }
-                    .getOrNull()?.let { cont.resume(it); return@suspendCancellableCoroutine }
                 // Platform BiometricPrompt (the app already uses it for the
                 // gate): CryptoObject binds the screen-lock interaction to
-                // THIS exact Keystore signature operation.
+                // THIS exact Keystore signature operation. Prompt FIRST —
+                // never attempt sign() before authentication.
                 val builder = android.hardware.biometrics.BiometricPrompt.Builder(this)
                     .setTitle("Sign vault change")
                     .setSubtitle("Screen-lock signature for this revision")
