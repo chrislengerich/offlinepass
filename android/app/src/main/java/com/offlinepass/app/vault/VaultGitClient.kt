@@ -178,6 +178,13 @@ class VaultGitClient {
     }
 
     /** Pushes the branch; THROWS (does not swallow) on rejection. */
+    /** True when the remote (origin) already carries [branch] — i.e. the
+     *  remote repo is NOT empty/first-push. */
+    fun remoteBranchExists(root: File, branch: String = "main"): Boolean =
+        Git.open(root).use { git ->
+            git.repository.exactRef(org.eclipse.jgit.lib.Constants.R_REMOTES + "origin/" + branch) != null
+        }
+
     fun pushBranch(remote: String, pat: String, root: File, branch: String = "main") {
         Git.open(root).use { git ->
             val results = git.push()

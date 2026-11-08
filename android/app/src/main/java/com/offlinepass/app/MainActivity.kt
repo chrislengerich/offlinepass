@@ -306,6 +306,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // SSH syncs open the key's 60s validity window with a screen-lock
         // interaction (biometric or device credential) before the transport.
         VaultSession.syncAuthGate = { biometricGate() }
+        // First push to an EMPTY remote: confirm before creating the remote
+        // main branch.
+        VaultSession.firstPushGate = {
+            withContext(kotlinx.coroutines.Dispatchers.Main) { firstPushConfirm() }
+        }
         // The active SSH identity: screenlock keystore key, or the YubiKey
         // auth subkey via OpenKeyChain (the interaction = the YubiKey touch).
         VaultSession.sshIdentityProvider = {
@@ -406,6 +411,20 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 Log.w(TAG, "screenlock signature failed: ${e.message}")
                 cont.resume(null)
             }
+        }
+
+    /** Confirmation dialog for the first push to an empty remote. */
+    private suspend fun firstPushConfirm(): Boolean =
+        suspendCancellableCoroutine { cont ->
+            val dialog = android.app.AlertDialog.Builder(this)
+                .setTitle("First push to an empty remote")
+                .setMessage("The remote repository is empty. Push your local vault " +
+                    "history to it? This creates the remote main branch.")
+                .setPositiveButton("Push") { _, _ -> cont.resume(true) }
+                .setNegativeButton("Cancel") { _, _ -> cont.resume(false) }
+                .setOnCancelListener { cont.resume(false) }
+                .show()
+            cont.invokeOnCancellation { dialog.dismiss() }
         }
 
     override fun onDestroy() {

@@ -144,6 +144,10 @@ object VaultSession {
      *  by MainActivity; must run on Main. */
     var syncAuthGate: (suspend () -> Boolean)? = null
 
+    /** UI hook confirming the FIRST push to an empty remote (the remote
+     *  main branch gets created by the push). Set by MainActivity. */
+    var firstPushGate: (suspend () -> Boolean)? = null
+
     /** Human-readable sync state, shown above the Sync-now button. */
     var syncStatus by mutableStateOf<String?>(null)
         private set
@@ -949,6 +953,21 @@ object VaultSession {
                         refreshFromVaultFile()
                     }
                     is VaultGitClient.Divergence.AheadOnly -> {
+                        // Empty-remote first push: GitHub repos created via
+                        // the web UI have no commits and no branches — the
+                        // first push CREATES main. Warn + confirm before
+                        // that (one tap; it's a one-time event per remote).
+                        if (!git.remoteBranchExists(root, "main")) {
+                            val gate = firstPushGate
+                                ?: return@withContext Result.Error(
+                                    "The remote repository is empty — confirm the first push in the UI")
+                            busy = null
+                            if (!gate()) {
+                                syncStatus = "First push cancelled — still local-only"
+                                return@withContext Result.Error("First push cancelled — the remote stays empty")
+                            }
+                            busy = "Pushing…"
+                        }
                         git.pushBranch(remote, pat, root)
                         syncStatus = "Pushed (rev $rev)"
                     }
@@ -1002,7 +1021,7 @@ object VaultSession {
             }
             return Result.Success
         } catch (e: Exception) {
-            Log.w(TAG, "syncNow failed: ${e.javaClass.simpleName}: ${e.message}")
+            Log.w(TAG, "syncNow failed: ${e.javaClass.simpleName}: ${e.message}", e)
             syncStatus = "Sync failed: ${e.message?.take(140)}"
             return Result.Error("${e.javaClass.simpleName}: ${e.message}")
         } finally {
