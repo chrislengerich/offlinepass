@@ -71,6 +71,10 @@ window.LpWrap = (function () {
   async function createCredential() {
     const cred = await navigator.credentials.create({
       publicKey: {
+        // rp.id is omitted on purpose — it defaults to the caller origin's
+        // effective domain (the extension's own origin), binding the
+        // credential to this extension only.
+        rp: { name: "linuxpass" },
         challenge: crypto.getRandomValues(new Uint8Array(32)),
         user: {
           id: crypto.getRandomValues(new Uint8Array(16)),
