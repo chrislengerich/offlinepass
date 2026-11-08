@@ -431,6 +431,47 @@ class MainActivity : androidx.activity.ComponentActivity() {
             }
         }
 
+    /** Where the SSH-key QR screen returns to (Setup post-load, or the
+     *  SetupChoice screen pre-load). */
+    private var sshKeyBackScreen: Screen = Screen.Setup
+
+    /** Generates/refreshes the screenlock SSH key and shows its public
+     *  key QR (scanned by the offlinepass extension). */
+    private fun showSshKeyQr(back: Screen) {
+        lifecycleScope.launch {
+            try {
+                val info = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.offlinepass.app.crypto.SshKeyManager().ensureKeyPair()
+                }
+                // The QR enrolls the SCREENLOCK key — make this mode ACTIVE
+                // (the YubiKey dialog switches it the other way; last
+                // enrollment wins).
+                VaultSession.setSshSyncMode(VaultSession.SSH_SYNC_SCREENLOCK)
+                val payload = org.json.JSONObject()
+                    .put("type", "offlinepass-ssh-pubkey")
+                    .put("sshKey", info.openSshLine)
+                    .put("fp", info.fingerprint)
+                    .toString()
+                sshKeyBackScreen = back
+                screen = Screen.QrftPayload(payload)
+            } catch (e: Exception) {
+                status = "SSH key enrollment failed: ${e.message}"
+            }
+        }
+    }
+
+    /** Persists the YubiKey SSH enrollment (works pre-load: prefs only). */
+    private fun enrollYubikeySsh(sshLine: String, subkeyId: String) {
+        val keyId = subkeyId.toLongOrNull(16)
+        if (keyId == null) {
+            status = "Auth subkey id must be 16 hex digits."
+        } else {
+            VaultSession.setYubikeySsh(sshLine, subkeyId)
+            status = "YubiKey SSH enrolled — Load from GitHub now authenticates " +
+                "with the YubiKey touch."
+        }
+    }
+
     /** Confirmation dialog for the first push to an empty remote. */
     private suspend fun firstPushConfirm(): Boolean =
         suspendCancellableCoroutine { cont ->
@@ -557,6 +598,18 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     if (pat.isNotBlank()) VaultSession.savePat(pat)
                     status = ""
                     lifecycleScope.launch {
+                        // An SSH load's clone handshake signs with the
+                        // screenlock key — open its 60s validity window with
+                        // the screen-lock interaction first. (The YubiKey
+                        // mode's gate is the touch inside OpenKeyChain.)
+                        if (com.offlinepass.app.vault.VaultGitClient().isSshRemote(remote) &&
+                            VaultSession.sshSyncMode() == VaultSession.SSH_SYNC_SCREENLOCK
+                        ) {
+                            if (!biometricGate()) {
+                                status = "Screen lock declined — load aborted."
+                                return@launch
+                            }
+                        }
                         val open = VaultSession.gitOpenOnly()  // explicit network step
                         if (open is VaultSession.Result.Error) {
                             // A failed load must NOT adopt a phantom empty
@@ -574,7 +627,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             android.widget.Toast.LENGTH_SHORT).show()
                     }
                 },
-                onLoadUsb = { usbRestoreLauncher.launch(arrayOf("application/octet-stream")) }
+                onLoadUsb = { usbRestoreLauncher.launch(arrayOf("application/octet-stream")) },
+                onShowSshKey = { showSshKeyQr(Screen.SetupChoice) },
+                onEnrollYubikeySsh = { line, subkeyId -> enrollYubikeySsh(line, subkeyId) }
             )
             VaultSession.State.Locked -> UnlockScreen(
                 status = status,
@@ -693,7 +748,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 }
                 is Screen.QrftPayload -> QrftScreen(
                     payload = s.payload,
-                    onBack = { screen = Screen.Setup }
+                    onBack = { screen = sshKeyBackScreen }
                 )
                 Screen.ExportPick -> ExportPickScreen(
                     items = unlockedItems(),
@@ -806,37 +861,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         VaultSession.clearYubikeySsh()
                         status = "YubiKey SSH enrollment removed (screenlock mode active)."
                     },
-                    onShowSshKey = {
-                        lifecycleScope.launch {
-                            try {
-                                val info = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                    com.offlinepass.app.crypto.SshKeyManager().ensureKeyPair()
-                                }
-                                // The QR enrolls the SCREENLOCK key — make this
-                                // mode ACTIVE (the YubiKey dialog switches it
-                                // the other way; last enrollment wins).
-                                VaultSession.setSshSyncMode(VaultSession.SSH_SYNC_SCREENLOCK)
-                                val payload = org.json.JSONObject()
-                                    .put("type", "offlinepass-ssh-pubkey")
-                                    .put("sshKey", info.openSshLine)
-                                    .put("fp", info.fingerprint)
-                                    .toString()
-                                screen = Screen.QrftPayload(payload)
-                            } catch (e: Exception) {
-                                status = "SSH key enrollment failed: ${e.message}"
-                            }
-                        }
-                    },
-                    onEnrollYubikeySsh = { sshLine, subkeyId ->
-                        val keyId = subkeyId.toLongOrNull(16)
-                        if (keyId == null) {
-                            status = "Auth subkey id must be 16 hex digits."
-                        } else {
-                            VaultSession.setYubikeySsh(sshLine, subkeyId)
-                            status = "YubiKey SSH enrolled — connect the git@ remote and sync " +
-                                "(each sync asks for the YubiKey touch)."
-                        }
-                    },
+                    onShowSshKey = { showSshKeyQr(Screen.Setup) },
+                    onEnrollYubikeySsh = { line, subkeyId -> enrollYubikeySsh(line, subkeyId) },
                     pairedDevices = VaultSession.pairedDevices(),
                     onShowDeviceQr = { device ->
                         // R2: the vault record IS the pairing backup — show
