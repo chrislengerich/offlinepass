@@ -158,6 +158,61 @@ class VaultSaveTransactionTest {
         assertEquals(2L, VaultSession.currentRev())
     }
 
+    // -- screenlock commit signing (exclusive of the OKK signing path) -------
+
+    @Test
+    fun screenlockModeSignsCommitWithoutOkkInteraction() = runBlocking {
+        // Screenlock signing is EXCLUSIVE of the OpenKeyChain signing path:
+        // no signingKeyId is set here, and the save must not require any
+        // OpenKeyChain interaction. The fake hook stands in for the
+        // BiometricPrompt + Keystore flow.
+        VaultSession.configure(null, listOf("user@example.com"))
+        VaultSession.setRecipientKeyIds(listOf(FakeOpenPgp.KEY_ID))
+        seedRepo("PREVIOUS".toByteArray())
+        VaultSession.setCommitSigningMode(VaultSession.SIGNING_SCREENLOCK)
+        var hookCalls = 0
+        VaultSession.keystoreSignerHook = { bytes ->
+            hookCalls++
+            assertTrue("hook receives the commit payload bytes", bytes.isNotEmpty())
+            "FAKE-ECDSA".toByteArray()
+        }
+
+        val r = VaultSession.save(listOf(item("Signed")))
+
+        assertTrue("expected Success, got $r", r is VaultSession.Result.Success)
+        assertEquals(1, hookCalls)
+        assertNotNull("commit landed", headId())
+        // The commit object carries the custom armor block (the embedded
+        // screenlock signature over the commit payload).
+        Git.open(gitRoot()).use { git ->
+            val head = git.repository.exactRef(org.eclipse.jgit.lib.Constants.HEAD)!!
+            val text = String(git.repository.open(head.objectId).getBytes())
+            assertTrue(
+                "commit must embed the screenlock signature armor",
+                text.contains("BEGIN OFFLINEPASS SIGNATURE"))
+            // The armor carries the base64 of the (fake) signature bytes.
+            assertTrue(
+                "armor must contain the base64 signature",
+                text.contains("RkFLRS1FQ0RTQQ=="))
+        }
+    }
+
+    @Test
+    fun screenlockDeclinedRollsBack() = runBlocking {
+        VaultSession.configure(null, listOf("user@example.com"))
+        VaultSession.setRecipientKeyIds(listOf(FakeOpenPgp.KEY_ID))
+        val seedHead = seedRepo("PREVIOUS".toByteArray())
+        VaultSession.setCommitSigningMode(VaultSession.SIGNING_SCREENLOCK)
+        VaultSession.keystoreSignerHook = { null } // user declines the screen lock
+
+        val r = VaultSession.save(listOf(item("Declined")))
+
+        assertTrue("expected Error, got $r", r is VaultSession.Result.Error)
+        assertEquals("PREVIOUS", vaultFile().readText())
+        assertEquals("HEAD must not move", seedHead, headId())
+        assertFalse(VaultSession.state is VaultSession.State.Unlocked)
+    }
+
     // -- pre-commit failure: rollback ----------------------------------------
 
     @Test

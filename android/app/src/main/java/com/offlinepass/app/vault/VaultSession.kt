@@ -70,6 +70,25 @@ object VaultSession {
      */
     internal var openPgpClientFactory: (Context) -> OpenPgpOps = { OpenPgpClient(it) }
 
+    /** Commit signing modes: OpenKeyChain's signing key (default — software
+     *  keys or security keys behind the OKK interaction) or the SCREENLOCK
+     *  keystore key (per-device, per-operation screen-lock auth, no OKK
+     *  interaction at all). */
+    const val SIGNING_OPENKEYCHAIN = "openkeychain"
+    const val SIGNING_SCREENLOCK = "screenlock"
+
+    fun commitSigningMode(): String =
+        prefs().getString("commitSigningMode", null) ?: SIGNING_OPENKEYCHAIN
+
+    fun setCommitSigningMode(mode: String) {
+        prefs().edit().putString("commitSigningMode", mode).apply()
+    }
+
+    /** UI hook for the screenlock signature: receives the exact bytes to
+     *  sign, runs the BiometricPrompt interaction, returns the signature
+     *  (or null on decline). Set by MainActivity; hops to Main itself. */
+    var keystoreSignerHook: (suspend (ByteArray) -> ByteArray?)? = null
+
     /** Human-readable sync state, shown above the Sync-now button. */
     var syncStatus by mutableStateOf<String?>(null)
         private set
@@ -428,42 +447,68 @@ object VaultSession {
                     val keysOk = materializeRecipientKeys(client, gitRoot(), keyIds)
                     if (!keysOk) syncStatus = "Some recipient key files missing (retried next save)"
 
-                    // Sign key: the stored signer, or — when none was
-                    // picked yet — OpenKeyChain's own picker. Never default
-                    // to a recipient key id: lookupKeyIds returns ENCRYPTION
-                    // subkeys, which cannot sign.
-                    var signId = signingKeyId()
-                    if (signId == null) {
-                        var reqData: Intent? = null
-                        var pickGuard = 0
-                        while (signId == null && pickGuard++ < 3) {
-                            when (val sk = client.pickSignKey(reqData)) {
-                                is OpenPgpClient.SignKey.Picked -> {
-                                    prefs().edit()
-                                        .putString("signingKeyId", sk.keyId.toString())
-                                        .putString("signingKeyUserId", sk.userId)
-                                        .apply()
-                                    signId = sk.keyId
-                                }
-                                is OpenPgpClient.SignKey.NeedsInteraction ->
-                                    reqData = interactionHandler?.invoke(sk.pendingIntent)
-                                        ?: return@withContext Result.Error("Sign-key picker needs the UI layer")
-                                OpenPgpClient.SignKey.Error ->
-                                    return@withContext Result.Error("No signing key available — pick one in Setup.")
-                            }
+                    // Commit signer: OpenKeyChain's signing key (default) OR
+                    // the screenlock keystore key — exclusive paths. In
+                    // screenlock mode there is NO OpenKeyChain signing
+                    // interaction: the BiometricPrompt gate in the hook is
+                    // the entire story.
+                    val signer: org.eclipse.jgit.lib.Signer?
+                    if (commitSigningMode() == SIGNING_SCREENLOCK) {
+                        // Publish/re-publish the enrolled public key so any
+                        // client can verify revisions (guarded: device-only
+                        // op; skipped on JVM tests).
+                        runCatching {
+                            val pub = File(gitRoot(), "keys/" +
+                                com.offlinepass.app.crypto.KeystoreSigner.PUB_FILE_NAME)
+                            pub.parentFile?.mkdirs()
+                            pub.writeText(
+                                com.offlinepass.app.crypto.KeystoreSigner.publicKeyPem())
+                        }.onFailure {
+                            Log.w(TAG, "keystore pubkey materialization failed: ${it.message}")
                         }
-                        if (signId == null) return@withContext Result.Error("Sign-key selection aborted after retries")
-                    }
-                    val signer = OpenKeyChainSigner(client, signId)
-                    // Pre-flight the commit signature: OpenKeyChain may need an
-                    // unlock prompt (or the key may be unavailable entirely).
-                    // Surface that as Interaction HERE — the signer inside JGit
-                    // can't interact, and a hard failure there aborts the commit
-                    // with a bare "commit failed".
-                    busy = "Checking sign key…"
-                    ensureSignKeyReady(signId, client)?.let { msg ->
-                        return@withContext rollback(msg +
-                            " — nothing saved. Check the key in OpenKeyChain or pick another signer in Setup.")
+                        val hook = keystoreSignerHook
+                            ?: return@withContext rollback(
+                                "Screenlock signer unavailable (UI layer absent) — nothing saved.")
+                        signer = com.offlinepass.app.crypto.KeystoreCommitSigner(hook)
+                    } else {
+                        // Sign key: the stored signer, or — when none was
+                        // picked yet — OpenKeyChain's own picker. Never default
+                        // to a recipient key id: lookupKeyIds returns ENCRYPTION
+                        // subkeys, which cannot sign.
+                        var signId = signingKeyId()
+                        if (signId == null) {
+                            var reqData: Intent? = null
+                            var pickGuard = 0
+                            while (signId == null && pickGuard++ < 3) {
+                                when (val sk = client.pickSignKey(reqData)) {
+                                    is OpenPgpClient.SignKey.Picked -> {
+                                        prefs().edit()
+                                            .putString("signingKeyId", sk.keyId.toString())
+                                            .putString("signingKeyUserId", sk.userId)
+                                            .apply()
+                                        signId = sk.keyId
+                                    }
+                                    is OpenPgpClient.SignKey.NeedsInteraction ->
+                                        reqData = interactionHandler?.invoke(sk.pendingIntent)
+                                            ?: return@withContext Result.Error("Sign-key picker needs the UI layer")
+                                    OpenPgpClient.SignKey.Error ->
+                                        return@withContext Result.Error("No signing key available — pick one in Setup.")
+                                }
+                            }
+                            if (signId == null) return@withContext Result.Error("Sign-key selection aborted after retries")
+                        }
+                        val okkSigner = OpenKeyChainSigner(client, signId)
+                        // Pre-flight the commit signature: OpenKeyChain may need
+                        // an unlock prompt (or the key may be unavailable
+                        // entirely). Surface that as Interaction HERE — the
+                        // signer inside JGit can't interact, and a hard failure
+                        // there aborts the commit with a bare "commit failed".
+                        busy = "Checking sign key…"
+                        ensureSignKeyReady(signId, client)?.let { msg ->
+                            return@withContext rollback(msg +
+                                " — nothing saved. Check the key in OpenKeyChain or pick another signer in Setup.")
+                        }
+                        signer = okkSigner
                     }
                     val git = VaultGitClient()
                     if (!File(gitRoot(), ".git").exists()) {

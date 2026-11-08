@@ -297,7 +297,62 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 awaitInteraction()
             }
         }
+        // Screenlock commit signer (when enrolled): the Keystore op gated by
+        // the device's screen lock. Runs on Main (BiometricPrompt needs the
+        // UI thread); save() invokes it from Dispatchers.IO.
+        VaultSession.keystoreSignerHook = { bytes ->
+            withContext(kotlinx.coroutines.Dispatchers.Main) { screenLockSignFlow(bytes) }
+        }
     }
+
+    /** Screen-lock signature flow: try to sign immediately (covers the
+     *  no-auth-enforced case), otherwise present BiometricPrompt with the
+     *  Signature as a CryptoObject — the unlock is bound to THIS exact
+     *  operation. Returns null on decline/failure (save rolls back). */
+    private suspend fun screenLockSignFlow(bytes: ByteArray): ByteArray? =
+        suspendCancellableCoroutine { cont ->
+            try {
+                val signature = com.offlinepass.app.crypto.KeystoreSigner.prepare(bytes)
+                // Fast path: if no auth is enforced on the key, sign() completes.
+                runCatching { com.offlinepass.app.crypto.KeystoreSigner.finish(signature) }
+                    .getOrNull()?.let { cont.resume(it); return@suspendCancellableCoroutine }
+                // Platform BiometricPrompt (the app already uses it for the
+                // gate): CryptoObject binds the screen-lock interaction to
+                // THIS exact Keystore signature operation.
+                val builder = android.hardware.biometrics.BiometricPrompt.Builder(this)
+                    .setTitle("Sign vault change")
+                    .setSubtitle("Screen-lock signature for this revision")
+                if (android.os.Build.VERSION.SDK_INT >= 30) {
+                    builder.setAllowedAuthenticators(
+                        android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG
+                            or android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+                } else {
+                    builder.setDeviceCredentialAllowed(true)
+                }
+                val cancel = android.os.CancellationSignal()
+                builder.build().authenticate(
+                    android.hardware.biometrics.BiometricPrompt.CryptoObject(signature),
+                    cancel,
+                    androidx.core.content.ContextCompat.getMainExecutor(this),
+                    object : android.hardware.biometrics.BiometricPrompt.AuthenticationCallback() {
+                        override fun onAuthenticationSucceeded(
+                            result: android.hardware.biometrics.BiometricPrompt.AuthenticationResult
+                        ) {
+                            cont.resume(
+                                runCatching {
+                                    com.offlinepass.app.crypto.KeystoreSigner.finish(signature)
+                                }.getOrNull())
+                        }
+                        override fun onAuthenticationError(code: Int, errString: CharSequence) {
+                            Log.w(TAG, "screenlock signature declined: $code $errString")
+                            cont.resume(null)
+                        }
+                    })
+            } catch (e: Exception) {
+                Log.w(TAG, "screenlock signature failed: ${e.message}")
+                cont.resume(null)
+            }
+        }
 
     override fun onDestroy() {
         super.onDestroy()
@@ -686,7 +741,27 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             }
                         }
                     },
-                    onClearSigner = { VaultSession.clearSigningKey(); status = "Signer reset to default." }
+                    onClearSigner = { VaultSession.clearSigningKey(); status = "Signer reset to default." },
+                    deviceCredentialReady = VaultSession.isDeviceCredentialReady() == 0,
+                    onEnrollScreenlock = {
+                        lifecycleScope.launch {
+                            status = runCatching {
+                                com.offlinepass.app.crypto.KeystoreSigner.ensureKey()
+                            }.fold(
+                                onSuccess = {
+                                    VaultSession.setCommitSigningMode(VaultSession.SIGNING_SCREENLOCK)
+                                    "Screenlock signing enrolled (fp " +
+                                        com.offlinepass.app.crypto.KeystoreSigner.publicKeyFingerprint() +
+                                        ") — pubkey publishes on the next save."
+                                },
+                                onFailure = { "Keystore signer unavailable: ${it.message}" }
+                            )
+                        }
+                    },
+                    onUseOpenKeyChain = {
+                        VaultSession.setCommitSigningMode(VaultSession.SIGNING_OPENKEYCHAIN)
+                        status = "Commit signing: OpenKeyChain."
+                    }
                 )
             }
         }

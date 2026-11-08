@@ -153,7 +153,10 @@ cd android && ./gradlew :app:assembleDebug
   tombstoned delete; entries carry a last-modified timestamp (shown in the
   list and detail views, with an optional secondary sort "most recently
   modified first", default on); every save re-encrypts, commits (signed
-  via OpenKeyChain), and pushes.
+  via OpenKeyChain — or, when **screenlock signing** is enrolled in Setup,
+  via an AndroidKeystore key gated by the device screen lock, with its
+  public key published to `keys/keystore-signer.pub` for independent
+  verification), and pushes.
 - **QRFT transfer (phone ↔ phone)** — Settings → "Export as QRFT (pick
   entries)" encodes a JSON array of the selected entries into the looping
   QR sender; "Import from QRFT (scan)" opens the in-app camera scanner

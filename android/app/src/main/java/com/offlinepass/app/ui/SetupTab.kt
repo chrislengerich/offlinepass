@@ -33,6 +33,9 @@ fun SetupTabScreen(
     signerLabel: String,
     onPickSigner: () -> Unit,
     onClearSigner: () -> Unit,
+    deviceCredentialReady: Boolean = true,
+    onEnrollScreenlock: () -> Unit = {},
+    onUseOpenKeyChain: () -> Unit = {},
     screenLockOn: Boolean,
     onScreenLockToggle: (Boolean) -> Unit,
     onLock: () -> Unit,
@@ -165,12 +168,36 @@ fun SetupTabScreen(
         }
         HorizontalDivider()
         Text("Commit signer", style = MaterialTheme.typography.titleSmall)
-        Text("Signer: $signerLabel", style = MaterialTheme.typography.bodySmall)
-        Button(onClick = onPickSigner, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Pick signing key (OpenKeyChain)")
-        }
-        TextButton(onClick = onClearSigner, enabled = VaultSession.signingKeyId() != null) {
-            Text("Use default (first recipient)")
+        if (VaultSession.commitSigningMode() == VaultSession.SIGNING_SCREENLOCK) {
+            // Screenlock mode: OpenKeyChain signing is not used at all.
+            Text(
+                "Screen lock (keystore key " +
+                    com.offlinepass.app.crypto.KeystoreSigner.publicKeyFingerprint() + ") — " +
+                    "every save prompts for the screen lock; OpenKeyChain is not involved.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Button(
+                onClick = onUseOpenKeyChain,
+                enabled = busy == null,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Switch to OpenKeyChain signing") }
+        } else {
+            Text("Signer: $signerLabel", style = MaterialTheme.typography.bodySmall)
+            Button(onClick = onPickSigner, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+                Text("Pick signing key (OpenKeyChain)")
+            }
+            TextButton(onClick = onClearSigner, enabled = VaultSession.signingKeyId() != null) {
+                Text("Use default (first recipient)")
+            }
+            Button(
+                onClick = onEnrollScreenlock,
+                enabled = busy == null && deviceCredentialReady,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Enroll screenlock signing (alternative)") }
+            if (!deviceCredentialReady) Text(
+                "Enroll a screen lock (PIN/pattern) first — the signer is gated by it.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
         HorizontalDivider()
 
