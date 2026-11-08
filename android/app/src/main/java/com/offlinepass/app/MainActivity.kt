@@ -475,11 +475,33 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     android.util.Log.i("YubiKeySsh", "picker sign succeeded, armored " + r.armored.length + " chars")
                     val keyId = com.offlinepass.app.crypto.PgpSshBridge
                         .issuingKeyId(r.armored)
-                    if (keyId != null) {
-                        VaultSession.pickedAuthSubkeyId = keyId
-                        status = "Auth subkey selected (0x%016X).".format(keyId)
-                    } else {
+                    if (keyId == null) {
                         status = "Could not read the selected key's id."
+                        return
+                    }
+                    VaultSession.pickedAuthSubkeyId = keyId
+                    // Fetch the key material and prepopulate the OpenSSH line
+                    // — no paste needed.
+                    val fetch = com.offlinepass.app.crypto.OpenPgpClient(applicationContext)
+                        .fetchPublicKeyArmored(keyId)
+                    when (fetch) {
+                        is com.offlinepass.app.crypto.OpenPgpClient.PublicKey.Success -> {
+                            val line = runCatching {
+                                com.offlinepass.app.crypto.PgpSshBridge.sshLineForKeyMaterial(
+                                    fetch.armored, keyId, "offlinepass-yubikey")
+                            }.getOrNull()
+                            if (line != null) {
+                                VaultSession.yubikeySshLineDraft = line
+                                status = "Auth subkey selected (0x%016X) — SSH line populated."
+                                    .format(keyId)
+                            } else {
+                                status = "Auth subkey selected (0x%016X) — paste the " +
+                                    "OpenSSH line (the key material could not be converted)."
+                                        .format(keyId)
+                            }
+                        }
+                        else -> status = "Auth subkey selected (0x%016X) ��� paste the " +
+                            "OpenSSH line (the public key could not be fetched).".format(keyId)
                     }
                     return
                 }

@@ -156,6 +156,10 @@ object VaultSession {
      *  enrollment dialog prepopulates its field from this). */
     var pickedAuthSubkeyId by mutableStateOf<Long?>(null)
 
+    /** The OpenSSH line built from the picked key's material (reactive —
+     *  the enrollment dialog prepopulates its field from this). */
+    var yubikeySshLineDraft by mutableStateOf<String?>(null)
+
     /** Last successful screenlock gate (for the key's validity window). */
     private var lastSshGateSuccessAt: Long = 0L
 

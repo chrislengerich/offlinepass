@@ -123,7 +123,10 @@ fun SetupTabScreen(
             )
         }
         if (showYubikey) {
-            var sshLine by remember { mutableStateOf(VaultSession.yubikeySshLine() ?: "") }
+            var sshLine by remember(VaultSession.yubikeySshLineDraft) {
+                mutableStateOf(VaultSession.yubikeySshLineDraft
+                    ?: VaultSession.yubikeySshLine() ?: "")
+            }
             var subkeyId by remember(VaultSession.pickedAuthSubkeyId) {
                 mutableStateOf(VaultSession.pickedAuthSubkeyId?.let { "%016X".format(it) }
                     ?: VaultSession.yubikeyAuthSubkeyId()?.toString() ?: "")

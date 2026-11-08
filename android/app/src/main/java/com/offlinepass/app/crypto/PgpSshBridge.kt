@@ -57,6 +57,136 @@ object PgpSshBridge {
     }
 
     /** Modulus byte-size for ssh-rsa blobs (for RSA signature padding). */
+    // -- OpenPGP key material → SSH public line -------------------------------
+
+    /** Builds the OpenSSH public-key line for [keyId] from an ARMORED
+     *  OpenPGP key (the keyring OpenKeyChain's API returns): walks the
+     *  packets, finds the public key/subkey whose v4 fingerprint's last
+     *  8 bytes equal [keyId], and converts its key material to the SSH
+     *  wire blob. Supports RSA (ssh-rsa), ECDSA nistp256, Ed25519. */
+    fun sshLineForKeyMaterial(armoredKeyring: String, keyId: Long, comment: String): String {
+        val data = dearmor(armoredKeyring)
+        var p = 0
+        while (p < data.size) {
+            val b0 = data[p].toInt() and 0xFF
+            println("WALKDBG: p=$p b0=0x" + "%02X".format(b0) + " size=" + data.size)
+            val tag: Int
+            var bodyStart: Int
+            var bodyLen: Int
+            if ((b0 and 0x80) == 0) throw PgpSshBridgeException("bad packet tag at $p")
+            if ((b0 and 0x40) != 0) { // new format
+                tag = b0 and 0x3F
+                val lb = data[p + 1].toInt() and 0xFF
+                when {
+                    lb < 192 -> { bodyLen = lb; bodyStart = p + 2 }
+                    lb in 192..223 -> {
+                        bodyLen = (((lb - 192) shl 8) or (data[p + 2].toInt() and 0xFF)) + 192
+                        bodyStart = p + 3
+                    }
+                    lb == 255 -> {
+                        bodyLen = 0; for (k in 1..4) bodyLen = (bodyLen shl 8) or (data[p + 1 + k].toInt() and 0xFF)
+                        bodyStart = p + 6
+                    }
+                    else -> throw PgpSshBridgeException("bad new-format length at $p")
+                }
+            } else { // old format
+                tag = (b0 shr 2) and 0x0F
+                val lt = b0 and 0x03
+                // The header is tag(1) + the length octets — the body starts
+                // right after (the +1 is the tag byte; +2 would skip a byte
+                // of key material and shift every fingerprint).
+                val lenSize = when (lt) { 0 -> 1; 1 -> 2; 2 -> 4; else -> throw PgpSshBridgeException("bad old-format length at $p") }
+                bodyLen = when (lt) {
+                    0 -> data[p + 1].toInt() and 0xFF
+                    1 -> ((data[p + 1].toInt() and 0xFF) shl 8) or (data[p + 2].toInt() and 0xFF)
+                    2 -> { var l = 0; for (k in 1..4) l = (l shl 8) or (data[p + 1 + k].toInt() and 0xFF); l }
+                    else -> throw PgpSshBridgeException("bad old-format length at $p")
+                }
+                bodyStart = p + 1 + lenSize
+            }
+            val body = data.copyOfRange(bodyStart, bodyStart + bodyLen)
+            if ((tag == 6 || tag == 14) && body.isNotEmpty() && (body[0].toInt() and 0xFF) == 4) {
+                // v4 public key/subkey: version(1) + creation(4) + alg(1) + MPIs
+                val alg = body[5].toInt() and 0xFF
+                // v4 fingerprint: SHA-1 over 0x99 || u16(len) || body
+                val fpInput = byteArrayOf(0x99.toByte()) +
+                    byteArrayOf(((body.size ushr 8) and 0xFF).toByte(), (body.size and 0xFF).toByte()) + body
+                val sha1 = java.security.MessageDigest.getInstance("SHA-1").digest(fpInput)
+                val pktId = (0 until 8).fold(0L) { acc, k ->
+                    (acc shl 8) or (sha1[sha1.size - 8 + k].toLong() and 0xFF)
+                }
+                println("WALK: pkt tag=$tag fp=${"%016X".format(pktId)} requested=${"%016X".format(keyId)} bodyLen=$bodyLen")
+                if (pktId == keyId) {
+                    // Parse the alg-specific MPIs starting after creation time.
+                    val mpis = parsePubkeyMpis(alg, body.copyOfRange(6, body.size))
+                    val (sshAlg, blob) = sshBlobFor(alg, mpis)
+                    return "$sshAlg ${java.util.Base64.getEncoder().encodeToString(blob)} $comment"
+                }
+            }
+            p = bodyStart + bodyLen
+        }
+        throw PgpSshBridgeException("key ${"%016X".format(keyId)} not found in the key material")
+    }
+
+    /** The alg-specific MPIs of a v4 public key/subkey body (after the
+     *  version + creation-time bytes). */
+    private fun parsePubkeyMpis(alg: Int, keyBody: ByteArray): List<ByteArray> {
+        var p = 0
+        val out = mutableListOf<ByteArray>()
+        when (alg) {
+            PK_ALG_RSA -> {
+                val (n, p2) = readMpi(keyBody, p); p = p2
+                val (e, _) = readMpi(keyBody, p)
+                out += n; out += e   // OpenPGP order: n, e
+            }
+            PK_ALG_ECDSA, PK_ALG_EDDSA -> {
+                // RFC 6637: the named-curve OID (1-octet length + bytes), then the point MPI.
+                val olen = keyBody[p].toInt() and 0xFF
+                val oid = keyBody.copyOfRange(p + 1, p + 1 + olen); p += 1 + olen
+                val (q, _) = readMpi(keyBody, p)
+                out += oid; out += q
+            }
+            else -> throw PgpSshBridgeException("unsupported pubkey algorithm $alg")
+        }
+        return out
+    }
+
+    /** The SSH wire blob from the OpenPGP key material. */
+    private fun sshBlobFor(alg: Int, mpis: List<ByteArray>): Pair<String, ByteArray> = when (alg) {
+        PK_ALG_RSA -> "ssh-rsa" to (sshString("ssh-rsa".toByteArray()) + sshString(mpis[1]) + sshString(mpis[0]))
+        PK_ALG_ECDSA -> {
+            val curve = curveNameForOid(mpis[0])
+            val q = mpis[1]
+            val name = "ecdsa-sha2-" + curve
+            name to (sshString(name.toByteArray()) + sshString(curve.toByteArray()) + sshString(q))
+        }
+        PK_ALG_EDDSA -> {
+            // The OpenPGP point MPI: 0x04||x||y → the SSH key data is the raw x||y.
+            val q = mpis[1]
+            val raw32 = q.copyOfRange(1, q.size)  // strip the 0x04 prefix (uncompressed point)
+            "ssh-ed25519" to (sshString("ssh-ed25519".toByteArray()) + sshString(raw32))
+        }
+        else -> throw PgpSshBridgeException("unsupported pubkey algorithm $alg")
+    }
+
+    private fun curveNameForOid(oid: ByteArray): String = when {
+        oid.contentEquals(byteArrayOf(0x2A.toByte(), 0x86.toByte(), 0x48.toByte(), 0xCE.toByte(), 0x3D.toByte(), 0x03.toByte(), 0x01.toByte(), 0x07.toByte())) -> "nistp256"
+        oid.contentEquals(byteArrayOf(0x2B.toByte(), 0x81.toByte(), 0x04.toByte(), 0x00.toByte(), 0x22.toByte())) -> "nistp384"
+        oid.contentEquals(byteArrayOf(0x2B.toByte(), 0x81.toByte(), 0x04.toByte(), 0x00.toByte(), 0x23.toByte())) -> "nistp521"
+        else -> throw PgpSshBridgeException("unsupported curve OID")
+    }
+
+    /** Generic dearmor: strips the ASCII armor headers/footers, decodes
+     *  the base64 body. */
+    private fun dearmor(armored: String): ByteArray {
+        val b64 = armored.lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("-") && !it.contains(":") }
+            .joinToString("")
+        return runCatching { Base64.getDecoder().decode(b64) }
+            .getOrElse { throw PgpSshBridgeException("armor is not valid base64") }
+    }
+
     fun rsaModulusSize(blob: ByteArray): Int {
         var p = readU32String(blob, 0).second          // skip algorithm string
         p = readU32String(blob, p).second             // skip e
