@@ -485,7 +485,18 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 }
                 is com.offlinepass.app.crypto.OpenPgpClient.SignDetached.UserInteraction -> {
                     launchInteraction(r.pendingIntent)
-                    reqData = awaitInteraction()
+                    val data = awaitInteraction()
+                    // For a KEYLESS sign request, OpenKeyChain's picker
+                    // returns the picked key's id in the interaction result
+                    // itself (the same extra pickSignKey reads).
+                    val picked = data?.getLongExtra(
+                        com.offlinepass.app.crypto.OpenPgpClient.EXTRA_SIGN_KEY_ID, -1L) ?: -1L
+                    if (picked != -1L) {
+                        VaultSession.pickedAuthSubkeyId = picked
+                        status = "Auth subkey selected (0x%016X).".format(picked)
+                        return
+                    }
+                    reqData = data // no id in the reply — continue the sign loop
                 }
                 is com.offlinepass.app.crypto.OpenPgpClient.SignDetached.Error -> {
                     status = "Key selection failed: ${r.message}"
