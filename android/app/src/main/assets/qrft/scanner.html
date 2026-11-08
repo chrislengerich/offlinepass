@@ -33,7 +33,54 @@
         var chunks = {};          // index -> Uint8Array
         var total = -1;           // from the metadata frame
         var name = "";
+        var size;                 // declared payload size (may be absent)
+        var rawBytes = 0;
         var done = false;
+
+        // Resource caps, ported verbatim from ~/3p/airgap-qr-offline's
+        // scanner: a hostile QR must not exhaust memory (decompression
+        // bomb) or steer the transfer with a bogus metadata frame.
+        var MAX_CHUNKS = 1000000;
+        var MAX_SIZE = 3 * 1024 * 1024 * 1024;
+        var MAX_INFLATED = 3 * 1024 * 1024 * 1024; // cap when no size declared
+        var INFLATE_SLACK = 1024 * 1024;           // slack over a declared size
+
+        var valid_meta = function (m) {
+          if (!m || typeof m !== "object" || Array.isArray(m)) return false;
+          if (typeof m.name !== "string" || m.name.length > 5000) return false;
+          if (!Number.isInteger(m.chunks) || m.chunks < 1 || m.chunks > MAX_CHUNKS) return false;
+          if (m.size !== undefined && m.size !== null) {
+            if (!Number.isInteger(m.size) || m.size < 0 || m.size > MAX_SIZE) return false;
+          }
+          return true;
+        };
+
+        var safe_inflate = function (data, max_out) {
+          var inflator = new pako.Inflate();
+          var parts = [], outTotal = 0;
+          inflator.onData = function (chunk) {
+            parts.push(chunk);
+            outTotal += chunk.length;
+            if (outTotal > max_out) {
+              throw new Error("decompressed data exceeds " + max_out + " bytes");
+            }
+          };
+          var STEP = 1 << 16;
+          for (var i = 0; i < data.length; i += STEP) {
+            inflator.push(data.subarray(i, Math.min(i + STEP, data.length)));
+            if (inflator.err) {
+              throw new Error(inflator.msg || "inflate failed");
+            }
+            if (inflator.ended) break;
+          }
+          if (!inflator.ended) {
+            throw new Error("truncated deflate stream");
+          }
+          var bytes = new Uint8Array(outTotal);
+          var off = 0;
+          for (var p = 0; p < parts.length; p++) { bytes.set(parts[p], off); off += parts[p].length; }
+          return bytes;
+        };
 
         var b64ToBytes = function (b64) {
           // The generator encodes chunks as UTF-8 of the Latin-1 byte string
@@ -56,14 +103,14 @@
         var finish = function () {
           done = true;
           stopCamera();
-          var size = 0;
-          for (var i = 0; i < total; i++) size += chunks[i].length;
-          var raw = new Uint8Array(size);
+          var rawLen = 0;
+          for (var i = 0; i < total; i++) rawLen += chunks[i].length;
+          var raw = new Uint8Array(rawLen);
           var off = 0;
           for (var i = 0; i < total; i++) { raw.set(chunks[i], off); off += chunks[i].length; }
           var bytes;
           try {
-            bytes = pako.ungzip(raw);
+            bytes = safe_inflate(raw, size !== undefined ? size + INFLATE_SLACK : MAX_INFLATED);
           } catch (e) {
             msg.textContent = "Corrupt transfer: " + e.message;
             return;
@@ -86,11 +133,14 @@
           if (data.charAt(0) === "{") {
             try {
               var m = JSON.parse(data);
-              if (typeof m.chunks === "number") {
+              if (total < 0 && valid_meta(m)) {
                 total = m.chunks;
                 name = String(m.name || "payload");
+                size = m.size;
                 msg.textContent = "Receiving \"" + name + "\"";
                 progress.textContent = "0 / " + total + " chunks";
+              } else if (total < 0 && !valid_meta(m)) {
+                msg.textContent = "Invalid transfer metadata — ignoring.";
               }
             } catch (e) {}
             return;
@@ -101,6 +151,14 @@
           if (isNaN(idx) || idx < 0 || idx >= total) return;
           if (chunks[idx] === undefined) {
             chunks[idx] = b64ToBytes(data.slice(ci + 1));
+            rawBytes += chunks[idx].length;
+            var cap = Math.min((size !== undefined ? size : 0) + INFLATE_SLACK, MAX_INFLATED);
+            if (rawBytes > cap) {
+              msg.textContent = "Transfer exceeds size cap — aborted.";
+              done = true;
+              stopCamera();
+              return;
+            }
             var got = Object.keys(chunks).length;
             progress.textContent = got + " / " + total + " chunks";
             if (got === total) finish();

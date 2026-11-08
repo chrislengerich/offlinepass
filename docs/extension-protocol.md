@@ -118,6 +118,14 @@ and chunked by the QRFT layer like any other payload):
   inversion corrupts every byte ≥ 0x80 — i.e. every gzip stream. (The
   vendored Android `scanner.html` was missing this step and has been fixed
   on this branch.)
+- **Resource caps (both receivers, ported from `~/3p/airgap-qr-offline`)**:
+  `valid_meta` rejects metadata frames with junk (`chunks` outside
+  1..1,000,000, non-integer or oversized `size` (>3 GiB), names > 5000
+  chars), and `safe_inflate` streams the gzip in 64 KiB slices, aborting the
+  moment output exceeds `declared size + 1 MiB` (or 3 GiB when no size is
+  declared). A hostile QR therefore cannot exhaust memory (decompression
+  bomb) or steer the transfer with a spoofed metadata frame; the first valid
+  metadata frame wins and later ones are ignored.
 
 ## 5. User flows
 

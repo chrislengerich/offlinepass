@@ -37,7 +37,20 @@ function scanLoop() {
   const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
   if (code && code.data) {
+    if (reassembler.error) {
+      // Hostile/broken transfer: stop scanning, show why (H3).
+      done = true;
+      stopCamera();
+      msgEl.textContent = "Bad transfer: " + reassembler.error;
+      return;
+    }
     const res = reassembler.push(code.data);
+    if (reassembler.error) {
+      done = true;
+      stopCamera();
+      msgEl.textContent = "Bad transfer: " + reassembler.error;
+      return;
+    }
     progressEl.textContent = reassembler.got + " / " + reassembler.total + " chunks";
     if (res) handlePayload(res.name, res.text);
   }
@@ -93,6 +106,7 @@ function parseProtonItems(obj) {
         username: d.content.itemUsername || d.content.itemEmail || "",
         password: d.content.password || "",
         totpUri: d.content.totpUri || "",
+        urls: (d.content.urls || []).filter(Boolean),
       });
     }
   };
@@ -167,16 +181,82 @@ async function offerRestore(device) {
 
 // ---- fill UI ---------------------------------------------------------------
 
+// H2: the fill target is the tab captured when the popup opened. Show its
+// origin before any fill and warn when an entry's urls[] don't match —
+// protects against a tab navigating (or being swapped) between popup open
+// and the Fill click.
+let targetInfo = null; // { origin, url } | null
+let targetGone = false;
+let targetBanner = null;
+
+function originOf(url) {
+  try { return new URL(url).origin; } catch (e) { return null; }
+}
+
+function entryMatchesTarget(item) {
+  if (!targetInfo || !targetInfo.origin) return true; // unknown — no signal
+  if (!item.urls || !item.urls.length) return true;   // nothing to compare
+  return item.urls.some((u) => originOf(u) === targetInfo.origin);
+}
+
+function renderTargetBanner() {
+  if (!targetBanner) return;
+  targetBanner.textContent = targetGone
+    ? "⚠ Target tab is gone — reopen the extension on the tab you want to fill."
+    : targetInfo
+      ? "Will fill into: " + targetInfo.origin
+      : "No target tab captured (open via the toolbar popup).";
+  targetBanner.style.color = targetGone ? "#ff7f7f" : "#9aa3b2";
+}
+
+function refreshTarget() {
+  if (targetTabId == null) return Promise.resolve();
+  return chrome.tabs.get(targetTabId).then((tab) => {
+    targetGone = false;
+    targetInfo = { origin: originOf(tab.url || ""), url: tab.url || "" };
+    renderTargetBanner();
+    document.querySelectorAll(".entry .urlwarn").forEach((el) => {
+      const item = entries[Number(el.dataset.idx)];
+      if (item) updateUrlWarning(el, Number(el.dataset.idx));
+    });
+  }).catch(() => {
+    targetGone = true;
+    targetInfo = null;
+    renderTargetBanner();
+  });
+}
+
+function updateUrlWarning(warnEl, idx) {
+  const item = entries[idx];
+  if (!item) return;
+  if (!entryMatchesTarget(item)) {
+    warnEl.textContent = "⚠ This entry lists " + item.urls.join(", ") +
+      " — the target tab is " + (targetInfo ? targetInfo.origin : "unknown") + ". Check before filling.";
+    warnEl.style.display = "block";
+  } else {
+    warnEl.style.display = "none";
+  }
+}
+
 function showEntries(items) {
   entries = items;
   entriesEl.textContent = "";
   video.remove();
   progressEl.textContent = "";
   if (stopTotp) stopTotp();
+  targetBanner = document.createElement("div");
+  targetBanner.className = "kv";
+  entriesEl.append(targetBanner);
+  renderTargetBanner();
+  refreshTarget();
   items.forEach((item, idx) => {
     const box = document.createElement("div");
     box.className = "entry";
     const h = document.createElement("h3"); h.textContent = item.name; box.append(h);
+    const warn = document.createElement("div"); warn.className = "kv urlwarn";
+    warn.dataset.idx = String(idx);
+    warn.style.color = "#ffd75e"; warn.style.display = "none";
+    box.append(warn);
     const u = document.createElement("div"); u.className = "kv";
     u.textContent = "username: "; const uv = document.createElement("span"); uv.className = "v";
     uv.textContent = item.username || "(none)"; u.append(uv); box.append(u);
@@ -229,8 +309,17 @@ function showEntries(items) {
 async function fillTab(item) {
   fillMsg.textContent = "";
   if (targetTabId == null) { fillMsg.textContent = "No target tab (open via the toolbar popup)."; return; }
+  let tab;
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["fill.js"] });
+    tab = await chrome.tabs.get(targetTabId); // re-check at click time (H2)
+  } catch (e) {
+    fillMsg.textContent = "Target tab is gone — reopen the extension on the tab you want to fill.";
+    return;
+  }
+  targetInfo = { origin: originOf(tab.url || ""), url: tab.url || "" };
+  renderTargetBanner();
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: targetTabId }, files: ["fill.js"] });
     const res = await chrome.tabs.sendMessage(targetTabId, {
       type: "linuxpass-fill", username: item.username, password: item.password,
     });

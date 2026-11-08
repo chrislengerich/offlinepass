@@ -9,11 +9,21 @@
  * The chunk encoding has a quirk we MUST match (upstream encode_data):
  * the raw bytes are turned into a Latin-1 string, then UTF-8-encoded, then
  * base64'd. Decoding inverts that: base64 -> UTF-8 decode -> char codes.
+ *
+ * Resource caps (constants, valid_meta, safe_inflate) are ported verbatim
+ * from ~/3p/airgap-qr-offline's scanner so a hostile QR cannot exhaust
+ * memory (decompression bomb) or steer the transfer with a bogus metadata
+ * frame.
  */
 window.LpQrft = (function () {
   "use strict";
 
   const CHUNK_SIZE = 250;
+  // --- upstream airgap-qr-offline caps (do not diverge) ---
+  const MAX_CHUNKS = 1000000;
+  const MAX_SIZE = 3 * 1024 * 1024 * 1024;
+  const MAX_INFLATED = 3 * 1024 * 1024 * 1024; // cap when no size is declared
+  const INFLATE_SLACK = 1024 * 1024;           // slack over a declared size
 
   function b64ToBytes(b64) {
     const bin = atob(b64);
@@ -49,23 +59,77 @@ window.LpQrft = (function () {
     return index + "," + btoa(String.fromCharCode.apply(null, utf8));
   }
 
-  /** Feed camera frames here; resolves when the transfer completes. */
+  /** Upstream valid_meta: reject bogus metadata frames before they steer
+   *  the transfer (chunk flood, size lie, junk name). */
+  function validMeta(m) {
+    if (!m || typeof m !== "object" || Array.isArray(m)) return false;
+    if (typeof m.name !== "string" || m.name.length > 5000) return false;
+    if (!Number.isInteger(m.chunks) || m.chunks < 1 || m.chunks > MAX_CHUNKS) return false;
+    if (m.size !== undefined && m.size !== null) {
+      if (!Number.isInteger(m.size) || m.size < 0 || m.size > MAX_SIZE) return false;
+    }
+    return true;
+  }
+
+  /** Upstream safe_inflate: stream the gzip in slices and abort the moment
+   *  output exceeds maxOut — a decompression bomb never materializes. */
+  function safeInflate(data, maxOut) {
+    const inflator = new pako.Inflate();
+    const parts = [];
+    let total = 0;
+    inflator.onData = function (chunk) {
+      parts.push(chunk);
+      total += chunk.length;
+      if (total > maxOut) {
+        throw new Error("decompressed data exceeds " + maxOut + " bytes");
+      }
+    };
+    const STEP = 1 << 16;
+    for (let i = 0; i < data.length; i += STEP) {
+      inflator.push(data.subarray(i, Math.min(i + STEP, data.length)));
+      if (inflator.err) {
+        throw new Error(inflator.msg || "inflate failed");
+      }
+      if (inflator.ended) break;
+    }
+    if (!inflator.ended) {
+      throw new Error("truncated deflate stream");
+    }
+    return { parts, length: total };
+  }
+
+  /** Feed camera frames here; resolves when the transfer completes. On a
+   *  protocol violation, sets `.error` (the scanner shows it and stops) —
+   *  the internal state is reset so scanning can restart cleanly. */
   class Reassembler {
     constructor() {
       this.chunks = {};
       this.total = -1;
       this.name = "";
       this.got = 0;
+      this.size = undefined;
+      this.rawBytes = 0;
+      this.error = null;
+    }
+    fail(message) {
+      this.error = message;
+      this.chunks = {};
+      this.total = -1;
+      this.got = 0;
+      this.rawBytes = 0;
     }
     /** @returns null (keep scanning) or {name, bytes, text} */
     push(data) {
+      if (this.error) return null;
       if (data.charAt(0) === "{") {
         try {
           const m = JSON.parse(data);
-          if (typeof m.chunks === "number" && this.total < 0) {
+          if (this.total < 0 && validMeta(m)) {
             this.total = m.chunks;
             this.name = String(m.name || "payload");
             this.size = m.size;
+          } else if (this.total < 0 && !validMeta(m)) {
+            this.fail("invalid metadata frame");
           }
         } catch (e) { /* not metadata */ }
         return null;
@@ -73,6 +137,12 @@ window.LpQrft = (function () {
       if (this.total < 0) return null;
       const c = decodeChunk(data);
       if (!c || c.index >= this.total || this.chunks[c.index] !== undefined) return null;
+      const cap = (this.size != null ? this.size : 0) + INFLATE_SLACK;
+      this.rawBytes += c.data.length;
+      if (this.rawBytes > Math.min(cap, MAX_INFLATED)) {
+        this.fail("transfer exceeds size cap");
+        return null;
+      }
       this.chunks[c.index] = c.data;
       this.got++;
       if (this.got < this.total) return null;
@@ -81,7 +151,16 @@ window.LpQrft = (function () {
       const raw = new Uint8Array(size);
       let off = 0;
       for (let i = 0; i < this.total; i++) { raw.set(this.chunks[i], off); off += this.chunks[i].length; }
-      const bytes = pako.ungzip(raw);
+      let bytes;
+      try {
+        const inflated = safeInflate(raw, this.size != null ? this.size + INFLATE_SLACK : MAX_INFLATED);
+        bytes = new Uint8Array(inflated.length);
+        let b = 0;
+        for (const part of inflated.parts) { bytes.set(part, b); b += part.length; }
+      } catch (e) {
+        this.fail(String(e.message || e));
+        return null;
+      }
       return { name: this.name, bytes, text: new TextDecoder().decode(bytes) };
     }
   }
@@ -113,5 +192,7 @@ window.LpQrft = (function () {
     return () => clearInterval(timer);
   }
 
-  return { Reassembler, buildFrames, loopRender, b64ToBytes, bytesToB64, CHUNK_SIZE };
+  return { Reassembler, buildFrames, loopRender, validMeta, safeInflate,
+           b64ToBytes, bytesToB64, CHUNK_SIZE,
+           MAX_CHUNKS, MAX_SIZE, MAX_INFLATED, INFLATE_SLACK };
 })();
