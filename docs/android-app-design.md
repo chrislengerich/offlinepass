@@ -1,9 +1,9 @@
-# linuxpass Android — Design
+# offlinepass Android — Design
 
 Status: finalized — ready for spike phase
 Date: 2026-10-04
-Scope: native Android client for the linuxpass vault
-Code layout: `linuxpass/android/` — own Gradle project in this repo,
+Scope: native Android client for the offlinepass vault
+Code layout: `offlinepass/android/` — own Gradle project in this repo,
 alongside the desktop TUI.
 Related docs: `docs/work-plan.md` (execution), `docs/testing-plan.md` (QA),
 `user_flows.md` (target end-state UX, repo root — mapped in work-plan).
@@ -30,7 +30,7 @@ requires an `AutofillService`.
 
 ## 2. Background (existing system)
 
-`linuxpass` today is a Python curses TUI (`linuxpass.py`) + vault library
+`offlinepass` today is a Python curses TUI (`offlinepass.py`) + vault library
 (`passlib.py`): a Proton Pass JSON envelope encrypted with
 `gpg --encrypt --recipient` into a single file, git auto-commit on writes,
 and terminal QR display of single entries — scanned by the existing QR
@@ -78,7 +78,7 @@ native CRUD + autofill + sync.
   keys/*.public.asc          # applet public keys (for encrypt-side)
   ```
 - Desktop `passlib.py` changes required: multi-recipient env var
-  (`LINUXPASS_GPG_RECIPIENTS`), preserve/generate `rev`/`deviceId`
+  (`OFFLINEPASS_GPG_RECIPIENTS`), preserve/generate `rev`/`deviceId`
   through saves, wire the existing (unused) `git_pull()` at startup, push
   after commit over SSH.
 
@@ -102,7 +102,7 @@ native CRUD + autofill + sync.
 
 - **Copy-sources policy:** `~/3p/offlinecam` and `~/3p/airgap-qr-offline`
   are *copy sources only* — nothing from them is assumed present on any
-  device; lifted/vendored files are committed into `linuxpass/android`
+  device; lifted/vendored files are committed into `offlinepass/android`
   themselves. Commits land incrementally per task.
 - **Toolchain from `offlinecam`** (proven, reused wholesale): AGP 8.11.1,
   Kotlin 1.9.22 (+kapt), compileSdk 36 / minSdk 26 / targetSdk 34, Java
@@ -192,7 +192,7 @@ save/restore (§11) covers offline copies instead.
   reconnect.
 - **USB save/restore** (whole file, no delta machinery):
   - *Save:* SAF `CreateDocument` → writes the current encrypted working
-    file as `linuxpass-vault-rev<N>.gpg`. Ciphertext only; nothing
+    file as `offlinepass-vault-rev<N>.gpg`. Ciphertext only; nothing
     plaintext touches disk.
   - *Restore:* SAF `OpenDocument` → decrypt-check via OpenKeyChain
     (touch) → compare `rev`/`deviceId` against local state → if both
@@ -322,7 +322,7 @@ summary:
 9. Deferred to backlog (qrft bandwidth ~100s B/s): repo-bundle transfer,
    delta-exchange engine (watermarks), in-app qrft scanner. The
    union-merge code is built anyway for the online conflict path.
-10. Monorepo: app at `linuxpass/android`; toolchain + OpenKeyChain
+10. Monorepo: app at `offlinepass/android`; toolchain + OpenKeyChain
     binding lifted from `offlinecam` (copy-source policy; nothing assumed
     installed anywhere).
 11. Process: incremental commits per task/spike.

@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.linuxpass.app"
+    namespace = "com.offlinepass.app"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.linuxpass.app"
+        applicationId = "com.offlinepass.app"
         minSdk = 26
         targetSdk = 34
         versionCode = 2

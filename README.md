@@ -1,8 +1,7 @@
-# linuxpass
+# offlinepass (alpha)
 
 A low-dependency password manager in the spirit of [Proton Pass](https://proton.me/pass):
-one OpenPGP-encrypted vault file in a git repo, with two clients that
-share it —
+one OpenPGP-encrypted vault file in a git repo, with two clients.
 
 - **Linux (terminal UI)** — search, display, and manage Proton Pass login
   entries; render any entry as a QR code in the terminal.
@@ -13,20 +12,13 @@ share it —
   paste from the phone's QR and auto-fills it into the browser tab,
   gated by a security-key PIN + touch.
 
-```
-$T $                    Linux: qrencode in the terminal
-██████  ████  ██  ██        ↓ scan
-██  ██ ▄▄▄▄▄ █ █▀▄█▄█ ▄▄▄▄▄ ██  ██    Android: QRFT export in-app
-██  ██ █   █ █  ▀▄ █   █ ██  ██        ↓
-...                                    autofill in any app
-Scan with the phone → autofill
-```
+Unlike Proton Pass, however, it works perfectly well fully offline and doesn't leak your sites via remote fetches of favicons. Unlike KeePassXC, it supports security key E2E encryption natively, is modern, simple and self-contained, and has QRFT export to support fully offline password management.
 
 ## Repository layout
 
 ```
-linuxpass/
-├── linuxpass.py        # Linux: curses TUI (search, detail, QR, writes, TOTP)
+offlinepass/
+├── offlinepass.py        # Linux: curses TUI (search, detail, QR, writes, TOTP)
 ├── passlib.py          # Linux: item model, GPG storage, git sync, generators
 ├── test_data.json      # Linux: 5 sample entries for testing
 ├── test_passlib.py     # Linux: unit tests (37)
@@ -82,39 +74,39 @@ Prerequisites: Python 3.12+, `qrencode`, `gpg` (production only), `git`
 
 ```bash
 # 1. Clone the repo
-git clone <repo-url> ~/linuxpass
-cd ~/linuxpass
+git clone <repo-url> ~/offlinepass
+cd ~/offlinepass
 
 # 2. Install system dependencies
 sudo apt install qrencode gpg
 
 # 3. (Optional) Set up encrypted storage with git sync
 mkdir -p ~/product/state && cd ~/product/state && git init
-cd ~/linuxpass
+cd ~/offlinepass
 
 # 4. Run in test mode (unencrypted, no GPG needed)
-python3 linuxpass.py
+python3 offlinepass.py
 ```
 
 ### Production configuration
 
 ```bash
-LINUXPASS_USE_GPG=1 \
-LINUXPASS_GPG_RECIPIENTS="key-id-1,key-id-2" \
-LINUXPASS_FILE="~/product/state/10.gpg" \
-LINUXPASS_GIT_DIR="~/product/state" \
-python3 linuxpass.py
+offlinepass_USE_GPG=1 \
+offlinepass_GPG_RECIPIENTS="key-id-1,key-id-2" \
+offlinepass_FILE="~/product/state/10.gpg" \
+offlinepass_GIT_DIR="~/product/state" \
+python3 offlinepass.py
 ```
 
 (Or export the variables in your shell profile; the single-recipient form
-`LINUXPASS_GPG_RECIPIENT` also works.)
+`offlinepass_GPG_RECIPIENT` also works.)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LINUXPASS_FILE` | `~/linuxpass/test_data.json` | Path to store file |
-| `LINUXPASS_USE_GPG` | `0` | Set to `1` for GPG encryption |
-| `LINUXPASS_GPG_RECIPIENTS` | — | Comma-separated GPG key IDs/emails |
-| `LINUXPASS_GIT_DIR` | directory of `LINUXPASS_FILE` | Git repo root for auto-commit |
+| `offlinepass_FILE` | `~/offlinepass/test_data.json` | Path to store file |
+| `offlinepass_USE_GPG` | `0` | Set to `1` for GPG encryption |
+| `offlinepass_GPG_RECIPIENTS` | — | Comma-separated GPG key IDs/emails |
+| `offlinepass_GIT_DIR` | directory of `offlinepass_FILE` | Git repo root for auto-commit |
 
 ### Usage
 
@@ -289,7 +281,7 @@ checksums at any time.
 python3 test_passlib.py
 
 # Interactive TUI test
-python3 linuxpass.py
+python3 offlinepass.py
 # → Search "git" → Enter → select GitHub → Show credentials
 # → or Display QR code → scan with the phone
 

@@ -1,5 +1,5 @@
 <resources>
     <!-- Framework theme: no appcompat/material XML dependency needed while
          the UI is Compose-only. -->
-    <style name="Theme.Linuxpass" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.Offlinepass" parent="android:Theme.Material.Light.NoActionBar" />
 </resources>
