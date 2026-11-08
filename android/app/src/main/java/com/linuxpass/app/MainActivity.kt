@@ -27,6 +27,7 @@ import com.linuxpass.app.ui.ExportPickScreen
 import com.linuxpass.app.ui.ExportTargetPickScreen
 import com.linuxpass.app.ui.QrftScreen
 import com.linuxpass.app.ui.QrftScanScreen
+import com.linuxpass.app.ui.PairScanScreen
 import com.linuxpass.app.ui.entryPayload
 import com.linuxpass.app.vault.DeviceRecord
 import com.linuxpass.app.vault.DeviceWrap
@@ -67,6 +68,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) screen = Screen.QrftScan
             else status = "Camera permission denied — cannot import from QRFT."
+        }
+
+    /** Pair-paste-device scan: same camera permission, different screen. */
+    private val pairCameraLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) screen = Screen.PairScan
+            else status = "Camera permission denied — cannot pair a paste device."
         }
 
     private fun launchInteraction(pi: PendingIntent) {
@@ -559,6 +567,20 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     },
                     onBack = { screen = Screen.Setup }
                 )
+                Screen.PairScan -> PairScanScreen(
+                    onRecord = { raw ->
+                        Log.i(TAG, "Pairing record captured")
+                        lifecycleScope.launch {
+                            val record = DeviceRecord.fromPayload(raw)
+                            if (record != null) importPairRecord(record)
+                            else {
+                                screen = Screen.Setup
+                                status = "Scanned QR was not a paste-device pairing record."
+                            }
+                        }
+                    },
+                    onBack = { screen = Screen.Setup }
+                )
                 Screen.Setup -> SetupTabScreen(
                     status = status,
                     busy = VaultSession.busy,
@@ -587,6 +609,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onLock = { VaultSession.zero() },
                     onExportQrft = { screen = Screen.ExportPick },
                     onImportQrft = { cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA) },
+                    onPairDevice = { pairCameraLauncher.launch(android.Manifest.permission.CAMERA) },
                     pairedDevices = VaultSession.pairedDevices(),
                     onShowDeviceQr = { device ->
                         // R2: the vault record IS the pairing backup — show
@@ -702,6 +725,24 @@ class MainActivity : androidx.activity.ComponentActivity() {
         return arr.toString()
     }
 
+    /** Pairing record captured (PairScan or a QRFT-framed fallback): stage
+     *  it into the envelope and save. Re-scans with a re-wrapped seed
+     *  update the record in place (R2). */
+    private suspend fun importPairRecord(record: DeviceRecord) {
+        when (VaultSession.stagePairedDevice(record)) {
+            "unchanged" -> {
+                screen = Screen.Setup
+                status = "Key ${record.keyId} (${record.name}) already paired."
+            }
+            "added" -> savePairing(record, "Paired paste device", "Paired paste device")
+            "updated" -> savePairing(record, "Updated paste device", "Paste device re-wrapped")
+            else -> {
+                screen = Screen.Setup
+                status = "Unlock the vault before pairing a paste device."
+            }
+        }
+    }
+
     /** Persist a staged pairing record (add or update): encrypt + commit. */
     private suspend fun savePairing(record: DeviceRecord, toastBase: String, statusBase: String) {
         screen = Screen.Setup
@@ -722,24 +763,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
      *  envelope), deduped against the local vault by itemUuid KEEPING THE
      *  LOCAL VERSION on conflict, then saved. */
     private suspend fun importQrftPayload(raw: String) {
-        // Extension pairing QR (the pair page emits it as a tiny QRFT
-        // transfer): stage the record into the envelope and save. Re-scans
-        // with a re-wrapped seed update the record in place (R2).
-        DeviceRecord.fromPayload(raw)?.let { record ->
-            when (VaultSession.stagePairedDevice(record)) {
-                "unchanged" -> {
-                    screen = Screen.Setup
-                    status = "Key ${record.keyId} (${record.name}) already paired."
-                }
-                "added" -> savePairing(record, "Paired paste device", "Paired paste device")
-                "updated" -> savePairing(record, "Updated paste device", "Paste device re-wrapped")
-                else -> {
-                    screen = Screen.Setup
-                    status = "Unlock the vault before pairing a paste device."
-                }
-            }
-            return
-        }
+        // Compatibility fallback: a QRFT-framed pairing record (the pair
+        // page used to emit one) is handled by the pairing importer.
+        DeviceRecord.fromPayload(raw)?.let { importPairRecord(it); return }
         val env = Envelope.parseImport(raw)
         if (env == null) {
             status = "QRFT payload did not parse as a Proton JSON export."

@@ -38,6 +38,7 @@ fun SetupTabScreen(
     onLock: () -> Unit,
     onExportQrft: () -> Unit,
     onImportQrft: () -> Unit,
+    onPairDevice: () -> Unit = {},
     pairedDevices: List<com.linuxpass.app.vault.DeviceRecord> = emptyList(),
     onShowDeviceQr: (com.linuxpass.app.vault.DeviceRecord) -> Unit = {},
     onRemoveDevice: (String) -> Unit = {}
@@ -140,6 +141,9 @@ fun SetupTabScreen(
         }
         Button(onClick = onImportQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Import from QRFT (scan)")
+        }
+        Button(onClick = onPairDevice, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Pair paste device (scan extension QR)")
         }
         HorizontalDivider()
 

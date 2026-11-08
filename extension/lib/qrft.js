@@ -177,14 +177,18 @@ window.LpQrft = (function () {
     return frames;
   }
 
-  /** Loop frames into a canvas via the vendored qrcode.js; returns stop(). */
+  /** Loop frames into a canvas via the vendored qrcode.js; returns stop().
+   *  Reuses ONE QRCode instance with clear()/makeCode() — the same pattern
+   *  as the vendored generator page (re-creating instances per frame is
+   *  what made rotating frames flaky to scan). */
   function loopRender(frames, holder, intervalMs) {
     let i = 0;
     let timer = null;
+    const qrcode = new QRCode(holder, { width: 320, height: 320, correctLevel: QRCode.CorrectLevel.L });
     const show = () => {
-      holder.innerHTML = "";
+      qrcode.clear();
+      qrcode.makeCode(frames[i]);
       holder.title = "frame " + i + " / " + (frames.length - 1);
-      new QRCode(holder, { text: frames[i], width: 320, height: 320, correctLevel: QRCode.CorrectLevel.L });
       i = (i + 1) % frames.length;
     };
     show();

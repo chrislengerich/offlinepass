@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Paste-device pairing scanner (offline)</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #eee; }
+      .wrap { max-width: 640px; margin: 0 auto; padding: 12px; }
+      #msg { font-size: 1rem; margin: 0 0 8px; color: #ffd75e; min-height: 1.4em; }
+      #progress { font-size: 0.85rem; color: #9fe29f; min-height: 1.2em; margin-bottom: 8px; }
+      video { width: 100%; border-radius: 8px; background: #000; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div id="msg">Point the camera at the extension's pairing QR…</div>
+      <div id="progress"></div>
+      <video id="v" autoplay playsinline muted></video>
+    </div>
+    <canvas id="c" hidden></canvas>
+    <script src="vendor/jsQR.js"></script>
+    <script>
+      // Single-shot pairing scanner: decodes ONE QR containing the
+      // linuxpass-device record JSON (the extension's pair page shows it as
+      // a static code) and hands it to the app. Deliberately NOT the QRFT
+      // framing — pairing is one small payload, and a static code is far
+      // more reliable to scan than a rotating multi-frame loop.
+      (function () {
+        var msg = document.getElementById("msg");
+        var progress = document.getElementById("progress");
+        var video = document.getElementById("v");
+        var canvas = document.getElementById("c");
+        var ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+        var sent = "";   // last accepted record text (ignore re-decodes)
+        var done = false;
+
+        var stopCamera = function () {
+          try {
+            var s = video.srcObject;
+            if (s) s.getTracks().forEach(function (t) { t.stop(); });
+          } catch (e) {}
+        };
+
+        var handle = function (data) {
+          if (done || data === sent) return;
+          if (data.charAt(0) !== "{") return;
+          var m;
+          try { m = JSON.parse(data); } catch (e) { return; }
+          if (!m || m.type !== "linuxpass-device" || !m.device) return;
+          var keyId = String(m.device.keyId || "");
+          if (!/^[0-9a-f]{16}$/.test(keyId)) { progress.textContent = "Malformed record — keep scanning."; return; }
+          sent = data;
+          done = true;
+          stopCamera();
+          progress.textContent = "Paired key " + keyId + " captured.";
+          msg.textContent = "Handing the record to the app…";
+          setTimeout(function () {
+            if (window.LinuxpassBridge && window.LinuxpassBridge.onPairRecord) {
+              window.LinuxpassBridge.onPairRecord(data);
+            } else {
+              msg.textContent = "Bridge missing — record not delivered.";
+              done = false;
+            }
+          }, 300);
+        };
+
+        var scanLoop = function () {
+          if (done) return;
+          requestAnimationFrame(scanLoop);
+          if (video.readyState < 2 || video.videoWidth === 0) return;
+          var scale = Math.min(1, 720 / video.videoWidth);
+          canvas.width = Math.round(video.videoWidth * scale);
+          canvas.height = Math.round(video.videoHeight * scale);
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          var code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
+          if (code && code.data) handle(code.data);
+        };
+
+        var start = function () {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            msg.textContent = "Camera API unavailable (insecure origin?).";
+            return;
+          }
+          navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment", width: { ideal: 1280 } },
+            audio: false
+          }).then(function (stream) {
+            video.srcObject = stream;
+            video.play();
+            scanLoop();
+          }).catch(function (e) {
+            msg.textContent = "Camera failed: " + (e.message || e.name);
+          });
+        };
+        start();
+      })();
+    </script>
+  </body>
+</html>

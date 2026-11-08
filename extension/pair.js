@@ -12,11 +12,21 @@ let stopLoop = null;
 
 function showQr(record) {
   if (stopLoop) stopLoop();
+  stopLoop = null;
+  qr.innerHTML = "";
   const payload = JSON.stringify({ type: "linuxpass-device", device: record });
-  const frames = LpQrft.buildFrames("linuxpass-device", payload);
-  // Loop slowly: the phone only needs the metadata + the tiny record chunk.
-  stopLoop = LpQrft.loopRender(frames, qr, 600);
   recordBox.textContent = payload;
+  // Single STATIC QR: pairing is one small payload — a static code gives
+  // the phone's scanner unlimited attempts (a rotating QRFT loop stalls
+  // easily on focus/timing). Fall back to the QRFT loop only if the record
+  // ever outgrows one QR.
+  try {
+    new QRCode(qr, { text: payload, width: 400, height: 400, correctLevel: QRCode.CorrectLevel.L });
+    qr.title = "pairing record (single QR)";
+  } catch (e) {
+    const frames = LpQrft.buildFrames("linuxpass-device", payload);
+    stopLoop = LpQrft.loopRender(frames, qr, 600);
+  }
 }
 
 btnPair.addEventListener("click", async () => {
