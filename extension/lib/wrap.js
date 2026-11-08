@@ -128,12 +128,13 @@ window.LpWrap = (function () {
     const { credIdRaw } = await createCredential();
     const credId = bytesRawToB64(credIdRaw);
     const salt = await prfSalt(credIdRaw);
-    return { credId, salt };
+    return { credId, salt: bytesRawToB64(salt) }; // b64, matching record format
   }
 
   /** Step 2 of pairing (another touch): eval PRF, wrap a fresh ECDH seed.
    *  Returns the full record (public data + wrapped seed only). */
   async function finishPairing(credId, saltB64, name) {
+    const credIdRaw = b64ToBytesRaw(credId);
     const salt = b64ToBytesRaw(saltB64);
     const prfOut = await prfEval(credId, salt);
     const kek = await hkdf(prfOut, salt, SEED_INFO, 32);
