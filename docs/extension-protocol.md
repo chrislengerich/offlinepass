@@ -1,4 +1,10 @@
-# linuxpass device-wrap protocol (Chrome extension ⇄ Android)
+# offlinepass device-wrap protocol (Chrome extension ⇄ Android)
+
+> **Note on frozen names:** the wire constants `linuxpass-device`,
+> `linuxpass-wrap`, `linuxpass-device-v1`, `linuxpass-seed-kek-v1`, and
+> `linuxpass-paste-wrap-v1` predate the product rename and are **frozen** —
+> in particular the PRF salt string derives the paired seed, so changing it
+> would orphan existing pairings.
 
 Plan 2 rev 2 reference. Scope: Android app + `extension/` only — the Linux
 TUI is untouched (it preserves the new envelope fields verbatim; locked in

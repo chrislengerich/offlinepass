@@ -494,7 +494,7 @@ class OpenPgpClient(private val context: Context) : OpenPgpOps {
      * finish the call. Without it the request starts a new one, which comes
      * back as [SignKey.NeedsInteraction] for the caller to launch.
      */
-    suspend fun pickSignKey(data: Intent? = null): SignKey {
+    override suspend fun pickSignKey(data: Intent?): SignKey {
         if (!connect()) return SignKey.Error
         val result = execute(
             data ?: Intent(ACTION_GET_SIGN_KEY_ID),

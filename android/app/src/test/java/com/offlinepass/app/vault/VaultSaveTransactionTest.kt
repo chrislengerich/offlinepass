@@ -69,6 +69,10 @@ class VaultSaveTransactionTest {
             data: ByteArray, keyId: Long, requestData: android.content.Intent?
         ): OpenPgpClient.SignDetached = signResult
 
+        override suspend fun pickSignKey(
+            requestData: android.content.Intent?
+        ): OpenPgpClient.SignKey = OpenPgpClient.SignKey.Picked(KEY_ID, "test-user")
+
         companion object {
             const val KEY_ID = 0x1122334455667788L
             const val FAKE_SIG =

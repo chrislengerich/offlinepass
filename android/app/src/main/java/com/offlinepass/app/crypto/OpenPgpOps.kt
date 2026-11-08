@@ -26,4 +26,10 @@ interface OpenPgpOps {
     /** Convenience over [trySignDetached]: the armored signature, or null. */
     suspend fun signDetached(data: ByteArray, keyId: Long): String? =
         (trySignDetached(data, keyId) as? OpenPgpClient.SignDetached.Ok)?.armored
+
+    /** Asks OpenKeyChain which key to sign with (its own picker; may need
+     *  an interaction round-trip via [requestData]). Used when the vault
+     *  has no stored signer yet — recipient lookups return ENCRYPTION
+     *  subkeys, which cannot sign. */
+    suspend fun pickSignKey(requestData: android.content.Intent? = null): OpenPgpClient.SignKey
 }

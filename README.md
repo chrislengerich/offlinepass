@@ -210,7 +210,7 @@ plaintext, no keys, no decryptable state.
 
 ## Chrome extension (paste receive + autofill)
 
-**What it does** — click the linuxpass icon in Chrome: with a key paired,
+**What it does** — click the offlinepass icon in Chrome: with a key paired,
 the scan window opens instantly for the tab you clicked from; scan the
 phone's looping paste QR with the Chromebook's camera; decryption starts
 automatically once the transfer completes (insert key → FIDO2 PIN +
@@ -223,11 +223,11 @@ only to the tab you clicked on, and every decryption requires the key.
 ### Install (ChromeOS / desktop Chrome)
 
 1. `chrome://extensions` → enable **Developer mode** → **Load unpacked**
-   → select the `linuxpass/extension/` directory.
-2. Click the linuxpass icon → the pair page opens → follow the two
+   → select the `extension/` directory of the repo.
+2. Click the offlinepass icon → the pair page opens → follow the two
    touches (set a **FIDO2 PIN** if Chrome asks — the same PIN your
    passkeys use, separate from the OpenPGP/PIV PINs).
-3. On the phone: linuxpass → Setup → **"Pair paste device (scan)"** →
+3. On the phone: offlinepass → Setup → **"Pair paste device (scan)"** →
    scan the extension's pairing QR → the record lands in the vault and
    syncs to all clients via git.
 4. Send a paste: open the entry → **Export as QRFT** → leave
@@ -289,7 +289,7 @@ python3 offlinepass.py
 cd android && ./gradlew :app:testDebugUnitTest
 
 # Extension self-test (fixed cross-impl vectors; needs a browser)
-# → chrome://extensions → linuxpass → "Run self-test" link on the pair page
+# → chrome://extensions → offlinepass → "Run self-test" link on the pair page link on the pair page
 
 # Regenerate the cross-implementation vectors (protocol change only)
 python3 scripts/gen_device_wrap_vectors.py
