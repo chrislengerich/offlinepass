@@ -105,11 +105,11 @@ function handlePayload(name, text) {
   try { obj = JSON.parse(text); } catch (e) {
     msgEl.textContent = "Payload is not JSON: " + e.message; return;
   }
-  if (obj && obj.type === "linuxpass-device") {
+  if (obj && obj.type === "offlinepass-device") {
     offerRestore(obj.device).catch((e) => { msgEl.textContent = "Restore failed: " + (e.message || e.name); });
     return;
   }
-  if (obj && obj.type === "linuxpass-wrap") {
+  if (obj && obj.type === "offlinepass-wrap") {
     prepareDecrypt(text).catch((e) => {
       msgEl.textContent = "Decrypt failed: " + (e.message || e.name);
       entriesEl.textContent = "";
@@ -403,7 +403,7 @@ async function fillTab(item) {
   try {
     await chrome.scripting.executeScript({ target: { tabId: targetTabId }, files: ["fill.js"] });
     const res = await chrome.tabs.sendMessage(targetTabId, {
-      type: "linuxpass-fill", username: item.username, password: item.password,
+      type: "offlinepass-fill", username: item.username, password: item.password,
     });
     if (res && res.ok) {
       item.password = ""; entries.forEach((e) => { e.password = ""; });

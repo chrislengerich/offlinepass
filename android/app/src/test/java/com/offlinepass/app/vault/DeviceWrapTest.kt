@@ -27,19 +27,19 @@ class DeviceWrapTest {
     private val vecKey2 = "ca2a4fe727faaecf"
     private val vecCek = hex(
         "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f")
-    private val vecPayloadCt = "R34upos1iNjj3b4d1tbhox0jOlmuVuKVfvplOrLYjx6nTffd4OeljnpVkmjUlI037Qwr9KyS/xHY3sW79OHS38vmDQzSBVyVtK6wD9tTQ9Q5Rsn/lIm7cGTDfcINxnndV707p4KrjePVWqVtZbpPCqqs/OR99ey6umtuhrvVVyD8BAzrqG8on+jWBXdo6HpDTqqby1B8FNuviovrTFi8QNKBPXeXJwnPsuuxbpo5TQmpznOUNoYhLF+W5RF3wqEairvMrPp0ClzGqOMTiGcB4y6syKy8wOrnSPPQv5hJhaxzK6pd+eEjgSx9LGy2+1cBhZ/73OsbUw+dkkLEE8yZzwYeitXMJl/GMAI2sXI4bEAu1oVBX1YhMO0hbfx6f0PXSKWSbQ=="
+    private val vecPayloadCt = "R34upos1iNjj3b4d1tbhox0jOlmuVuKVfvplOrLYjx6nTffd4OeljnpVkmjUlI037Qwr9KyS/xHY3sW79OHS38vmDQzSBVyVtK6wD9tTQ9Q5Rsn/lIm7cGTDfcINxnndV707p4KrjePVWqVtZbpPCqqs/OR99ey6umtuhrvVVyD8BAzrqG8on+jWBXdo6HpDTqqby1B8FNuviovrTFi8QNKBPXeXJwnPsuuxbpo5TQmpznOUNoYhLF+W5RF3wqEairvMrPp0ClzGqOMTiGcB4y6syKy8wOrnSPPQv5hJhaxzK6pd+eEjgSx9LGy2+1cBhZ/73OsbUw+dkkLEE8yZzwYeitXMJl/GMAI2sXI4bEAu1oVB0iCRjBtEqyCwR2fqW54lGw=="
     private val vecEph1Scalar = hex(
         "8341425cafede9d24b0599aefdfdeff1c1526ed75b07217eb99bf8c0b7498b81")
     private val vecEph1Pub = hex(
         "049a781ca6d055a7f30d0c9ff87936c739f6816ef5f5e72b4b946404b0a1a83b2ac19f842945ea2bf65aa1649b2b02ff79854c8d5ecfcd403862e8a97ea66c71c1")
     private val vecT1Iv = hex("000102030405060708090a0b")
-    private val vecT1Ct = "fCWfCSVofDmLIDJxqYRBPbd1EFCzBXYwvXhEHyVue195pKCS1usj9gVhqlE07pD/"
+    private val vecT1Ct = "sXfCVNY7rbqdxEnqunN4eaD0OihCLT8j8Jfg3LAE5zAvkfzbMM25St9DiJqNwMn3"
     private val vecEph2Scalar = hex(
         "c2f18a8f50fe4dacf1dc18a4a889bdd6c28a8baf6c3d25dd8d4c47336e92dbab")
     private val vecEph2Pub = hex(
         "043f95c5f6edf6fe05c7e269ef428ea61614bf456f0168ddb464170e6b7687491a9c4f9a70a224533b307bc7cf7766688fd23eac5079e9aa88f5244b03d1449510")
     private val vecT2Iv = hex("101112131415161718191a1b")
-    private val vecT2Ct = "qGuDgxGk34wnbibRqED3hxjWfIebhuY6HbZ3imKJVXMfYd27vD/JV6IcfMR9aicF"
+    private val vecT2Ct = "wE8HlyTS7wSSIrNijKCBP3d0+aspPxEyNOgneGJoVDCVRJ/IjHNiX7hWYk7IFZDf"
     private val vecPayload = """{"itemId":"vec-item-0000","shareId":"local","data":{"type":"login","metadata":{"name":"Vector Test","itemUuid":"vec-item-0000"},"content":{"itemEmail":"","itemUsername":"vector","password":"s3cret-vector","urls":["https://example.test"],"totpUri":"","passkeys":[]}},"state":1}"""
 
     private fun hex(s: String): ByteArray =
@@ -51,7 +51,7 @@ class DeviceWrapTest {
             DeviceWrap.TestTarget(vecDevicePub, vecKey1, vecEph1Scalar, vecEph1Pub, vecT1Iv)))
         val obj = org.json.JSONObject(out)
         assertEquals(1, obj.getInt("v"))
-        assertEquals("linuxpass-wrap", obj.getString("type"))
+        assertEquals("offlinepass-wrap", obj.getString("type"))
         val payload = obj.getJSONObject("payload")
         assertEquals("AQIDBAUGBwgJCgsM", payload.getString("iv"))
         assertEquals(vecPayloadCt, payload.getString("ct"))
@@ -100,7 +100,7 @@ class DeviceWrapTest {
         id = vecKey1, name = "vector-key",
         credId = "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
         pub = vecDevicePub.encodeB64(), keyId = vecKey1, added = 1762500000,
-        salt = "vftaeqR9Q7C1M+v4xKx8eI+t5k1P7MpHsUKHiQj3VaE=",
+        salt = "q5oYXr3CRo9//Fj24tuSuUAAIqOrkORNlkzE7krAbYg=",
         wrappedIv = "AAECAwQFBgcICQoL", wrappedCt = "(not needed for wrap)")
 
     private fun ByteArray.encodeB64(): String =
@@ -112,11 +112,11 @@ class DeviceRecordTest {
 
     @Test
     fun parsesPairingPayload() {
-        val payload = """{"type":"linuxpass-device","device":{"id":"72dbb7336c767800",
+        val payload = """{"type":"offlinepass-device","device":{"id":"72dbb7336c767800",
             "name":"ko-yk5","credId":"ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
             "pub":"BCDrJBik1ztulBBV1OTCfTzv4jYxFNvAUgSJ+b/DFNJ9b9TamxTrUw6VRJ0kuRJPmNwspP6zsqXYrBwlSeVnocg=",
             "keyId":"72dbb7336c767800","added":1762500000,
-            "salt":"vftaeqR9Q7C1M+v4xKx8eI+t5k1P7MpHsUKHiQj3VaE=",
+            "salt":"q5oYXr3CRo9//Fj24tuSuUAAIqOrkORNlkzE7krAbYg=",
             "wrapped":{"iv":"AAECAwQFBgcICQoL","ct":"AAAA"}}}""".replace("\n", "")
         val r = DeviceRecord.fromPayload(payload)
         assertNotNull(r)
@@ -128,9 +128,9 @@ class DeviceRecordTest {
     @Test
     fun rejectsNonPairingPayloads() {
         assertNull(DeviceRecord.fromPayload("""[{"itemId":"x","data":{"content":{}}}]"""))
-        assertNull(DeviceRecord.fromPayload("""{"v":1,"type":"linuxpass-wrap"}"""))
+        assertNull(DeviceRecord.fromPayload("""{"v":1,"type":"offlinepass-wrap"}"""))
         assertNull(DeviceRecord.fromPayload("not json"))
-        assertNull(DeviceRecord.fromPayload("""{"type":"linuxpass-device"}"""))
+        assertNull(DeviceRecord.fromPayload("""{"type":"offlinepass-device"}"""))
     }
 
     @Test

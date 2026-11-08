@@ -1,5 +1,5 @@
 /**
- * linuxpass QRFT helpers — shared by the scan window (receive) and the pair
+ * offlinepass QRFT helpers — shared by the scan window (receive) and the pair
  * page (emit). The wire format is the airgap-qr-offline protocol vendored in
  * the Android app (android/app/src/main/assets/qrft/):
  *

@@ -33,7 +33,7 @@ if (!window.__lpFillInstalled) {
   }
 
   chrome.runtime.onMessage.addListener((m, _sender, sendResponse) => {
-    if (!m || m.type !== "linuxpass-fill") return; // unknown message: ignore
+    if (!m || m.type !== "offlinepass-fill") return; // unknown message: ignore
     try {
       const pwds = findPasswordFields();
       if (!pwds.length) { sendResponse({ ok: false, error: "no visible password field" }); return; }

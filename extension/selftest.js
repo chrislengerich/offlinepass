@@ -9,27 +9,27 @@ const V = {
   prfOut: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   credId: "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
   keyId: "72dbb7336c767800",                 // R1: hex(SHA-256(credId))[0..8]
-  salt: "vftaeqR9Q7C1M+v4xKx8eI+t5k1P7MpHsUKHiQj3VaE=",
+  salt: "q5oYXr3CRo9//Fj24tuSuUAAIqOrkORNlkzE7krAbYg=",
   seedPubRaw: "0420eb2418a4d73b6e941055d4e4c27d3cefe2363114dbc0520489f9bfc314d27d6fd4da9b14eb530e95449d24b9124f98dc2ca4feb3b2a5d8ac1c2549e567a1c8",
   seedIv: "000102030405060708090a0b",
-  seedCt: "9ZzEOA87DyTJ9Z6nGiQC5MM5nPfoQwhObtnOrW1R+Fx4n4oRNAtFvAfeqVUaXu33pceL1SE1F/cKQedWoYncTiCTTIxbz2V6STiypcOGC5KlzZrqRmrnNmM46hobU1AvyCHvICwOu2UlUqfbO8eoXiVJs2eZYtccmoVWCzV1l9qw7VXh8FndwtZaR/VBN7J77apVF/K/zYv/cg==",
-  kek: "4e4ecc7b1ce6b4bc0eba673fd19e0366b58de47d74058987138214118f3b5510",
+  seedCt: "cNRWuEn/6w2MxYuagfKPeiz4T1JW25sXSZ8Ggtf5md8D3B9yFzq9uSGKNefXXE1REV3pNZghf+eW8Y9UuhZ49ARVuuubi7W9w1dZgK51FgT7Kl3zU93xguKFvXhhJgCir8EGm7zrRMYgs1HrMB4mYe9k6kGIvX/viWNt2nEq3abQBVhJMXN+7CZiCTuou+uBOcbQmcCqwJsx8w==",
+  kek: "f3b81f2432825d28b4cf8940da95543198f0aa0aab6bde7f64d29476716d9568",
   sharedX: "0316c0e78d036219f2dc2d4813812625c68d6550361578cf3fc1c71b5f7f99e4",
-  wrapKek: "169f9dbe7fb65dead98121ee50a30f2ea1368ce717ef33d1a29c53bcec07e3fe",
+  wrapKek: "0148f944db44d0de74b4c1f52ea99e675afe35f827c5af9e4cb09c611447dcaf",
   cek: "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
   payloadIv: "0102030405060708090a0b0c",
-  payloadCt: "R34upos1iNjj3b4d1tbhox0jOlmuVuKVfvplOrLYjx6nTffd4OeljnpVkmjUlI037Qwr9KyS/xHY3sW79OHS38vmDQzSBVyVtK6wD9tTQ9Q5Rsn/lIm7cGTDfcINxnndV707p4KrjePVWqVtZbpPCqqs/OR99ey6umtuhrvVVyD8BAzrqG8on+jWBXdo6HpDTqqby1B8FNuviovrTFi8QNKBPXeXJwnPsuuxbpo5TQmpznOUNoYhLF+W5RF3wqEairvMrPp0ClzGqOMTiGcB4y6syKy8wOrnSPPQv5hJhaxzK6pd+eEjgSx9LGy2+1cBhZ/73OsbUw+dkkLEE8yZzwYeitXMJl/GMAI2sXI4bEAu1oVBX1YhMO0hbfx6f0PXSKWSbQ==",
+  payloadCt: "R34upos1iNjj3b4d1tbhox0jOlmuVuKVfvplOrLYjx6nTffd4OeljnpVkmjUlI037Qwr9KyS/xHY3sW79OHS38vmDQzSBVyVtK6wD9tTQ9Q5Rsn/lIm7cGTDfcINxnndV707p4KrjePVWqVtZbpPCqqs/OR99ey6umtuhrvVVyD8BAzrqG8on+jWBXdo6HpDTqqby1B8FNuviovrTFi8QNKBPXeXJwnPsuuxbpo5TQmpznOUNoYhLF+W5RF3wqEairvMrPp0ClzGqOMTiGcB4y6syKy8wOrnSPPQv5hJhaxzK6pd+eEjgSx9LGy2+1cBhZ/73OsbUw+dkkLEE8yZzwYeitXMJl/GMAI2sXI4bEAu1oVB0iCRjBtEqyCwR2fqW54lGw==",
   target1: {
     keyId: "72dbb7336c767800",
     epk: "BJp4HKbQVafzDQyf+Hk2xzn2gW719ecrS5RkBLChqDsqwZ+EKUXqK/ZaoWSbKwL/eYVMjV7PzUA4YuipfqZsccE=",
     iv: "AAECAwQFBgcICQoL",
-    ct: "fCWfCSVofDmLIDJxqYRBPbd1EFCzBXYwvXhEHyVue195pKCS1usj9gVhqlE07pD/"
+    ct: "sXfCVNY7rbqdxEnqunN4eaD0OihCLT8j8Jfg3LAE5zAvkfzbMM25St9DiJqNwMn3"
   },
   target2: {
     keyId: "ca2a4fe727faaecf",
     epk: "BD+Vxfbt9v4Fx+Jp70KOphYUv0VvAWjdtGQXDmt2h0kanE+acKIkUzswe8fPd2Zoj9I+rFB56aqI9SRLA9FElRA=",
     iv: "EBESExQVFhcYGRob",
-    ct: "qGuDgxGk34wnbibRqED3hxjWfIebhuY6HbZ3imKJVXMfYd27vD/JV6IcfMR9aicF"
+    ct: "wE8HlyTS7wSSIrNijKCBP3d0+aspPxEyNOgneGJoVDCVRJ/IjHNiX7hWYk7IFZDf"
   },
   payloadIvB64: "AQIDBAUGBwgJCgsM",
   payload: '{"itemId":"vec-item-0000","shareId":"local","data":{"type":"login","metadata":{"name":"Vector Test","itemUuid":"vec-item-0000"},"content":{"itemEmail":"","itemUsername":"vector","password":"s3cret-vector","urls":["https://example.test"],"totpUri":"","passkeys":[]}},"state":1}'
@@ -37,7 +37,7 @@ const V = {
 
 // The full 2-target wrapped paste (assembled after V to avoid self-reference).
 const W = {
-  v: 1, type: "linuxpass-wrap",
+  v: 1, type: "offlinepass-wrap",
   payload: { iv: V.payloadIvB64, ct: V.payloadCt },
   targets: [V.target1, V.target2],
 };
@@ -84,7 +84,7 @@ async function main() {
     // 5. a paste with no target for our key must fail loudly
     let rejected = false;
     try {
-      const wrong = { v: 1, type: "linuxpass-wrap", payload: W.payload, targets: [V.target2] };
+      const wrong = { v: 1, type: "offlinepass-wrap", payload: W.payload, targets: [V.target2] };
       await LpWrap.unwrapPasteWithSeed(seedPriv, record, JSON.stringify(wrong));
     } catch (e) { rejected = true; }
     line(rejected, "no-matching-target rejected");

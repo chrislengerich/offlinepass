@@ -5,7 +5,7 @@ extension (WebCrypto) implementations can be cross-checked against each
 other.
 
 Rev 2 wire format — wrap-once, target-many:
-  payload : AES-256-GCM(cek, iv_p, aad="linuxpass-paste-wrap-v1", protonJson)
+  payload : AES-256-GCM(cek, iv_p, aad="offlinepass-paste-wrap-v1", protonJson)
   per target: AES-256-GCM(HKDF(ECDH(eph, target.pub)), iv_t, aad_t, cek)
   keyId   = hex(SHA-256(rawCredentialId)[0..8])   (stable identity, R1)
 
@@ -54,7 +54,7 @@ def hkdf(ikm, salt, info, length=32):
 
 def b64(b): return base64.b64encode(b).decode()
 
-PASTE_INFO = b"linuxpass-paste-wrap-v1"
+PASTE_INFO = b"offlinepass-paste-wrap-v1"
 
 def make_target(cred_id, seed_scalar, eph_scalar, iv):
     """Build one target's wrapped-CEK blob."""
@@ -65,9 +65,9 @@ def make_target(cred_id, seed_scalar, eph_scalar, iv):
     eph_pub_raw = eph_priv.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
     shared_x = eph_priv.exchange(ec.ECDH(), seed_priv.public_key())
     kek = hkdf(shared_x, bytes.fromhex(key_id), PASTE_INFO)
-    aad = f"linuxpass-paste-wrap-v1:{key_id}:{b64(eph_pub_raw)}".encode()
+    aad = f"offlinepass-paste-wrap-v1:{key_id}:{b64(eph_pub_raw)}".encode()
     ct = AESGCM(kek).encrypt(iv, CEK, aad)
-    salt_raw = hashlib.sha256(b"linuxpass-device-v1" + cred_id).digest()
+    salt_raw = hashlib.sha256(b"offlinepass-device-v1" + cred_id).digest()
     return {
         "keyId": key_id, "seedPubRaw": seed_pub_raw, "seedScalar": seed_scalar,
         "ephScalar": eph_scalar,
@@ -90,10 +90,10 @@ t1 = make_target(CRED_ID, SEED_SCALAR, EPH1_SCALAR, T1_IV)
 t2 = make_target(CRED_ID2, SEED2_SCALAR, EPH2_SCALAR, T2_IV)
 
 # Seed-wrap blobs (enrollment side): KEK from PRF, pkcs8 AES-GCM'd.
-t1_kek_seed = hkdf(PRF_OUT, t1["saltRaw"], b"linuxpass-seed-kek-v1")
+t1_kek_seed = hkdf(PRF_OUT, t1["saltRaw"], b"offlinepass-seed-kek-v1")
 seed_pkcs8 = ec.derive_private_key(SEED_SCALAR, ec.SECP256R1()).private_bytes(
     Encoding.DER, PrivateFormat.PKCS8, NoEncryption())
-seed_ct = AESGCM(t1_kek_seed).encrypt(SEED_IV, seed_pkcs8, b"linuxpass-seed-wrap-v1")
+seed_ct = AESGCM(t1_kek_seed).encrypt(SEED_IV, seed_pkcs8, b"offlinepass-seed-wrap-v1")
 t1["record"]["wrapped"]["ct"] = b64(seed_ct)
 
 # Payload layer.
@@ -101,14 +101,14 @@ payload_ct = AESGCM(CEK).encrypt(PAYLOAD_IV, PAYLOAD.encode(), PASTE_INFO)
 
 # Full wrapped paste, two targets.
 wrapped = {
-    "v": 1, "type": "linuxpass-wrap",
+    "v": 1, "type": "offlinepass-wrap",
     "payload": {"iv": b64(PAYLOAD_IV), "ct": b64(payload_ct)},
     "targets": [
         {"keyId": t["keyId"], "epk": b64(t["ephPubRaw"]),
          "iv": b64(t["iv"]), "ct": b64(t["ct"])} for t in (t1, t2)],
 }
 wrapped_json = json.dumps(wrapped, separators=(",", ":"))
-record_json = json.dumps({"type": "linuxpass-device", "device": t1["record"]}, separators=(",", ":"))
+record_json = json.dumps({"type": "offlinepass-device", "device": t1["record"]}, separators=(",", ":"))
 
 def block(title, obj):
     print(f"--- {title} ---")
@@ -127,7 +127,7 @@ for name, t in (("target-1", t1), ("target-2", t2)):
     })
 block("seed wrap (enrollment, target-1)", {
     "prfOut": PRF_OUT.hex(), "kek": t1_kek_seed.hex(), "iv": SEED_IV.hex(),
-    "aad": "linuxpass-seed-wrap-v1",
+    "aad": "offlinepass-seed-wrap-v1",
     "seedPkcs8Sha256": hashlib.sha256(seed_pkcs8).hexdigest(), "ct": b64(seed_ct)})
 block("payload layer", {"cek": CEK.hex(), "iv": PAYLOAD_IV.hex(),
                         "aad": PASTE_INFO.decode(), "ct": b64(payload_ct)})

@@ -14,7 +14,7 @@ function showQr(record) {
   if (stopLoop) stopLoop();
   stopLoop = null;
   qr.innerHTML = "";
-  const payload = JSON.stringify({ type: "linuxpass-device", device: record });
+  const payload = JSON.stringify({ type: "offlinepass-device", device: record });
   recordBox.textContent = payload;
   // Single STATIC QR: pairing is one small payload — a static code gives
   // the phone's scanner unlimited attempts (a rotating QRFT loop stalls
@@ -24,7 +24,7 @@ function showQr(record) {
     new QRCode(qr, { text: payload, width: 400, height: 400, correctLevel: QRCode.CorrectLevel.L });
     qr.title = "pairing record (single QR)";
   } catch (e) {
-    const frames = LpQrft.buildFrames("linuxpass-device", payload);
+    const frames = LpQrft.buildFrames("offlinepass-device", payload);
     stopLoop = LpQrft.loopRender(frames, qr, 600);
   }
 }

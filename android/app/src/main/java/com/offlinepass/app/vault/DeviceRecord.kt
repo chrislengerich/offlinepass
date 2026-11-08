@@ -35,7 +35,7 @@ data class DeviceRecord(
 
     companion object {
         /** Payload `type` marker for pairing records flowing via QRFT. */
-        const val PAYLOAD_TYPE = "linuxpass-device"
+        const val PAYLOAD_TYPE = "offlinepass-device"
 
         fun fromJson(o: JSONObject): DeviceRecord? {
             val wrapped = o.optJSONObject("wrapped") ?: return null
@@ -56,7 +56,7 @@ data class DeviceRecord(
 
         /**
          * The pairing QRFT payload the extension emits:
-         * `{"type":"linuxpass-device","device":{...}}`. Returns null for
+         * `{"type":"offlinepass-device","device":{...}}`. Returns null for
          * anything else (item exports, envelopes, wrapped pastes).
          */
         fun fromPayload(raw: String): DeviceRecord? = runCatching {

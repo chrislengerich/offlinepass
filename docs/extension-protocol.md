@@ -1,10 +1,13 @@
 # offlinepass device-wrap protocol (Chrome extension ⇄ Android)
 
-> **Note on frozen names:** the wire constants `linuxpass-device`,
-> `linuxpass-wrap`, `linuxpass-device-v1`, `linuxpass-seed-kek-v1`, and
-> `linuxpass-paste-wrap-v1` predate the product rename and are **frozen** —
-> in particular the PRF salt string derives the paired seed, so changing it
-> would orphan existing pairings.
+> **Naming note:** the wire constants (`offlinepass-device`,
+> `offlinepass-wrap`, `offlinepass-device-v1`, `offlinepass-seed-kek-v1`,
+> `offlinepass-paste-wrap-v1`) follow the product rename. The
+> pre-rename `linuxpass-*` constants are gone: the PRF salt string derives
+> the paired seed, so the rename **orphaned pairings made before it** —
+> re-pair (extension → Pair → phone → Pair paste device (scan)); the R1
+> identity (keyId = hash of the credential) makes the fresh pairing update
+> the existing record in place rather than duplicating it.
 
 Plan 2 rev 2 reference. Scope: Android app + `extension/` only — the Linux
 TUI is untouched (it preserves the new envelope fields verbatim; locked in
@@ -55,18 +58,18 @@ math. The wrapped form has the same properties.)
 ## 3. Key chain
 
 ```
-salt      = SHA-256("linuxpass-device-v1" || rawCredentialId)
-seed KEK  = HKDF-SHA256(ikm = PRF(salt), salt, info = "linuxpass-seed-kek-v1")
-seed      = ECDH P-256 keypair, stored as AES-GCM(pkcs8, seed KEK, aad = "linuxpass-seed-wrap-v1")
+salt      = SHA-256("offlinepass-device-v1" || rawCredentialId)
+seed KEK  = HKDF-SHA256(ikm = PRF(salt), salt, info = "offlinepass-seed-kek-v1")
+seed      = ECDH P-256 keypair, stored as AES-GCM(pkcs8, seed KEK, aad = "offlinepass-seed-wrap-v1")
 keyId     = hex( SHA-256(rawCredentialId)[0..8] )        (stable identity)
 cek       = random 32 bytes per paste
-payload   = AES-256-GCM(cek, iv_p, aad = "linuxpass-paste-wrap-v1", protonJson)
+payload   = AES-256-GCM(cek, iv_p, aad = "offlinepass-paste-wrap-v1", protonJson)
 per target: shared = ECDH(ephemeral priv, device pub) (X coordinate, 32B)
-            kek_t  = HKDF-SHA256(shared, salt = keyId bytes, info = "linuxpass-paste-wrap-v1")
+            kek_t  = HKDF-SHA256(shared, salt = keyId bytes, info = "offlinepass-paste-wrap-v1")
             ct_t   = AES-256-GCM(kek_t, iv_t, aad_t, cek)
 ```
 
-Target AAD string: `"linuxpass-paste-wrap-v1:" + keyId + ":" + base64(epk)`.
+Target AAD string: `"offlinepass-paste-wrap-v1:" + keyId + ":" + base64(epk)`.
 HKDF is RFC 5869 (JCE has none; the Android side uses HmacSHA256
 extract+expand). Public points are 65-byte uncompressed (`0x04 || X || Y`),
 standard base64.
@@ -80,7 +83,7 @@ chunk), so the phone's existing **Import from QRFT** scan reads it with no
 new UI:
 
 ```json
-{"type": "linuxpass-device", "device": {
+{"type": "offlinepass-device", "device": {
   "id": "<keyId>", "name": "<user label>", "credId": "<b64>",
   "pub": "<b64 raw point>", "keyId": "<hex8>", "added": <unix sec>,
   "salt": "<b64>", "wrapped": {"iv": "<b64>", "ct": "<b64>"}}}
@@ -102,7 +105,7 @@ The QRFT payload (the string the generator page transmits — it is gzipped
 and chunked by the QRFT layer like any other payload):
 
 ```json
-{"v": 1, "type": "linuxpass-wrap",
+{"v": 1, "type": "offlinepass-wrap",
  "payload": {"iv": "<b64>", "ct": "<b64>"},
  "targets": [{"keyId": "<hex8>", "epk": "<b64 raw ephemeral point>",
               "iv": "<b64>", "ct": "<b64>"}]}
@@ -110,7 +113,7 @@ and chunked by the QRFT layer like any other payload):
 
 - `payload.ct` decrypts (after a touch) to the usual Proton Pass JSON
   (item, array, or envelope) — the same payload shapes the plain QRFT path
-  carries. Plain payloads (no `type: "linuxpass-wrap"`) remain accepted.
+  carries. Plain payloads (no `type: "offlinepass-wrap"`) remain accepted.
 - **Any one of the targets' keys opens the paste**: each target wraps the
   same CEK. The default export wraps to **all paired keys** (redundancy
   matching the vault's multi-key model). Budget ≈170 chars per extra

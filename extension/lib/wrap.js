@@ -1,5 +1,5 @@
 /**
- * linuxpass device-wrap crypto (Plan 2, docs/extension-protocol.md).
+ * offlinepass device-wrap crypto (Plan 2, docs/extension-protocol.md).
  *
  * Everything is standard WebCrypto — no hand-rolled primitives:
  *   PRF output (security key, hmac-secret)  ──HKDF──▶  seed KEK (AES-GCM)
@@ -16,9 +16,9 @@ window.LpWrap = (function () {
   const te = new TextEncoder();
   const td = new TextDecoder();
 
-  const SEED_INFO = te.encode("linuxpass-seed-kek-v1");
-  const SEED_AAD = te.encode("linuxpass-seed-wrap-v1");
-  const PASTE_INFO = te.encode("linuxpass-paste-wrap-v1");
+  const SEED_INFO = te.encode("offlinepass-seed-kek-v1");
+  const SEED_AAD = te.encode("offlinepass-seed-wrap-v1");
+  const PASTE_INFO = te.encode("offlinepass-paste-wrap-v1");
 
   const subtle = crypto.subtle;
 
@@ -40,7 +40,7 @@ window.LpWrap = (function () {
 
   /** PRF salt for a credential (must match the Android/record side). */
   function prfSalt(credIdRaw) {
-    return sha256(concat(te.encode("linuxpass-device-v1"), credIdRaw));
+    return sha256(concat(te.encode("offlinepass-device-v1"), credIdRaw));
   }
 
   /** R1: stable identity — keyId derives from the credential, so re-wrapped
@@ -74,12 +74,12 @@ window.LpWrap = (function () {
         // rp.id is omitted on purpose — it defaults to the caller origin's
         // effective domain (the extension's own origin), binding the
         // credential to this extension only.
-        rp: { name: "linuxpass" },
+        rp: { name: "offlinepass" },
         challenge: crypto.getRandomValues(new Uint8Array(32)),
         user: {
           id: crypto.getRandomValues(new Uint8Array(16)),
-          name: "linuxpass paste device",
-          displayName: "linuxpass paste device",
+          name: "offlinepass paste device",
+          displayName: "offlinepass paste device",
         },
         pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
         authenticatorSelection: {
@@ -188,7 +188,7 @@ window.LpWrap = (function () {
    *  post-touch flow both use this). */
   async function unwrapPasteWithSeed(seedPriv, record, wrappedJson) {
     const w = JSON.parse(wrappedJson);
-    if (w.type !== "linuxpass-wrap" || w.v !== 1) throw new Error("Not a wrapped paste.");
+    if (w.type !== "offlinepass-wrap" || w.v !== 1) throw new Error("Not a wrapped paste.");
     const target = (w.targets || []).find((t) => t.keyId === record.keyId);
     if (!target) {
       throw new Error("Paste has no target for key " + record.keyId + " (" + record.name + ").");
@@ -198,7 +198,7 @@ window.LpWrap = (function () {
     const shared = u8(await subtle.deriveBits({ name: "ECDH", public: epk }, seedPriv, 256));
     const cek = u8(await subtle.decrypt(
       { name: "AES-GCM", iv: ab(b64ToBytesRaw(target.iv)),
-        additionalData: te.encode("linuxpass-paste-wrap-v1:" + target.keyId + ":" + target.epk) },
+        additionalData: te.encode("offlinepass-paste-wrap-v1:" + target.keyId + ":" + target.epk) },
       await importAes(await hkdf(shared, hexToBytes(record.keyId), PASTE_INFO, 32)),
       ab(b64ToBytesRaw(target.ct))));
     const plain = await subtle.decrypt(

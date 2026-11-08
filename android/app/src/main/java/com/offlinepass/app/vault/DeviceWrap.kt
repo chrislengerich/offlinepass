@@ -39,17 +39,17 @@ import org.json.JSONObject
  *   AES-256-GCM, AAD-bound layers   (Cipher "AES/GCM/NoPadding")
  *
  * Wire format (the QRFT payload string the generator page transmits):
- * {"v":1,"type":"linuxpass-wrap",
+ * {"v":1,"type":"offlinepass-wrap",
  *  "payload":{"iv":"<b64>","ct":"<b64>"},
  *  "targets":[{"keyId":"<hex8 of SHA-256(credId)>","epk":"<b64 raw point>",
  *              "iv":"<b64>","ct":"<b64>"}]}
  */
 object DeviceWrap {
 
-    const val TYPE = "linuxpass-wrap"
+    const val TYPE = "offlinepass-wrap"
     private const val VERSION = 1
-    private val PASTE_INFO = "linuxpass-paste-wrap-v1".toByteArray(Charsets.UTF_8)
-    private const val AAD_PREFIX = "linuxpass-paste-wrap-v1:"
+    private val PASTE_INFO = "offlinepass-paste-wrap-v1".toByteArray(Charsets.UTF_8)
+    private const val AAD_PREFIX = "offlinepass-paste-wrap-v1:"
 
     /** Wraps [payloadJson] to every device in [devices] (≥1 required). */
     fun wrap(payloadJson: String, devices: List<DeviceRecord>): String {
