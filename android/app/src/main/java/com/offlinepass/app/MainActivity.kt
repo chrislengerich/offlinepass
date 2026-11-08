@@ -353,9 +353,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     VaultSession.configure(null, emptyList())
                     status = ""
                     lifecycleScope.launch {
-                        // Recipients, then the (empty) vault persists on
-                        // first save (which git-inits the local repo).
+                        // Recipients, then adopt the empty envelope as the
+                        // unlocked session (state must leave NoConfig or the
+                        // Setup screen keeps rendering), then Search. The
+                        // vault file persists on first save (git-init there).
                         pickRecipientsUntilDone()
+                        VaultSession.adopt(Envelope(rev = 0, deviceId = VaultSession.deviceId()))
                         screen = Screen.Search
                         status = "Local-only vault ready — Add entry to begin."
                     }
