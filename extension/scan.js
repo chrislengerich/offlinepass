@@ -235,7 +235,7 @@ async function showSshPubkey(obj) {
   stopCamera();
   video.remove();
   progressEl.textContent = "";
-  const line = String(obj.sshKey || "");
+  const line = String(obj.sshKey || "").replace(/\\\//g, "/") // un-escape org.json's \/ if a path carried it
   const declaredFp = String(obj.fp || "");
   if (!line.includes(" ")) { msgEl.textContent = "Malformed SSH public key."; return; }
   // Self-verification: the phone declares the key's ssh-keygen fingerprint;

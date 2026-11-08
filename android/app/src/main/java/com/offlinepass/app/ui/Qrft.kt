@@ -59,11 +59,16 @@ fun QrftScreen(payload: String, onBack: () -> Unit) {
                         override fun onPageFinished(view: WebView, url: String?) {
                             // Prefill the paste box (it takes priority over a
                             // chosen file) and start the sender.
+                            // Android's org.json escapes "/" as "\/" in the
+                            // JSON text — un-escape it so the displayed
+                            // payload (and the QR) carry clean base64; the
+                            // extension's JSON.parse is escape-agnostic.
+                            val cleanPayload = payload.replace("\\/", "/")
                             val js = """
                                 (function(){
                                     var t = document.getElementById('text_input');
                                     if (!t) return;
-                                    t.value = ${org.json.JSONObject.quote(payload)};
+                                    t.value = ${org.json.JSONObject.quote(cleanPayload)};
                                     t.dispatchEvent(new Event('input'));
                                     var b = document.getElementById('btn_start');
                                     if (b) b.click();
