@@ -788,6 +788,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                 val info = withContext(kotlinx.coroutines.Dispatchers.IO) {
                                     com.offlinepass.app.crypto.SshKeyManager().ensureKeyPair()
                                 }
+                                // The QR enrolls the SCREENLOCK key — make this
+                                // mode ACTIVE (the YubiKey dialog switches it
+                                // the other way; last enrollment wins).
+                                VaultSession.setSshSyncMode(VaultSession.SSH_SYNC_SCREENLOCK)
                                 val payload = org.json.JSONObject()
                                     .put("type", "offlinepass-ssh-pubkey")
                                     .put("sshKey", info.openSshLine)
