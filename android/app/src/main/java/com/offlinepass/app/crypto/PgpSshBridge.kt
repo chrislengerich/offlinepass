@@ -204,8 +204,10 @@ object PgpSshBridge {
         return packet.copyOfRange(hdrLen, packet.size)
     }
 
-    /** The signing key id from an OpenPGP detached signature's ISSUER
-     *  subpacket (type 16, 8 bytes — normally in the unhashed area). Used
+    /** The signing key id from an OpenPGP detached signature, taken from
+     *  the ISSUER subpacket (type 16, 8 bytes) or the ISSUER FINGERPRINT
+     *  subpacket (type 33 — modern OpenKeyChain/gpg emit this; its last 8
+     *  bytes are the key id) — both normally in the unhashed area. Used
      *  after a keyless sign request to learn WHICH key OpenKeyChain used. */
     fun issuingKeyId(armored: String): Long? {
         val packet = dearmorFirstSignaturePacket(armored)
@@ -214,18 +216,34 @@ object PgpSshBridge {
         val hashedLen = u16(body, p); p += 2 + hashedLen
         val unhashedLen = u16(body, p); p += 2
         val unhashedEnd = p + unhashedLen
-        while (p + 1 <= unhashedEnd && p < body.size) {
+        var issuer: Long? = null
+        var issuerFpr: Long? = null
+        while (p + 2 <= unhashedEnd && p + 2 <= body.size) {
             val len = body[p].toInt() and 0xFF
             val type = body[p + 1].toInt() and 0xFF
-            if (type == 16 && len == 8) {  // ISSUER
-                val id = (0 until 8).fold(0L) { acc, k ->
-                    (acc shl 8) or (body[p + 2 + k].toLong() and 0xFF)
+            when {
+                type == 16 && len == 8 -> {
+                    issuer = (0 until 8).fold(0L) { acc, k ->
+                        (acc shl 8) or (body[p + 2 + k].toLong() and 0xFF)
+                    }
                 }
-                return if (id != 0L) id else null
+                type == 33 && len in 21..32 -> {
+                    // ISSUER FINGERPRINT: 32-byte v4 fp (20 for v3) — the
+                    // key id is its LAST 8 bytes.
+                    issuerFpr = (0 until 8).fold(0L) { acc, k ->
+                        (acc shl 8) or (body[p + 2 + len - 8 + k].toLong() and 0xFF)
+                    }
+                }
             }
             p += 2 + len
         }
-        return null
+        android.util.Log.i("PgpSshBridge",
+            "issuingKeyId: issuer=" + (issuer?.let { "%016X".format(it) } ?: "none") +
+                ", issuerFpr=" + (issuerFpr?.let { "%016X".format(it) } ?: "none"))
+        return issuer ?: issuerFpr ?: run {
+            android.util.Log.w("PgpSshBridge", "no issuer subpacket found (unhashed len=$unhashedLen)")
+            null
+        }
     }
 
     private fun u16(b: ByteArray, p: Int): Int = ((b[p].toInt() and 0xFF) shl 8) or (b[p + 1].toInt() and 0xFF)

@@ -472,6 +472,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 .trySignDetached("offlinepass auth-subkey test".toByteArray(), null, reqData)
             ) {
                 is com.offlinepass.app.crypto.OpenPgpClient.SignDetached.Ok -> {
+                    android.util.Log.i("YubiKeySsh", "picker sign succeeded, armored " + r.armored.length + " chars")
                     val keyId = com.offlinepass.app.crypto.PgpSshBridge
                         .issuingKeyId(r.armored)
                     if (keyId != null) {
