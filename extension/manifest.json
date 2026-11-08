@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "offlinepass",
   "version": "0.1.0",
-  "description": "Receive offlinepass QRFT pastes" (security-key gated) and auto-fill them. Fully offline.",
+  "description": "Receive offlinepass QRFT pastes (security-key gated) and auto-fill them. Fully offline.",
   "action": {
     "default_title": "offlinepass"
   },
