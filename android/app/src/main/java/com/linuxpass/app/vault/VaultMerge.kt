@@ -33,10 +33,12 @@ object VaultMerge {
             .toMutableList()
         merged.deletedItemUuids = (newerIs.deletedItemUuids + olderIs.deletedItemUuids).toMutableSet()
         merged.removedDeviceIds = (newerIs.removedDeviceIds + olderIs.removedDeviceIds).toMutableSet()
-        // Paired paste devices: union by keyId (== id), minus removals —
-        // re-pairing the same key yields the same keyId, so this is idempotent.
+        // Paired paste devices: union by keyId (== id); on the same keyId the
+        // NEWER envelope's copy wins (items semantics) so seed re-wraps and
+        // restores propagate through sync (R3). Removals tombstone.
         val devices = LinkedHashMap<String, DeviceRecord>()
-        (olderIs.devices + newerIs.devices).forEach { devices.putIfAbsent(it.keyId, it) }
+        olderIs.devices.forEach { devices[it.keyId] = it }
+        newerIs.devices.forEach { devices[it.keyId] = it }
         merged.devices = devices.values
             .filter { it.keyId !in merged.removedDeviceIds }
             .toMutableList()

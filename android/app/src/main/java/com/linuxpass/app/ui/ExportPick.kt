@@ -79,40 +79,64 @@ fun ExportPickScreen(
 }
 
 /**
- * Second export step (Plan 2): if a Chrome extension device is paired, the
- * user picks the paste target — an encrypted-to-device paste, or the plain
- * QRFT (legacy receivers). With no devices paired this screen never shows.
+ * Second export step (Plan 2 rev 2): a checklist of paired paste devices,
+ * ALL PRE-SELECTED by default (redundancy matches the vault's multi-key
+ * model) — the paste is encrypted once and each selected key can open it.
+ * "No device (plain QRFT)" keeps the legacy readable-by-anyone export.
+ * With no devices paired this screen never shows.
  */
 @Composable
 fun ExportTargetPickScreen(
     count: Int,
     devices: List<DeviceRecord>,
     onBack: () -> Unit,
-    onTarget: (DeviceRecord?) -> Unit
+    onExport: (List<DeviceRecord>?) -> Unit
 ) {
+    val selected = remember(devices) {
+        mutableStateMapOf<String, Boolean>().apply { devices.forEach { put(it.keyId, true) } }
+    }
+    val picked = devices.filter { selected[it.keyId] == true }
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("← Back") }
-            Text("Paste target", style = MaterialTheme.typography.titleLarge)
+            Text("Paste targets", style = MaterialTheme.typography.titleLarge)
         }
         Text(
-            "$count entr${if (count == 1) "y" else "ies"} selected. " +
-                "Encrypted pastes can only be opened by the paired key (touch required).",
+            "$count entr${if (count == 1) "y" else "ies"} selected. Encrypted pastes " +
+                "open with ANY selected key (touch required).",
             style = MaterialTheme.typography.bodySmall
         )
-        Spacer(Modifier.height(12.dp))
-        devices.forEach { device ->
-            ListItem(
-                headlineContent = { Text(device.name) },
-                supportingContent = { Text("key ${device.keyId}") },
-                modifier = Modifier.fillMaxWidth().clickable { onTarget(device) }
-            )
-            HorizontalDivider()
+        LazyColumn(modifier = Modifier.weight(1f).padding(top = 8.dp)) {
+            items(devices, key = { it.keyId }) { device ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { selected[device.keyId] = !(selected[device.keyId] == true) },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = selected[device.keyId] == true,
+                        onCheckedChange = { checked -> selected[device.keyId] = checked }
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(device.name)
+                        Text("key ${device.keyId}", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                HorizontalDivider()
+            }
         }
-        ListItem(
-            headlineContent = { Text("No device (plain QRFT)") },
-            supportingContent = { Text("Anyone scanning the QR can read it") },
-            modifier = Modifier.fillMaxWidth().clickable { onTarget(null) }
-        )
+        Button(
+            onClick = { onExport(picked) },
+            enabled = picked.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (picked.size == 1) "Encrypt to ${picked[0].name}"
+                 else "Encrypt to ${picked.size} keys (any one opens it)")
+        }
+        TextButton(
+            onClick = { onExport(null) },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("No device (plain QRFT — anyone scanning can read it)") }
     }
 }

@@ -43,6 +43,12 @@ window.LpWrap = (function () {
     return sha256(concat(te.encode("linuxpass-device-v1"), credIdRaw));
   }
 
+  /** R1: stable identity — keyId derives from the credential, so re-wrapped
+   *  seeds / restored records keep the same keyId across machines. */
+  async function keyIdFor(credIdRaw) {
+    return bytesToHex((await sha256(credIdRaw)).slice(0, 8));
+  }
+
   function concat(a, b) {
     const out = new Uint8Array(a.length + b.length);
     out.set(a, 0); out.set(b, a.length);
@@ -137,7 +143,7 @@ window.LpWrap = (function () {
     // Public point = last 65 bytes of the SPKI DER.
     const spki = u8(await subtle.exportKey("spki", seedPair.publicKey));
     const pub = spki.slice(spki.length - 65);
-    const keyId = bytesToHex((await sha256(pub)).slice(0, 8));
+    const keyId = await keyIdFor(credIdRaw);
 
     return {
       id: keyId, keyId,
@@ -166,21 +172,34 @@ window.LpWrap = (function () {
 
   // -- paste wrap / unwrap --------------------------------------------------
 
-  /** Decrypts a wrapped paste JSON ({"type":"linuxpass-wrap",...}).
-   *  Requires a security-key touch. Returns the plaintext payload string. */
+  /** Decrypts a wrapped paste JSON (rev 2 `targets[]` format). Requires a
+   *  security-key touch. Returns the plaintext payload string. */
   async function unwrapPaste(record, wrappedJson) {
+    const seedPriv = await unwrapSeed(record);           // touch happens here
+    return unwrapPasteWithSeed(seedPriv, record, wrappedJson);
+  }
+
+  /** Shared decrypt path without the WebAuthn ceremony (self-test and the
+   *  post-touch flow both use this). */
+  async function unwrapPasteWithSeed(seedPriv, record, wrappedJson) {
     const w = JSON.parse(wrappedJson);
     if (w.type !== "linuxpass-wrap" || w.v !== 1) throw new Error("Not a wrapped paste.");
-    if (w.wrap.keyId !== record.keyId) throw new Error("Paste targets key " + w.wrap.keyId + " — paired key is " + record.keyId + ".");
-    const seedPriv = await unwrapSeed(record);           // touch happens here
-    const epk = await subtle.importKey("raw", ab(b64ToBytesRaw(w.wrap.epk)),
+    const target = (w.targets || []).find((t) => t.keyId === record.keyId);
+    if (!target) {
+      throw new Error("Paste has no target for key " + record.keyId + " (" + record.name + ").");
+    }
+    const epk = await subtle.importKey("raw", ab(b64ToBytesRaw(target.epk)),
       { name: "ECDH", namedCurve: "P-256" }, false, []);
     const shared = u8(await subtle.deriveBits({ name: "ECDH", public: epk }, seedPriv, 256));
-    const pasteKek = await hkdf(shared, hexToBytes(record.keyId), PASTE_INFO, 32);
-    const aad = te.encode("linuxpass-paste-wrap-v1:" + w.wrap.keyId + ":" + w.wrap.epk);
+    const cek = u8(await subtle.decrypt(
+      { name: "AES-GCM", iv: ab(b64ToBytesRaw(target.iv)),
+        additionalData: te.encode("linuxpass-paste-wrap-v1:" + target.keyId + ":" + target.epk) },
+      await importAes(await hkdf(shared, hexToBytes(record.keyId), PASTE_INFO, 32)),
+      ab(b64ToBytesRaw(target.ct))));
     const plain = await subtle.decrypt(
-      { name: "AES-GCM", iv: ab(b64ToBytesRaw(w.iv)), additionalData: aad },
-      await importAes(pasteKek), ab(b64ToBytesRaw(w.ct)));
+      { name: "AES-GCM", iv: ab(b64ToBytesRaw(w.payload.iv)),
+        additionalData: PASTE_INFO },
+      await importAes(cek), ab(b64ToBytesRaw(w.payload.ct)));
     return td.decode(plain);
   }
 
@@ -220,7 +239,8 @@ window.LpWrap = (function () {
     return { code: String(code).padStart(digits, "0"), period, secondsLeft: period - (Math.floor(Date.now() / 1000) % period) };
   }
 
-  return { createPairing, finishPairing, unwrapPaste, prfEval, prfSalt, hkdf, sha256, totp,
+  return { createPairing, finishPairing, unwrapPaste, unwrapPasteWithSeed,
+           prfEval, prfSalt, keyIdFor, hkdf, sha256, totp,
            SEED_INFO, PASTE_INFO, SEED_AAD,
            b64: bytesRawToB64, unb64: b64ToBytesRaw, bytesToHex, hexToBytes };
 })();

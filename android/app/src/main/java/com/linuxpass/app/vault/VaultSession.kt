@@ -511,14 +511,20 @@ object VaultSession {
 
     fun pairedDevices(): List<DeviceRecord> = loadedEnvelope?.devices ?: emptyList()
 
-    /** Adds a pairing record scanned from the extension's QR. No-op (false)
-     *  when the same keyId is already paired. Persists via save(). */
-    fun stagePairedDevice(record: DeviceRecord): Boolean {
-        val env = loadedEnvelope ?: return false
-        if (env.devices.any { it.keyId == record.keyId }) return false
+    /** Adds or updates a pairing record scanned from the extension's QR
+     *  (R2: re-wrapped seeds / restored pairings update in place — newer
+     *  wins). Persists via save(). */
+    fun stagePairedDevice(record: DeviceRecord): String {
+        val env = loadedEnvelope ?: return "no-vault"
+        val existing = env.devices.firstOrNull { it.keyId == record.keyId }
+        if (existing != null && existing == record) return "unchanged"
         env.removedDeviceIds.remove(record.keyId)
+        if (existing != null) {
+            env.devices[env.devices.indexOf(existing)] = record
+            return "updated"
+        }
         env.devices.add(record)
-        return true
+        return "added"
     }
 
     /** Unpairs: removes the record and tombstones the id so merges/syncs

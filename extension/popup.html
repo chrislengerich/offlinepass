@@ -8,6 +8,10 @@
     h1 { font-size: 1.1rem; margin: 0 0 10px; }
     .dev { font-size: 0.8rem; color: #9fe29f; margin-bottom: 10px; }
     .dev.none { color: #ffd75e; }
+    .devrow { display: flex; align-items: center; justify-content: space-between;
+              font-size: 0.78rem; color: #9fe29f; margin-bottom: 4px; }
+    .devrow button { width: auto; margin: 0; padding: 2px 8px; font-size: 0.7rem;
+                     background: #3a3f4a; }
     button { display: block; width: 100%; margin-bottom: 8px; padding: 8px; font-size: 0.9rem;
              border: 0; border-radius: 6px; background: #2c62d1; color: #fff; cursor: pointer; }
     button.secondary { background: #3a3f4a; }
@@ -18,11 +22,13 @@
 <body>
   <h1>linuxpass</h1>
   <div id="dev" class="dev none">No security key paired yet.</div>
+  <div id="devlist"></div>
   <button id="btn_scan">Scan a paste (auto-fill)</button>
   <button id="btn_pair" class="secondary">Pair a security key</button>
   <button id="btn_test" class="secondary">Run self-test</button>
   <div id="msg"></div>
   <a href="#" id="lnk_docs">docs/extension-protocol.md in the repo</a>
+  <script src="lib/store.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

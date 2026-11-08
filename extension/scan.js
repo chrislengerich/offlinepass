@@ -64,7 +64,7 @@ function handlePayload(name, text) {
     msgEl.textContent = "Payload is not JSON: " + e.message; return;
   }
   if (obj && obj.type === "linuxpass-device") {
-    msgEl.textContent = "That is a pairing QR — the phone scans it, not this window.";
+    offerRestore(obj.device).catch((e) => { msgEl.textContent = "Restore failed: " + (e.message || e.name); });
     return;
   }
   if (obj && obj.type === "linuxpass-wrap") {
@@ -104,28 +104,63 @@ function parseProtonItems(obj) {
 }
 
 async function prepareDecrypt(text) {
-  const wrap = JSON.parse(text).wrap;
-  const record = await LpStore.byKeyId(wrap.keyId);
-  if (!record) {
-    msgEl.textContent = "No paired key for keyId " + wrap.keyId + " — pair it first (toolbar → Pair a security key).";
+  const w = JSON.parse(text);
+  const devices = await LpStore.devices();
+  // Any one of the paste's targets that we have locally will open it.
+  const match = (w.targets || [])
+    .map((t) => devices.find((d) => d.keyId === t.keyId))
+    .find(Boolean);
+  if (!match) {
+    msgEl.textContent = "No paired key for " +
+      (w.targets || []).map((t) => t.keyId).join(", ") +
+      " — pair it first (toolbar → Pair a security key) or restore the pairing QR.";
     return;
   }
   // Explicit button: the security-key touch is a deliberate user action,
   // and the click guarantees a user gesture for the WebAuthn ceremony.
-  msgEl.textContent = "Encrypted paste for key \"" + record.name + "\" — touch to decrypt.";
+  msgEl.textContent = "Encrypted paste for key \"" + match.name + "\" — insert + touch it.";
   const btn = document.createElement("button");
   btn.textContent = "Decrypt (touch key)";
   btn.addEventListener("click", async () => {
     btn.disabled = true;
     msgEl.textContent = "Touch your security key…";
     try {
-      const plain = await LpWrap.unwrapPaste(record, text);
-      msgEl.textContent = "Decrypted (key " + record.name + ").";
+      const plain = await LpWrap.unwrapPaste(match, text);
+      msgEl.textContent = "Decrypted (key " + match.name + ").";
       showEntries(parseProtonItems(JSON.parse(plain)));
     } catch (e) {
       msgEl.textContent = "Decrypt failed: " + (e.message || e.name);
       btn.disabled = false;
     }
+  });
+  entriesEl.append(btn);
+}
+
+/** R2: the phone's "Show pairing QR" re-displays a pairing record (the
+ *  vault carries the wrapped seed) — restore it into this browser instead
+ *  of re-pairing (same key, same keyId, no duplicate records). */
+async function offerRestore(device) {
+  done = true;
+  stopCamera();
+  video.remove();
+  progressEl.textContent = "";
+  if (!device || !device.keyId || !device.wrapped) {
+    msgEl.textContent = "Malformed pairing record."; return;
+  }
+  const existing = await LpStore.byKeyId(device.keyId);
+  const identical = existing && existing.wrapped && existing.wrapped.ct === device.wrapped.ct;
+  msgEl.textContent = "Pairing record for \"" + (device.name || "security key") +
+    "\" (key " + device.keyId + ")." +
+    (identical ? " Already paired here — nothing to do." : "");
+  if (identical) return;
+  const btn = document.createElement("button");
+  btn.textContent = existing ? "Replace existing record" : "Restore pairing on this browser";
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    await LpStore.addDevice(device);
+    msgEl.textContent = "Restored \"" + device.name + "\" — pastes to key " + device.keyId +
+      " work on this browser now (touch the key to decrypt).";
+    setTimeout(() => window.close(), 1500);
   });
   entriesEl.append(btn);
 }

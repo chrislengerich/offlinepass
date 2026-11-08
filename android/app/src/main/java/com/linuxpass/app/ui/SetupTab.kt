@@ -39,6 +39,7 @@ fun SetupTabScreen(
     onExportQrft: () -> Unit,
     onImportQrft: () -> Unit,
     pairedDevices: List<com.linuxpass.app.vault.DeviceRecord> = emptyList(),
+    onShowDeviceQr: (com.linuxpass.app.vault.DeviceRecord) -> Unit = {},
     onRemoveDevice: (String) -> Unit = {}
 ) {
     val cfg = VaultSession.config()
@@ -159,9 +160,15 @@ fun SetupTabScreen(
                     Text(device.name)
                     Text("key ${device.keyId}", style = MaterialTheme.typography.bodySmall)
                 }
+                TextButton(onClick = { onShowDeviceQr(device) }) { Text("Show QR") }
                 TextButton(onClick = { onRemoveDevice(device.keyId) }) { Text("Remove") }
             }
         }
+        Text(
+            "\"Show QR\" re-displays a pairing record (e.g. after losing the " +
+                "Chromebook's browser profile: scan it with the extension to restore).",
+            style = MaterialTheme.typography.bodySmall
+        )
         HorizontalDivider()
 
         Text("Autofill", style = MaterialTheme.typography.titleSmall)

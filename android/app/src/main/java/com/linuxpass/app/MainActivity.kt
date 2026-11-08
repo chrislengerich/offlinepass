@@ -535,21 +535,19 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     count = s.items.size,
                     devices = VaultSession.pairedDevices(),
                     onBack = { screen = Screen.ExportPick },
-                    onTarget = { device ->
+                    onExport = { targets ->
                         lifecycleScope.launch {
                             val payload = pickedPayload(s.items)
-                            if (device == null) {
+                            if (targets == null) {
                                 screen = Screen.QrftPayload(payload)
                             } else {
-                                screen = try {
-                                    Screen.QrftPayload(DeviceWrap.wrap(payload, device))
+                                try {
+                                    screen = Screen.QrftPayload(DeviceWrap.wrap(payload, targets))
+                                    saveToast("Paste encrypted to ${targets.size} key${if (targets.size == 1) "" else "s"}")
                                 } catch (e: Exception) {
                                     status = "Device-wrap failed: ${e.message}"
-                                    Screen.ExportPick
+                                    screen = Screen.ExportPick
                                 }
-                            }
-                            if (screen is Screen.QrftPayload && device != null) {
-                                saveToast("Paste encrypted to ${device.name}")
                             }
                         }
                     }
@@ -590,6 +588,16 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onExportQrft = { screen = Screen.ExportPick },
                     onImportQrft = { cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA) },
                     pairedDevices = VaultSession.pairedDevices(),
+                    onShowDeviceQr = { device ->
+                        // R2: the vault record IS the pairing backup — show
+                        // it as a QRFT loop; the extension's scan window
+                        // restores it (same key, same keyId, no re-pair).
+                        val recordJson = org.json.JSONObject()
+                            .put("type", "linuxpass-device")
+                            .put("device", device.toJsonObject())
+                            .toString()
+                        screen = Screen.QrftPayload(recordJson)
+                    },
                     onRemoveDevice = { keyId ->
                         lifecycleScope.launch {
                             if (VaultSession.stageRemoveDevice(keyId)) {
@@ -694,29 +702,41 @@ class MainActivity : androidx.activity.ComponentActivity() {
         return arr.toString()
     }
 
+    /** Persist a staged pairing record (add or update): encrypt + commit. */
+    private suspend fun savePairing(record: DeviceRecord, toastBase: String, statusBase: String) {
+        screen = Screen.Setup
+        status = when (val r = saveLoop(unlockedItems())) {
+            VaultSession.Result.Success -> {
+                saveToast("$toastBase ${record.name}")
+                "$statusBase ${record.name} (key ${record.keyId})."
+            }
+            else -> "Pairing save: $r"
+        }
+        if (status.startsWith("Pairing save:")) {
+            android.widget.Toast.makeText(this, status, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
     /** Import-from-QRFT: pairing records go to the devices list, everything
      *  else is parsed as a Proton JSON export (array, single item, or
      *  envelope), deduped against the local vault by itemUuid KEEPING THE
      *  LOCAL VERSION on conflict, then saved. */
     private suspend fun importQrftPayload(raw: String) {
         // Extension pairing QR (the pair page emits it as a tiny QRFT
-        // transfer): stage the record into the envelope and save.
+        // transfer): stage the record into the envelope and save. Re-scans
+        // with a re-wrapped seed update the record in place (R2).
         DeviceRecord.fromPayload(raw)?.let { record ->
-            if (VaultSession.stagePairedDevice(record)) {
-                screen = Screen.Setup
-                status = when (val r = saveLoop(unlockedItems())) {
-                    VaultSession.Result.Success -> {
-                        saveToast("Paired paste device ${record.name}")
-                        "Paired paste device ${record.name} (key ${record.keyId})."
-                    }
-                    else -> "Pairing save: $r"
+            when (VaultSession.stagePairedDevice(record)) {
+                "unchanged" -> {
+                    screen = Screen.Setup
+                    status = "Key ${record.keyId} (${record.name}) already paired."
                 }
-                if (status.startsWith("Pairing save:")) {
-                    android.widget.Toast.makeText(this, status, android.widget.Toast.LENGTH_LONG).show()
+                "added" -> savePairing(record, "Paired paste device", "Paired paste device")
+                "updated" -> savePairing(record, "Updated paste device", "Paste device re-wrapped")
+                else -> {
+                    screen = Screen.Setup
+                    status = "Unlock the vault before pairing a paste device."
                 }
-            } else {
-                screen = Screen.Setup
-                status = "Key ${record.keyId} already paired."
             }
             return
         }

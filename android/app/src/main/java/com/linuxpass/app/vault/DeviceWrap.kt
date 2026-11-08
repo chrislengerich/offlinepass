@@ -4,6 +4,8 @@ import java.math.BigInteger
 import java.security.AlgorithmParameters
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
+import java.security.PrivateKey
+import java.security.PublicKey
 import java.security.SecureRandom
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
@@ -17,11 +19,16 @@ import javax.crypto.KeyAgreement
 import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Device-wrap: encrypts a QRFT paste payload to a paired Chrome extension
- * (Plan 2, docs/extension-protocol.md).
+ * Device-wrap: encrypts a QRFT paste payload to paired Chrome extensions
+ * (Plan 2 rev 2, docs/extension-protocol.md).
+ *
+ * Wrap-once, target-many: the payload is encrypted once under a random CEK;
+ * every selected paired key gets its own wrapped-CEK blob. Any one of the
+ * selected keys can open the paste.
  *
  * Standard primitives only (per plan: no hand-rolled crypto):
  *   ephemeral ECDH P-256 → shared X   (KeyAgreement "ECDH")
@@ -29,83 +36,112 @@ import org.json.JSONObject
  *                                    no HKDF; this is the standard extract/
  *                                    expand construction, cross-checked
  *                                    against WebCrypto by fixed vectors)
- *   AES-256-GCM, AAD-bound header   (Cipher "AES/GCM/NoPadding")
+ *   AES-256-GCM, AAD-bound layers   (Cipher "AES/GCM/NoPadding")
  *
  * Wire format (the QRFT payload string the generator page transmits):
  * {"v":1,"type":"linuxpass-wrap",
- *  "wrap":{"keyId":"<hex8 of SHA-256(device pub)>","epk":"<b64 raw point>"},
- *  "iv":"<b64>","ct":"<b64>"}
+ *  "payload":{"iv":"<b64>","ct":"<b64>"},
+ *  "targets":[{"keyId":"<hex8 of SHA-256(credId)>","epk":"<b64 raw point>",
+ *              "iv":"<b64>","ct":"<b64>"}]}
  */
 object DeviceWrap {
 
     const val TYPE = "linuxpass-wrap"
     private const val VERSION = 1
     private val PASTE_INFO = "linuxpass-paste-wrap-v1".toByteArray(Charsets.UTF_8)
+    private const val AAD_PREFIX = "linuxpass-paste-wrap-v1:"
 
-    /** Wraps [payloadJson] to the device described by [device]. */
-    fun wrap(payloadJson: String, device: DeviceRecord): String {
+    /** Wraps [payloadJson] to every device in [devices] (≥1 required). */
+    fun wrap(payloadJson: String, devices: List<DeviceRecord>): String {
+        require(devices.isNotEmpty()) { "No paste targets selected" }
+        val random = SecureRandom()
+        val cek = ByteArray(32).also(random::nextBytes)
+        val payloadIv = ByteArray(12).also(random::nextBytes)
+        val payloadCt = aesGcmEncrypt(cek, payloadIv, PASTE_INFO, payloadJson.toByteArray(Charsets.UTF_8))
+
         val gen = KeyPairGenerator.getInstance("EC").apply {
             initialize(ECGenParameterSpec("secp256r1"))
         }
-        val eph = gen.generateKeyPair()
-        val ephPubRaw = rawPoint((eph.public as ECPublicKey).w)
-        return core(payloadJson, rawPointB64(device.pub), device.keyId, eph.private, ephPubRaw,
-            ByteArray(12).also { SecureRandom().nextBytes(it) })
-    }
-
-    /** Deterministic core (test-visible): fixed ephemeral key + IV. */
-    internal fun wrapDeterministic(
-        payloadJson: String,
-        devicePubRaw: ByteArray,
-        keyIdHex: String,
-        ephPrivScalar: ByteArray,
-        ephPubRaw: ByteArray,
-        iv: ByteArray
-    ): String {
-        val params = p256Params()
-        val priv = KeyFactory.getInstance("EC").generatePrivate(
-            ECPrivateKeySpec(BigInteger(1, ephPrivScalar), params))
-        return core(payloadJson, devicePubRaw, keyIdHex, priv, ephPubRaw, iv)
-    }
-
-    private fun core(
-        payloadJson: String,
-        devicePubRaw: ByteArray,
-        keyIdHex: String,
-        ephPriv: java.security.PrivateKey,
-        ephPubRaw: ByteArray,
-        iv: ByteArray
-    ): String {
-        val devicePub = importPublicKey(devicePubRaw)
-        val agreement = KeyAgreement.getInstance("ECDH")
-        agreement.init(ephPriv)
-        agreement.doPhase(devicePub, true)
-        val sharedX = agreement.generateSecret() // X coordinate, zero-padded
-
-        val wrapKek = Hkdf.derive(sharedX, keyIdHex.hexToBytes(), PASTE_INFO, 32)
-        val aad = "$PASTE_AAD_PREFIX$keyIdHex:${Base64.getEncoder().encodeToString(ephPubRaw)}"
-            .toByteArray(Charsets.UTF_8)
-
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(wrapKek, "AES"), GCMParameterSpec(128, iv))
-        cipher.updateAAD(aad)
-        val ct = cipher.doFinal(payloadJson.toByteArray(Charsets.UTF_8))
-
-        val b64 = Base64.getEncoder()
+        val targets = JSONArray()
+        for (device in devices) {
+            val eph = gen.generateKeyPair()
+            val ephPubRaw = rawPoint((eph.public as ECPublicKey).w)
+            val kek = targetKek(device.pub.decodeB64(), device.keyId, eph.private, ephPubRaw)
+            val iv = ByteArray(12).also(random::nextBytes)
+            val aad = "$AAD_PREFIX${device.keyId}:${ephPubRaw.encodeB64()}"
+            val ct = aesGcmEncrypt(kek, iv, aad.toByteArray(Charsets.UTF_8), cek)
+            targets.put(JSONObject()
+                .put("keyId", device.keyId)
+                .put("epk", ephPubRaw.encodeB64())
+                .put("iv", iv.encodeB64())
+                .put("ct", ct.encodeB64()))
+        }
         return JSONObject()
             .put("v", VERSION)
             .put("type", TYPE)
-            .put("wrap", JSONObject()
-                .put("keyId", keyIdHex)
-                .put("epk", b64.encodeToString(ephPubRaw)))
-            .put("iv", b64.encodeToString(iv))
-            .put("ct", b64.encodeToString(ct))
+            .put("payload", JSONObject()
+                .put("iv", payloadIv.encodeB64())
+                .put("ct", payloadCt.encodeB64()))
+            .put("targets", targets)
             .toString()
     }
 
-    // -- key parsing ----------------------------------------------------------
+    /** Deterministic core (test-visible): pinned CEK + per-target keys/IVs. */
+    internal data class TestTarget(
+        val devicePubRaw: ByteArray,
+        val keyIdHex: String,
+        val ephScalar: ByteArray,
+        val ephPubRaw: ByteArray,
+        val iv: ByteArray
+    )
 
-    private const val PASTE_AAD_PREFIX = "linuxpass-paste-wrap-v1:"
+    internal fun wrapDeterministic(payloadJson: String, cek: ByteArray, targets: List<TestTarget>): String {
+        val payloadIv = byteArrayOf(0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c)
+        val payloadCt = aesGcmEncrypt(cek, payloadIv, PASTE_INFO, payloadJson.toByteArray(Charsets.UTF_8))
+        val params = p256Params()
+        val factory = KeyFactory.getInstance("EC")
+        val arr = JSONArray()
+        for (t in targets) {
+            val ephPriv: PrivateKey = factory.generatePrivate(
+                ECPrivateKeySpec(BigInteger(1, t.ephScalar), params))
+            val kek = targetKek(t.devicePubRaw, t.keyIdHex, ephPriv, t.ephPubRaw)
+            val aad = "$AAD_PREFIX${t.keyIdHex}:${t.ephPubRaw.encodeB64()}"
+            val ct = aesGcmEncrypt(kek, t.iv, aad.toByteArray(Charsets.UTF_8), cek)
+            arr.put(JSONObject()
+                .put("keyId", t.keyIdHex)
+                .put("epk", t.ephPubRaw.encodeB64())
+                .put("iv", t.iv.encodeB64())
+                .put("ct", ct.encodeB64()))
+        }
+        return JSONObject()
+            .put("v", VERSION)
+            .put("type", TYPE)
+            .put("payload", JSONObject()
+                .put("iv", payloadIv.encodeB64())
+                .put("ct", payloadCt.encodeB64()))
+            .put("targets", arr)
+            .toString()
+    }
+
+    // -- crypto helpers -------------------------------------------------------
+
+    /** ECDH(ephPriv, devicePub) → HKDF-SHA256(shared, salt = keyId, info). */
+    private fun targetKek(devicePubRaw: ByteArray, keyIdHex: String, ephPriv: PrivateKey, ephPubRaw: ByteArray): ByteArray {
+        val agreement = KeyAgreement.getInstance("ECDH")
+        agreement.init(ephPriv)
+        agreement.doPhase(importPublicKey(devicePubRaw), true)
+        val sharedX = agreement.generateSecret() // X coordinate, zero-padded
+        return Hkdf.derive(sharedX, keyIdHex.hexToBytes(), PASTE_INFO, 32)
+    }
+
+    private fun aesGcmEncrypt(key: ByteArray, iv: ByteArray, aad: ByteArray, plaintext: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
+        cipher.updateAAD(aad)
+        return cipher.doFinal(plaintext)
+    }
+
+    // -- key parsing ----------------------------------------------------------
 
     private fun p256Params(): ECParameterSpec =
         AlgorithmParameters.getInstance("EC").apply {
@@ -113,7 +149,7 @@ object DeviceWrap {
         }.getParameterSpec(ECParameterSpec::class.java)
 
     /** 65-byte uncompressed point (0x04 || X || Y) → JCE public key. */
-    private fun importPublicKey(raw: ByteArray): java.security.PublicKey {
+    private fun importPublicKey(raw: ByteArray): PublicKey {
         require(raw.size == 65 && raw[0] == 0x04.toByte()) { "Not an uncompressed P-256 point" }
         val half = 32
         val x = BigInteger(1, raw.copyOfRange(1, 1 + half))
@@ -132,15 +168,15 @@ object DeviceWrap {
         return byteArrayOf(0x04) + pad(w.affineX) + pad(w.affineY)
     }
 
-    private fun rawPointB64(b64: String): ByteArray =
-        Base64.getDecoder().decode(b64)
-
     private fun String.hexToBytes(): ByteArray {
         require(length % 2 == 0) { "Bad hex" }
         return ByteArray(length / 2) { i ->
             substring(i * 2, i * 2 + 2).toInt(16).toByte()
         }
     }
+
+    private fun ByteArray.encodeB64(): String = Base64.getEncoder().encodeToString(this)
+    private fun String.decodeB64(): ByteArray = Base64.getDecoder().decode(this)
 }
 
 /** RFC 5869 HKDF-SHA256 (extract + expand). Test vectors pin the parameters
