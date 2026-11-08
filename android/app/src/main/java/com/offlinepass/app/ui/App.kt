@@ -62,10 +62,7 @@ fun SetupChoiceScreen(
 
     val importPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
-    ) { uri -> uri?.let {
-        // A Proton import into a NEW vault is local-only by definition.
-        onImportProton(if (mode == "new") null else remote.trim().ifBlank { null }, pat.trim(), it)
-    } }
+    ) { uri -> uri?.let { onImportProton(null, "", it) } }
 
     Column(
         modifier = Modifier
@@ -105,11 +102,6 @@ fun SetupChoiceScreen(
                 enabled = recipientIds.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Create local-only vault") }
-            Button(
-                onClick = { importPicker.launch(arrayOf("*/*")) },
-                enabled = recipientIds.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Import from Proton Pass export") }
         } else {
             OutlinedTextField(
                 value = remote, onValueChange = { remote = it },
@@ -135,6 +127,11 @@ fun SetupChoiceScreen(
                 }) { Text("Load from GitHub") }
                 OutlinedButton(onClick = { onLoadUsb() }) { Text("Load from USB file") }
             }
+            Text("Or bring an existing vault here:", style = MaterialTheme.typography.bodySmall)
+            Button(
+                onClick = { importPicker.launch(arrayOf("*/*")) },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Import from Proton Pass export (local-only)") }
         }
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
     }
