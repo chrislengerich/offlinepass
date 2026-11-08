@@ -507,6 +507,30 @@ object VaultSession {
     fun vaultFilePath(): String = vaultFile().absolutePath
     fun currentRev(): Long = rev
 
+    // -- paired paste devices (Chrome extension; Plan 2) ---------------------
+
+    fun pairedDevices(): List<DeviceRecord> = loadedEnvelope?.devices ?: emptyList()
+
+    /** Adds a pairing record scanned from the extension's QR. No-op (false)
+     *  when the same keyId is already paired. Persists via save(). */
+    fun stagePairedDevice(record: DeviceRecord): Boolean {
+        val env = loadedEnvelope ?: return false
+        if (env.devices.any { it.keyId == record.keyId }) return false
+        env.removedDeviceIds.remove(record.keyId)
+        env.devices.add(record)
+        return true
+    }
+
+    /** Unpairs: removes the record and tombstones the id so merges/syncs
+     *  from other devices don't resurrect it. Persists via save(). */
+    fun stageRemoveDevice(keyId: String): Boolean {
+        val env = loadedEnvelope ?: return false
+        val before = env.devices.size
+        env.devices.removeAll { it.keyId == keyId }
+        env.removedDeviceIds.add(keyId)
+        return env.devices.size != before
+    }
+
     /** Deletes with a tombstone (survives merges/syncs). */
     suspend fun delete(item: ProtonItem): Result {
         loadedEnvelope?.deletedItemUuids?.add(item.itemUuid)

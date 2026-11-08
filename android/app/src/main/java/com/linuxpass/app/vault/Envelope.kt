@@ -16,6 +16,10 @@ data class Envelope(
     var items: MutableList<ProtonItem> = mutableListOf(),
     /** `itemUuid`s deleted here (or seen deleted elsewhere); survives merges. */
     var deletedItemUuids: MutableSet<String> = mutableSetOf(),
+    /** Paired paste targets (Chrome extension security keys); union-merged. */
+    var devices: MutableList<DeviceRecord> = mutableListOf(),
+    /** Device records removed on any side; merges honor these. */
+    var removedDeviceIds: MutableSet<String> = mutableSetOf(),
     /** Any top-level fields the app does not model, preserved verbatim. */
     var extraFields: MutableMap<String, Any?> = linkedMapOf()
 ) {
@@ -33,6 +37,12 @@ data class Envelope(
             .put("rev", rev)
             .put("deviceId", deviceId)
             .put("deletedItemUuids", JSONArray().apply { deletedItemUuids.forEach { put(it) } })
+        if (devices.isNotEmpty()) {
+            out.put("devices", JSONArray().apply { devices.forEach { put(it.toJsonObject()) } })
+        }
+        if (removedDeviceIds.isNotEmpty()) {
+            out.put("removedDeviceIds", JSONArray().apply { removedDeviceIds.forEach { put(it) } })
+        }
         extraFields.forEach { (k, v) -> if (out.has(k).not()) out.put(k, v ?: JSONObject.NULL) }
         return out
     }
@@ -61,7 +71,8 @@ data class Envelope(
                 items += ProtonItem.fromJson(obj)
             }
             items.sortBy { it.displayName.lowercase() }
-            val known = setOf("userId", "version", "vaults", "rev", "deviceId", "deletedItemUuids")
+            val known = setOf("userId", "version", "vaults", "rev", "deviceId", "deletedItemUuids",
+                "devices", "removedDeviceIds")
             val extras = linkedMapOf<String, Any?>()
             for (key in obj.keys()) if (key !in known) extras[key] = obj.get(key)
             return Envelope(
@@ -69,6 +80,12 @@ data class Envelope(
                 deviceId = obj.optString("deviceId", ""),
                 items = items,
                 deletedItemUuids = obj.optJSONArray("deletedItemUuids")
+                    ?.let { a -> (0 until a.length()).map { a.getString(it) }.toMutableSet() }
+                    ?: mutableSetOf(),
+                devices = obj.optJSONArray("devices")
+                    ?.let { a -> (0 until a.length()).mapNotNull { DeviceRecord.fromJson(a.getJSONObject(it)) }.toMutableList() }
+                    ?: mutableListOf(),
+                removedDeviceIds = obj.optJSONArray("removedDeviceIds")
                     ?.let { a -> (0 until a.length()).map { a.getString(it) }.toMutableSet() }
                     ?: mutableSetOf(),
                 extraFields = extras

@@ -158,7 +158,14 @@ cd android && ./gradlew :app:assembleDebug
   entries)" encodes a JSON array of the selected entries into the looping
   QR sender; "Import from QRFT (scan)" opens the in-app camera scanner
   (vendored jsQR + pako) to reassemble it on another device. Imports
-  dedupe by `itemUuid` — the local version wins on conflict.
+  dedupe by `itemUuid` — the local version wins on conflict. With a
+  **paste device** paired (Chrome extension, below), the export offers an
+  encrypted-to-device paste instead of plaintext.
+- **Paste devices (Chrome extension)** — pairs a security key so the
+  Chromebook can receive single-entry pastes and auto-fill them in the
+  browser: extension pairs (WebAuthn PRF, touch-gated) and shows a QR that
+  "Import from QRFT" stores; exports can then be wrapped to that key.
+  Protocol and threat model: [`docs/extension-protocol.md`](docs/extension-protocol.md).
 - **Sync** — explicit "Sync now" with divergence detection: behind →
   fast-forward, diverged → union-merge and re-encrypt; local-only mode runs
   the same repo without a remote.

@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>linuxpass — self-test</title>
+  <style>
+    body { font-family: monospace; background: #16181d; color: #eee; padding: 16px; max-width: 720px; margin: 0 auto; }
+    .ok { color: #9fe29f; } .fail { color: #ff7f7f; }
+  </style>
+</head>
+<body>
+  <h3>linuxpass extension self-test (fixed vectors from scripts/gen_device_wrap_vectors.py)</h3>
+  <div id="out"></div>
+  <script src="vendor/pako.min.js"></script>
+  <script src="lib/qrft.js"></script>
+  <script src="lib/wrap.js"></script>
+  <script src="selftest.js"></script>
+</body>
+</html>

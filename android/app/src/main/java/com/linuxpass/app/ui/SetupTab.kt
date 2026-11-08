@@ -37,7 +37,9 @@ fun SetupTabScreen(
     onScreenLockToggle: (Boolean) -> Unit,
     onLock: () -> Unit,
     onExportQrft: () -> Unit,
-    onImportQrft: () -> Unit
+    onImportQrft: () -> Unit,
+    pairedDevices: List<com.linuxpass.app.vault.DeviceRecord> = emptyList(),
+    onRemoveDevice: (String) -> Unit = {}
 ) {
     val cfg = VaultSession.config()
     var patInput by remember { mutableStateOf("") }
@@ -137,6 +139,28 @@ fun SetupTabScreen(
         }
         Button(onClick = onImportQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Import from QRFT (scan)")
+        }
+        HorizontalDivider()
+
+        Text("Paste devices (Chrome extension)", style = MaterialTheme.typography.titleSmall)
+        if (pairedDevices.isEmpty()) {
+            Text(
+                "None paired. In the browser extension, choose \"Pair a security key\" " +
+                    "and scan its QR with \"Import from QRFT\" above.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        pairedDevices.forEach { device ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(device.name)
+                    Text("key ${device.keyId}", style = MaterialTheme.typography.bodySmall)
+                }
+                TextButton(onClick = { onRemoveDevice(device.keyId) }) { Text("Remove") }
+            }
         }
         HorizontalDivider()
 

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>linuxpass — pair a security key</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #16181d; color: #eee; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 16px; }
+    #msg { font-size: 1rem; color: #ffd75e; min-height: 1.4em; margin-bottom: 8px; }
+    #qr { background: #fff; padding: 8px; display: inline-block; border-radius: 8px; min-height: 336px; min-width: 336px; }
+    input { padding: 6px; font-size: 0.9rem; border-radius: 6px; border: 0; width: 240px; }
+    button { padding: 8px 14px; font-size: 0.9rem; border: 0; border-radius: 6px;
+             background: #2c62d1; color: #fff; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .row { margin: 10px 0; display: flex; gap: 8px; align-items: center; }
+    .hint { font-size: 0.8rem; color: #9aa3b2; max-width: 620px; }
+    pre { font-size: 0.7rem; color: #9fe29f; max-width: 620px; white-space: pre-wrap; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div id="msg">Pairing creates a credential in your security key (2 touches). The phone scans the QR to store the paste target.</div>
+    <div class="row">
+      <input id="name" placeholder="Device name (e.g. ko-yk5)" value="chromebook" />
+      <button id="btn_pair">Pair security key</button>
+      <button id="btn_show" disabled>Show pairing QR again</button>
+    </div>
+    <div id="qr"></div>
+    <pre id="record"></pre>
+    <p class="hint">Keep this key safe: pastes encrypted to it can only be decrypted with it (touch required). To unpair, delete the matching entry from the phone's Setup screen.</p>
+  </div>
+  <script src="vendor/qrcode.min.js"></script>
+  <script src="lib/qrft.js"></script>
+  <script src="lib/wrap.js"></script>
+  <script src="lib/store.js"></script>
+  <script src="pair.js"></script>
+</body>
+</html>

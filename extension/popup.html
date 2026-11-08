@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>linuxpass</title>
+  <style>
+    body { font-family: Arial, sans-serif; width: 300px; margin: 0; padding: 12px; background: #16181d; color: #eee; }
+    h1 { font-size: 1.1rem; margin: 0 0 10px; }
+    .dev { font-size: 0.8rem; color: #9fe29f; margin-bottom: 10px; }
+    .dev.none { color: #ffd75e; }
+    button { display: block; width: 100%; margin-bottom: 8px; padding: 8px; font-size: 0.9rem;
+             border: 0; border-radius: 6px; background: #2c62d1; color: #fff; cursor: pointer; }
+    button.secondary { background: #3a3f4a; }
+    a { color: #7fa7ff; font-size: 0.75rem; }
+    #msg { font-size: 0.75rem; color: #ffd75e; min-height: 1em; }
+  </style>
+</head>
+<body>
+  <h1>linuxpass</h1>
+  <div id="dev" class="dev none">No security key paired yet.</div>
+  <button id="btn_scan">Scan a paste (auto-fill)</button>
+  <button id="btn_pair" class="secondary">Pair a security key</button>
+  <button id="btn_test" class="secondary">Run self-test</button>
+  <div id="msg"></div>
+  <a href="#" id="lnk_docs">docs/extension-protocol.md in the repo</a>
+  <script src="popup.js"></script>
+</body>
+</html>

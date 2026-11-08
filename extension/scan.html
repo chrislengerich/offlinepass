@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>linuxpass — scan paste</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #16181d; color: #eee; }
+    .wrap { max-width: 640px; margin: 0 auto; padding: 12px; }
+    #msg { font-size: 1rem; color: #ffd75e; min-height: 1.4em; margin-bottom: 8px; }
+    #progress { font-size: 0.85rem; color: #9fe29f; min-height: 1.2em; margin-bottom: 8px; }
+    video { width: 100%; border-radius: 8px; background: #000; }
+    .entry { border: 1px solid #3a3f4a; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+    .entry h3 { margin: 0 0 6px; font-size: 1rem; }
+    .kv { font-size: 0.85rem; margin: 2px 0; word-break: break-all; }
+    .kv .v { color: #9fe29f; }
+    button { padding: 7px 12px; font-size: 0.85rem; border: 0; border-radius: 6px;
+             background: #2c62d1; color: #fff; cursor: pointer; margin-right: 6px; }
+    button.secondary { background: #3a3f4a; }
+    .totp { font-size: 1.2rem; font-family: monospace; color: #7fd7ff; letter-spacing: 2px; }
+    #fillmsg { font-size: 0.9rem; color: #ffd75e; min-height: 1.2em; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div id="msg">Point the camera at the phone's looping QR…</div>
+    <div id="progress"></div>
+    <div id="camera"><video id="v" autoplay playsinline muted></video></div>
+    <div id="entries"></div>
+    <div id="fillmsg"></div>
+  </div>
+  <canvas id="c" hidden></canvas>
+  <script src="vendor/jsQR.js"></script>
+  <script src="vendor/pako.min.js"></script>
+  <script src="lib/qrft.js"></script>
+  <script src="lib/wrap.js"></script>
+  <script src="lib/store.js"></script>
+  <script src="scan.js"></script>
+</body>
+</html>

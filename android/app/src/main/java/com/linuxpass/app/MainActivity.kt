@@ -24,9 +24,12 @@ import com.linuxpass.app.ui.SetupTabScreen
 import com.linuxpass.app.ui.AddEntryScreen
 import com.linuxpass.app.ui.EntryDetailScreen
 import com.linuxpass.app.ui.ExportPickScreen
+import com.linuxpass.app.ui.ExportTargetPickScreen
 import com.linuxpass.app.ui.QrftScreen
 import com.linuxpass.app.ui.QrftScanScreen
 import com.linuxpass.app.ui.entryPayload
+import com.linuxpass.app.vault.DeviceRecord
+import com.linuxpass.app.vault.DeviceWrap
 import com.linuxpass.app.vault.Envelope
 import com.linuxpass.app.vault.PasswordGen
 import com.linuxpass.app.vault.ProtonItem
@@ -518,12 +521,37 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     items = unlockedItems(),
                     onBack = { screen = Screen.Setup },
                     onExport = { picked ->
-                        // The QRFT payload is a JSON array of Proton item
-                        // objects — exactly what Import-from-QRFT (and the
-                        // Proton export import path) parses back.
-                        val arr = org.json.JSONArray()
-                        picked.forEach { arr.put(it.toProtonJson()) }
-                        screen = Screen.QrftPayload(arr.toString())
+                        // With a paired paste device the export is encrypted
+                        // to it (Plan 2); plain QRFT stays available.
+                        val devices = VaultSession.pairedDevices()
+                        if (devices.isEmpty()) {
+                            screen = Screen.QrftPayload(pickedPayload(picked))
+                        } else {
+                            screen = Screen.ExportTarget(picked)
+                        }
+                    }
+                )
+                is Screen.ExportTarget -> ExportTargetPickScreen(
+                    count = s.items.size,
+                    devices = VaultSession.pairedDevices(),
+                    onBack = { screen = Screen.ExportPick },
+                    onTarget = { device ->
+                        lifecycleScope.launch {
+                            val payload = pickedPayload(s.items)
+                            if (device == null) {
+                                screen = Screen.QrftPayload(payload)
+                            } else {
+                                screen = try {
+                                    Screen.QrftPayload(DeviceWrap.wrap(payload, device))
+                                } catch (e: Exception) {
+                                    status = "Device-wrap failed: ${e.message}"
+                                    Screen.ExportPick
+                                }
+                            }
+                            if (screen is Screen.QrftPayload && device != null) {
+                                saveToast("Paste encrypted to ${device.name}")
+                            }
+                        }
                     }
                 )
                 Screen.QrftScan -> QrftScanScreen(
@@ -561,6 +589,20 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onLock = { VaultSession.zero() },
                     onExportQrft = { screen = Screen.ExportPick },
                     onImportQrft = { cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA) },
+                    pairedDevices = VaultSession.pairedDevices(),
+                    onRemoveDevice = { keyId ->
+                        lifecycleScope.launch {
+                            if (VaultSession.stageRemoveDevice(keyId)) {
+                                status = when (val r = saveLoop(unlockedItems())) {
+                                    VaultSession.Result.Success -> {
+                                        saveToast("Paste device removed")
+                                        "Paste device $keyId removed."
+                                    }
+                                    else -> "Device removal: $r"
+                                }
+                            }
+                        }
+                    },
                     onForget = { VaultSession.forgetConfig(); screen = Screen.SetupChoice },
                     patSave = { VaultSession.savePat(it); status = "PAT stored (encrypted)." },
                     autofillEnabled = isAutofillEnabled(),
@@ -644,10 +686,40 @@ class MainActivity : androidx.activity.ComponentActivity() {
         android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show()
     }
 
-    /** Import-from-QRFT: parse the scanned payload (a Proton JSON export —
-     * array, single item, or envelope), dedupe against the local vault by
-     * itemUuid KEEPING THE LOCAL VERSION on conflict, then save. */
+    /** JSON array of Proton item objects — what Import-from-QRFT (and the
+     *  Proton export import path) parse back; the device-wrap envelopes it. */
+    private fun pickedPayload(picked: List<ProtonItem>): String {
+        val arr = org.json.JSONArray()
+        picked.forEach { arr.put(it.toProtonJson()) }
+        return arr.toString()
+    }
+
+    /** Import-from-QRFT: pairing records go to the devices list, everything
+     *  else is parsed as a Proton JSON export (array, single item, or
+     *  envelope), deduped against the local vault by itemUuid KEEPING THE
+     *  LOCAL VERSION on conflict, then saved. */
     private suspend fun importQrftPayload(raw: String) {
+        // Extension pairing QR (the pair page emits it as a tiny QRFT
+        // transfer): stage the record into the envelope and save.
+        DeviceRecord.fromPayload(raw)?.let { record ->
+            if (VaultSession.stagePairedDevice(record)) {
+                screen = Screen.Setup
+                status = when (val r = saveLoop(unlockedItems())) {
+                    VaultSession.Result.Success -> {
+                        saveToast("Paired paste device ${record.name}")
+                        "Paired paste device ${record.name} (key ${record.keyId})."
+                    }
+                    else -> "Pairing save: $r"
+                }
+                if (status.startsWith("Pairing save:")) {
+                    android.widget.Toast.makeText(this, status, android.widget.Toast.LENGTH_LONG).show()
+                }
+            } else {
+                screen = Screen.Setup
+                status = "Key ${record.keyId} already paired."
+            }
+            return
+        }
         val env = Envelope.parseImport(raw)
         if (env == null) {
             status = "QRFT payload did not parse as a Proton JSON export."

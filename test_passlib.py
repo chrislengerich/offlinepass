@@ -259,6 +259,21 @@ class TestPasswordStore(unittest.TestCase):
             data = json.load(f)
         self.assertEqual(data["vaults"]["local"]["customMarker"], "keep")
 
+    def test_paste_devices_preserved_for_extension(self):
+        # Plan 2: the phone adds a `devices` pairing record (for the Chrome
+        # extension). The TUI never reads it, but must keep it on save.
+        device = {"id": "8acba938042a256e", "name": "chromebook",
+                  "credId": "cred", "pub": "pub", "keyId": "8acba938042a256e",
+                  "added": 1762500000, "salt": "salt",
+                  "wrapped": {"iv": "iv", "ct": "ct"}}
+        with open(self.tmp.name, "w") as f:
+            json.dump({"vaults": {"local": {"items": []}}, "devices": [device]}, f)
+        self.store.load()
+        self.store.save([ProtonItem(name="X", password="p")])
+        with open(self.tmp.name) as f:
+            data = json.load(f)
+        self.assertEqual(data["devices"], [device])
+
     def test_tombstones_survive_desktop_save(self):
         # The phone tombstoned u-B: items lack it, the envelope records it.
         with open(self.tmp.name, "w") as f:

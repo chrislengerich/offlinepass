@@ -32,6 +32,14 @@ object VaultMerge {
             .filter { it.itemUuid !in newerIs.deletedItemUuids && it.itemUuid !in olderIs.deletedItemUuids }
             .toMutableList()
         merged.deletedItemUuids = (newerIs.deletedItemUuids + olderIs.deletedItemUuids).toMutableSet()
+        merged.removedDeviceIds = (newerIs.removedDeviceIds + olderIs.removedDeviceIds).toMutableSet()
+        // Paired paste devices: union by keyId (== id), minus removals —
+        // re-pairing the same key yields the same keyId, so this is idempotent.
+        val devices = LinkedHashMap<String, DeviceRecord>()
+        (olderIs.devices + newerIs.devices).forEach { devices.putIfAbsent(it.keyId, it) }
+        merged.devices = devices.values
+            .filter { it.keyId !in merged.removedDeviceIds }
+            .toMutableList()
         merged.items.sortBy { it.displayName.lowercase() }
         return merged
     }

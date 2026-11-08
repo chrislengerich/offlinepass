@@ -27,6 +27,8 @@ sealed class Screen {
     data class QrftPayload(val payload: String) : Screen()
     /** Entry picker for the multi-entry QRFT export. */
     object ExportPick : Screen()
+    /** Device chooser for the export: wrap to a paired extension key or plain. */
+    data class ExportTarget(val items: List<ProtonItem>) : Screen()
     /** Camera scanner for the import-from-QRFT flow. */
     object QrftScan : Screen()
     object Setup : Screen()

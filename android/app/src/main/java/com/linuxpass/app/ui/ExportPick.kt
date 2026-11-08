@@ -9,6 +9,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.linuxpass.app.vault.DeviceRecord
 import com.linuxpass.app.vault.ProtonItem
 
 /**
@@ -74,5 +75,44 @@ fun ExportPickScreen(
             enabled = picked.isNotEmpty(),
             modifier = Modifier.fillMaxWidth()
         ) { Text("Export ${if (picked.size == 1) "1 entry" else "${picked.size} entries"} as QRFT") }
+    }
+}
+
+/**
+ * Second export step (Plan 2): if a Chrome extension device is paired, the
+ * user picks the paste target — an encrypted-to-device paste, or the plain
+ * QRFT (legacy receivers). With no devices paired this screen never shows.
+ */
+@Composable
+fun ExportTargetPickScreen(
+    count: Int,
+    devices: List<DeviceRecord>,
+    onBack: () -> Unit,
+    onTarget: (DeviceRecord?) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("← Back") }
+            Text("Paste target", style = MaterialTheme.typography.titleLarge)
+        }
+        Text(
+            "$count entr${if (count == 1) "y" else "ies"} selected. " +
+                "Encrypted pastes can only be opened by the paired key (touch required).",
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(Modifier.height(12.dp))
+        devices.forEach { device ->
+            ListItem(
+                headlineContent = { Text(device.name) },
+                supportingContent = { Text("key ${device.keyId}") },
+                modifier = Modifier.fillMaxWidth().clickable { onTarget(device) }
+            )
+            HorizontalDivider()
+        }
+        ListItem(
+            headlineContent = { Text("No device (plain QRFT)") },
+            supportingContent = { Text("Anyone scanning the QR can read it") },
+            modifier = Modifier.fillMaxWidth().clickable { onTarget(null) }
+        )
     }
 }
