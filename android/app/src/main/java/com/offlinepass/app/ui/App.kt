@@ -73,7 +73,10 @@ fun SetupChoiceScreen(
     // SSH / PAT (HTTPS, deprecated). The URL's scheme prefix follows the
     // choice (same interaction as Setup's Connect-remote dialog).
     var loadAuth by remember { mutableStateOf(VaultSession.sshSyncMode()) }
-    var sshLine by remember { mutableStateOf(VaultSession.yubikeySshLine() ?: "") }
+    var sshLine by remember(VaultSession.yubikeySshLineDraft) {
+        mutableStateOf(VaultSession.yubikeySshLineDraft
+            ?: VaultSession.yubikeySshLine() ?: "")
+    }
     var subkeyId by remember(VaultSession.pickedAuthSubkeyId) {
         mutableStateOf(VaultSession.pickedAuthSubkeyId?.let { "%016X".format(it) }
             ?: VaultSession.yubikeyAuthSubkeyId()?.toString() ?: "")
