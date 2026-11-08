@@ -164,7 +164,11 @@ fun SetupTabScreen(
         if (showConnect) {
             var url by remember { mutableStateOf("https://github.com/") }
             var pat by remember { mutableStateOf("") }
-            val isSsh = url.startsWith("git@") || url.startsWith("ssh://")
+            var auth by remember { mutableStateOf("ssh") } // "ssh" | "pat"
+            val isSshUrl = url.startsWith("git@") || url.startsWith("ssh://")
+            // The choice must match the URL's scheme; Connect stays disabled
+            // on mismatch (with the reason inline) so the two paths never tangle.
+            val choiceMatches = auth == if (isSshUrl) "ssh" else "pat"
             AlertDialog(
                 onDismissRequest = { showConnect = false },
                 title = { Text("Connect remote") },
@@ -177,13 +181,44 @@ fun SetupTabScreen(
                             label = { Text("Remote URL (HTTPS, or git@ for SSH)") }, singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
-                        if (isSsh) {
-                            Text(
-                                "SSH remote: syncs authenticate with this device's " +
-                                    "screenlock keystore key (enroll below) — no PAT.",
-                                style = MaterialTheme.typography.bodySmall
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = auth == "ssh",
+                                onClick = { auth = "ssh" },
+                                label = { Text("Screenlock SSH key") }
                             )
+                            FilterChip(
+                                selected = auth == "pat",
+                                onClick = { auth = "pat" },
+                                label = { Text("PAT (HTTPS)") }
+                            )
+                        }
+                        if (auth == "ssh") {
+                            if (!isSshUrl) {
+                                Text("⚠ The screenlock key authenticates SSH remotes — " +
+                                    "use a git@github.com:<owner>/<repo>.git URL.",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                            Text("1. Create & show the public key; scan it with the " +
+                                "offlinepass extension and Copy the key.",
+                                style = MaterialTheme.typography.bodySmall)
+                            Button(
+                                onClick = onShowSshKey,
+                                enabled = isSshUrl,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Create & show public key") }
+                            Text("2. GitHub → the vault repo → Settings → Deploy keys → " +
+                                "Add deploy key → paste → ☑ Allow write access → Add.",
+                                style = MaterialTheme.typography.bodySmall)
+                            Text("3. Connect — every sync opens with your screen lock. " +
+                                "The private key never leaves this device.",
+                                style = MaterialTheme.typography.bodySmall)
                         } else {
+                            if (isSshUrl) {
+                                Text("⚠ PATs work only with HTTPS remotes — switch the URL " +
+                                    "to https://… or choose the screenlock key.",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
                             OutlinedTextField(
                                 value = pat, onValueChange = { pat = it },
                                 label = { Text("Fine-grained PAT (Contents: read/write)") },
@@ -191,6 +226,8 @@ fun SetupTabScreen(
                                 visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                                 modifier = Modifier.fillMaxWidth()
                             )
+                            Text("The PAT is stored encrypted by the Connect action itself.",
+                                style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 },
@@ -198,9 +235,10 @@ fun SetupTabScreen(
                     TextButton(
                         onClick = {
                             showConnect = false
-                            onConnectRemote(url.trim(), if (isSsh) "" else pat.trim())
+                            onConnectRemote(url.trim(), if (auth == "ssh") "" else pat.trim())
                         },
-                        enabled = url.isNotBlank() && (isSsh || pat.isNotBlank())
+                        enabled = url.isNotBlank() && choiceMatches &&
+                            (auth == "ssh" || pat.isNotBlank())
                     ) { Text("Connect") }
                 },
                 dismissButton = { TextButton(onClick = { showConnect = false }) { Text("Cancel") } }
