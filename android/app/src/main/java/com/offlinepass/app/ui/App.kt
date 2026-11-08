@@ -166,7 +166,7 @@ fun SetupChoiceScreen(
                         if (!remote.startsWith("git@") && !remote.startsWith("ssh://"))
                             remote = "git@github.com:"
                     },
-                    label = { Text("GPG (OpenKeychain)", maxLines = 1) }
+                    label = { Text("GPG (incl. Yubikey)", maxLines = 1) }
                 )
                 FilterChip(
                     modifier = Modifier.weight(1f),
