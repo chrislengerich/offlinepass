@@ -15,7 +15,7 @@ const targetTabId = (() => {
 })();
 
 let done = false;
-let entries = [];   // {name, username, password, totpUri}
+let entries = [];   // {name, username, password, totpUri, urls}
 let stopTotp = null;
 
 // ---- camera + QRFT assembly -----------------------------------------------
@@ -113,7 +113,7 @@ function handlePayload(name, text) {
     return;
   }
   msgEl.textContent = "Received \"" + name + "\" (plain QRFT paste).";
-  showEntries(items);
+  deliver(items);
 }
 
 function parseProtonItems(obj) {
@@ -161,13 +161,63 @@ async function prepareDecrypt(text) {
     try {
       const plain = await LpWrap.unwrapPaste(match, text);
       msgEl.textContent = "Decrypted (key " + match.name + ").";
-      showEntries(parseProtonItems(JSON.parse(plain)));
+      deliver(parseProtonItems(JSON.parse(plain)));
     } catch (e) {
       msgEl.textContent = "Decrypt failed: " + (e.message || e.name);
       btn.disabled = false;
     }
   });
   entriesEl.append(btn);
+}
+
+/** Deliver decrypted entries: URL-match against the target tab → auto-fill
+ *  (no UI); no match → the entry cards. */
+async function deliver(items) {
+  await refreshTarget();
+  const best = bestMatch(items);
+  if (best) {
+    msgEl.textContent = "Matched " + (targetInfo ? targetInfo.origin : "tab") +
+      " — filling \"" + best.name + "\"…";
+    const ok = await fillTab(best);
+    if (ok) return; // window closed by fillTab
+    // Fill couldn't find fields — fall back to the cards.
+    msgEl.textContent = "Auto-fill found no login fields on the tab — fill manually.";
+  }
+  showEntries(items);
+}
+
+/** URL matching: scheme-insensitive, host-only, `www.` stripped, and a
+ *  subdomain counts as a match (entry "domain.com" matches tab
+ *  "sub.domain.com" and vice versa). Returns 2 (exact host), 1 (subdomain
+ *  relation), 0 (no match). */
+function hostOf(u) {
+  try {
+    const s = /^[a-z][a-z0-9+.-]*:\/\//i.test(u) ? u : "https://" + u;
+    return new URL(s).hostname.toLowerCase().replace(/^www\./, "");
+  } catch (e) { return null; }
+}
+
+function matchScore(item, tabUrl) {
+  const tab = hostOf(tabUrl || "");
+  if (!tab || !item.urls || !item.urls.length) return 0;
+  let best = 0;
+  for (const u of item.urls) {
+    const e = hostOf(u);
+    if (!e) continue;
+    if (e === tab) return 2;
+    if (tab.endsWith("." + e) || e.endsWith("." + tab)) best = Math.max(best, 1);
+  }
+  return best;
+}
+
+function bestMatch(items) {
+  if (!targetInfo || !targetInfo.url) return null;
+  let best = null, bestScore = 0;
+  for (const it of items) {
+    const s = matchScore(it, targetInfo.url);
+    if (s > bestScore) { best = it; bestScore = s; }
+  }
+  return best;
 }
 
 /** R2: the phone's "Show pairing QR" re-displays a pairing record (the
@@ -199,12 +249,10 @@ async function offerRestore(device) {
   entriesEl.append(btn);
 }
 
-// ---- fill UI ---------------------------------------------------------------
+// ---- fill UI (shown only when nothing matched) ------------------------------
 
 // H2: the fill target is the tab captured when the popup opened. Show its
-// origin before any fill and warn when an entry's urls[] don't match —
-// protects against a tab navigating (or being swapped) between popup open
-// and the Fill click.
+// origin and warn when an entry's urls[] don't relate to it.
 let targetInfo = null; // { origin, url } | null
 let targetGone = false;
 let targetBanner = null;
@@ -213,10 +261,12 @@ function originOf(url) {
   try { return new URL(url).origin; } catch (e) { return null; }
 }
 
+/** Lenient (subdomain-aware) relation used for WARNINGS: no entry URLs or
+ *  no target info ⇒ no signal, no warning. */
 function entryMatchesTarget(item) {
-  if (!targetInfo || !targetInfo.origin) return true; // unknown — no signal
-  if (!item.urls || !item.urls.length) return true;   // nothing to compare
-  return item.urls.some((u) => originOf(u) === targetInfo.origin);
+  if (!targetInfo || !targetInfo.url) return true;
+  if (!item.urls || !item.urls.length) return true;
+  return matchScore(item, targetInfo.url) > 0;
 }
 
 function renderTargetBanner() {
@@ -236,8 +286,7 @@ function refreshTarget() {
     targetInfo = { origin: originOf(tab.url || ""), url: tab.url || "" };
     renderTargetBanner();
     document.querySelectorAll(".entry .urlwarn").forEach((el) => {
-      const item = entries[Number(el.dataset.idx)];
-      if (item) updateUrlWarning(el, Number(el.dataset.idx));
+      updateUrlWarning(el, Number(el.dataset.idx));
     });
   }).catch(() => {
     targetGone = true;
@@ -270,6 +319,9 @@ function showEntries(items) {
   renderTargetBanner();
   refreshTarget();
   items.forEach((item, idx) => {
+    // Per-card copy: Copy/Fill may zero the shared entry object; Reveal and
+    // Hide must keep working afterwards.
+    const passwordValue = item.password;
     const box = document.createElement("div");
     box.className = "entry";
     const h = document.createElement("h3"); h.textContent = item.name; box.append(h);
@@ -280,31 +332,38 @@ function showEntries(items) {
     const u = document.createElement("div"); u.className = "kv";
     u.textContent = "username: "; const uv = document.createElement("span"); uv.className = "v";
     uv.textContent = item.username || "(none)"; u.append(uv); box.append(u);
-    const p = document.createElement("div"); p.className = "kv";
-    p.textContent = "password: "; const pv = document.createElement("span"); pv.className = "v";
-    pv.textContent = "•".repeat(Math.min(item.password.length, 12));
-    p.append(pv); box.append(p);
     const btns = document.createElement("div");
     const fill = document.createElement("button");
     fill.textContent = "Fill in tab";
     const reveal = document.createElement("button"); reveal.className = "secondary";
-    reveal.textContent = "Reveal";
     const copy = document.createElement("button"); copy.className = "secondary";
-    copy.textContent = "Copy password";
+    if (!passwordValue) {
+      // Nothing to reveal or copy — say so instead of a no-op button.
+      reveal.textContent = "No password";
+      reveal.disabled = true;
+      copy.textContent = "No password";
+      copy.disabled = true;
+    } else {
+      const pv = document.createElement("div"); pv.className = "kv";
+      pv.textContent = "password: "; const pvSpan = document.createElement("span"); pvSpan.className = "v";
+      pvSpan.textContent = "•".repeat(Math.min(passwordValue.length, 12));
+      pv.append(pvSpan); box.append(pv);
+      reveal.textContent = "Reveal";
+      copy.textContent = "Copy password";
+      let shown = false;
+      reveal.addEventListener("click", () => {
+        shown = !shown;
+        pvSpan.textContent = shown ? passwordValue : "•".repeat(Math.min(passwordValue.length, 12));
+        reveal.textContent = shown ? "Hide" : "Reveal";
+      });
+      copy.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(passwordValue);
+        copy.textContent = "Copied"; copy.disabled = true;
+      });
+    }
     btns.append(fill, reveal, copy);
     box.append(btns);
-    let shown = false;
-    reveal.addEventListener("click", () => {
-      shown = !shown;
-      pv.textContent = shown ? item.password : "•".repeat(Math.min(item.password.length, 12));
-      reveal.textContent = shown ? "Hide" : "Reveal";
-    });
-    copy.addEventListener("click", async () => {
-      await navigator.clipboard.writeText(item.password);
-      item.password = ""; // single copy — drop it
-      copy.textContent = "Copied"; copy.disabled = true;
-    });
-    fill.addEventListener("click", () => fillTab(item));
+    fill.addEventListener("click", async () => { await fillTab(item); });
     entriesEl.append(box);
     if (item.totpUri) {
       const t = document.createElement("div"); t.className = "kv";
@@ -326,31 +385,33 @@ function showEntries(items) {
   });
 }
 
+/** Fills the captured tab; resolves true when fields were found (the
+ *  window closes right then), false otherwise (cards stay usable). */
 async function fillTab(item) {
   fillMsg.textContent = "";
-  if (targetTabId == null) { fillMsg.textContent = "No target tab (open via the toolbar popup)."; return; }
+  if (targetTabId == null) { fillMsg.textContent = "No target tab (open via the toolbar popup)."; return false; }
   let tab;
   try {
     tab = await chrome.tabs.get(targetTabId); // re-check at click time (H2)
   } catch (e) {
     fillMsg.textContent = "Target tab is gone — reopen the extension on the tab you want to fill.";
-    return;
+    return false;
   }
   targetInfo = { origin: originOf(tab.url || ""), url: tab.url || "" };
-  renderTargetBanner();
   try {
     await chrome.scripting.executeScript({ target: { tabId: targetTabId }, files: ["fill.js"] });
     const res = await chrome.tabs.sendMessage(targetTabId, {
       type: "linuxpass-fill", username: item.username, password: item.password,
     });
     if (res && res.ok) {
-      fillMsg.textContent = "Filled" + (res.count > 1 ? " (" + res.count + " password fields)" : "") + " — closing…";
       item.password = ""; entries.forEach((e) => { e.password = ""; });
-      setTimeout(() => window.close(), 900);
-    } else {
-      fillMsg.textContent = "No login fields found on that tab" + (res && res.error ? ": " + res.error : ".");
+      window.close(); // filled — popup gone immediately
+      return true;
     }
+    fillMsg.textContent = "No login fields found on that tab" + (res && res.error ? ": " + res.error : ".");
+    return false;
   } catch (e) {
     fillMsg.textContent = "Fill failed: " + (e.message || e.name);
+    return false;
   }
 }
