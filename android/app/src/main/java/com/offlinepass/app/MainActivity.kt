@@ -480,8 +480,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         return
                     }
                     VaultSession.pickedAuthSubkeyId = keyId
-                    // Fetch the key material and prepopulate the OpenSSH line
-                    // — no paste needed.
+                    // The OpenSSH line: fetched from OpenKeyChain (the same
+                    // proven call that materializes the recipients' keys) and
+                    // converted by the bridge — no paste needed.
                     val fetch = com.offlinepass.app.crypto.OpenPgpClient(applicationContext)
                         .fetchPublicKeyArmored(keyId)
                     when (fetch) {
@@ -492,16 +493,17 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             }.getOrNull()
                             if (line != null) {
                                 VaultSession.yubikeySshLineDraft = line
-                                status = "Auth subkey selected (0x%016X) — SSH line populated."
+                                status = "Auth subkey selected (0x%016X) — OpenSSH line populated."
                                     .format(keyId)
                             } else {
-                                status = "Auth subkey selected (0x%016X) — paste the " +
-                                    "OpenSSH line (the key material could not be converted)."
+                                status = "Auth subkey selected (0x%016X) — the key " +
+                                    "material could not be converted to an SSH line."
                                         .format(keyId)
                             }
                         }
-                        else -> status = "Auth subkey selected (0x%016X) ��� paste the " +
-                            "OpenSSH line (the public key could not be fetched).".format(keyId)
+                        else -> status = "Auth subkey selected (0x%016X) — the public " +
+                            "key could not be fetched; paste the OpenSSH line manually."
+                                .format(keyId)
                     }
                     return
                 }
