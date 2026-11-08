@@ -8,6 +8,15 @@ const video = document.getElementById("v");
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
+// Menu link → the popup page (pair another key / self-test / forget),
+// passing the original fill target through so the popup's windows keep
+// targeting the right tab.
+document.getElementById("btn_menu").addEventListener("click", (e) => {
+  e.preventDefault();
+  const q = targetTabId != null ? "?tab=" + targetTabId : "";
+  chrome.windows.create({ url: "popup.html" + q, type: "popup", width: 320, height: 460, focused: true });
+});
+
 // Fill target: captured by the popup BEFORE this window opened.
 const targetTabId = (() => {
   const t = new URLSearchParams(location.search).get("tab");
@@ -150,24 +159,17 @@ async function prepareDecrypt(text) {
       " — pair it first (toolbar → Pair a security key) or restore the pairing QR.";
     return;
   }
-  // Explicit button: the security-key touch is a deliberate user action,
-  // and the click guarantees a user gesture for the WebAuthn ceremony.
-  msgEl.textContent = "Encrypted paste for key \"" + match.name + "\" — insert + touch it.";
-  const btn = document.createElement("button");
-  btn.textContent = "Decrypt (touch key)";
-  btn.addEventListener("click", async () => {
-    btn.disabled = true;
-    msgEl.textContent = "Touch your security key…";
-    try {
-      const plain = await LpWrap.unwrapPaste(match, text);
-      msgEl.textContent = "Decrypted (key " + match.name + ").";
-      deliver(parseProtonItems(JSON.parse(plain)));
-    } catch (e) {
-      msgEl.textContent = "Decrypt failed: " + (e.message || e.name);
-      btn.disabled = false;
-    }
-  });
-  entriesEl.append(btn);
+  // No button: the ceremony starts the moment the QR is complete. The
+  // window is top-level (no user-gesture requirement) and the security
+  // gate is the key's own PIN + touch, which always happens.
+  msgEl.textContent = "Encrypted paste for key \"" + match.name + "\" — insert it, then PIN + touch…";
+  try {
+    const plain = await LpWrap.unwrapPaste(match, text);
+    msgEl.textContent = "Decrypted (key " + match.name + ").";
+    deliver(parseProtonItems(JSON.parse(plain)));
+  } catch (e) {
+    msgEl.textContent = "Decrypt failed: " + (e.message || e.name);
+  }
 }
 
 /** Deliver decrypted entries: URL-match against the target tab → auto-fill

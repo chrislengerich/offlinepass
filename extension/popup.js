@@ -5,10 +5,15 @@ const devBox = document.getElementById("dev");
 const devList = document.getElementById("devlist");
 
 function openWindow(page) {
-  // Capture the paste target BEFORE opening the scan window (the scan
-  // window itself will be the focused one from then on).
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tabId = tabs && tabs[0] ? tabs[0].id : null;
+  // Capture the paste target BEFORE opening the scan window — unless the
+  // popup itself was opened from the scan window's menu link, which passes
+  // the original target through (?tab=).
+  const urlTab = new URLSearchParams(location.search).get("tab");
+  const resolveTab = urlTab != null
+    ? Promise.resolve({ id: parseInt(urlTab, 10) })
+    : new Promise((res) => chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => res(tabs && tabs[0] ? tabs[0] : {})));
+  resolveTab.then((t) => {
+    const tabId = t && t.id != null ? t.id : null;
     const url = page + (tabId != null ? "?tab=" + tabId : "");
     chrome.windows.create({ url, type: "popup", width: 560, height: 720, focused: true });
     window.close();

@@ -137,15 +137,20 @@ through git to all clients.
 **Send (phone):** Setup → *Export as QRFT* → pick entries → target
 checklist (all paired keys pre-selected) → looping QR of the wrapped paste.
 
-**Receive (Chromebook):** toolbar → *Scan a paste* (the target tab is
-captured when the popup opens) → camera scans the phone's screen →
-*Decrypt (touch key)* — the prompt names the expected key → the paste
-routes itself: if an entry's URLs match the target tab (scheme-insensitive,
-host-only, `www.`-stripped, subdomain-aware; exact host preferred) the
-extension **auto-fills immediately** — no further click — and closes;
-otherwise the entry cards appear (Fill / Reveal / Copy / TOTP-copy; fill
-also closes the window outright). Passwords are dropped from memory after
-fill; TOTP is copy-only.
+**Receive (Chromebook):** click the toolbar icon → **straight into the scan
+window** (the target tab is the one active at click time; `activeTab`
+grants access to that tab only, by the click — the extension never touches
+a site without it) → camera scans the phone's screen → decryption **starts
+automatically** once the transfer completes — insert the key, PIN + touch
+(no button) — the prompt names the expected key → the paste routes itself:
+if an entry's URLs match the target tab (scheme-insensitive, host-only,
+`www.`-stripped, subdomain-aware; exact host preferred) the extension
+**auto-fills immediately** — no further click — and closes; otherwise the
+entry cards appear (Fill / Reveal / Copy / TOTP-copy; fill also closes the
+window outright). Passwords are dropped from memory after fill; TOTP is
+copy-only. The scan window's *menu* link opens the management popup (pair
+another key / self-test / forget). With **no key paired**, the click lands
+on the pair page directly.
 
 **Restore pairing (Chromebook/profile loss, or second Chromebook):** phone
 Setup → Paste devices → *Show QR* → extension scan window → *Restore

@@ -18,6 +18,8 @@
     button.secondary { background: #3a3f4a; }
     .totp { font-size: 1.2rem; font-family: monospace; color: #7fd7ff; letter-spacing: 2px; }
     #fillmsg { font-size: 0.9rem; color: #ffd75e; min-height: 1.2em; margin-top: 6px; }
+    #menurow { font-size: 0.72rem; color: #7fa7ff; margin-top: 10px; }
+    #menurow a { color: #7fa7ff; }
   </style>
 </head>
 <body>
@@ -27,6 +29,7 @@
     <div id="camera"><video id="v" autoplay playsinline muted></video></div>
     <div id="entries"></div>
     <div id="fillmsg"></div>
+    <div id="menurow"><a href="#" id="btn_menu">menu</a> (pair another key · self-test · forget)</div>
   </div>
   <canvas id="c" hidden></canvas>
   <script src="vendor/jsQR.js"></script>

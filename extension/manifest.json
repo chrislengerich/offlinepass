@@ -4,11 +4,12 @@
   "version": "0.1.0",
   "description": "Receive linuxpass QRFT pastes (security-key gated) and auto-fill them. Fully offline.",
   "action": {
-    "default_popup": "popup.html",
     "default_title": "linuxpass"
   },
-  "permissions": ["storage", "scripting"],
-  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "bg.js"
+  },
+  "permissions": ["storage", "scripting", "activeTab"],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'none'"
   }
