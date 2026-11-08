@@ -236,8 +236,31 @@ async function showSshPubkey(obj) {
   video.remove();
   progressEl.textContent = "";
   const line = String(obj.sshKey || "");
+  const declaredFp = String(obj.fp || "");
   if (!line.includes(" ")) { msgEl.textContent = "Malformed SSH public key."; return; }
-  msgEl.textContent = "Public key captured — copy it into GitHub:";
+  // Self-verification: the phone declares the key's ssh-keygen fingerprint;
+  // a corrupted QR decode (one flipped base64 char is enough to make GitHub
+  // reject the key) is caught HERE instead of at GitHub.
+  let verified = false;
+  let actualFp = "";
+  if (declaredFp.startsWith("SHA256:")) {
+    try {
+      const blobB64 = line.split(" ")[1];
+      const raw = Uint8Array.from(atob(blobB64), (c) => c.charCodeAt(0));
+      const digest = await crypto.subtle.digest("SHA-256", raw);
+      actualFp = "SHA256:" + btoa(String.fromCharCode(...new Uint8Array(digest)))
+        .replace(/=+$/, "");
+      verified = actualFp === declaredFp;
+    } catch (e) { verified = false; }
+  } else {
+    verified = true; // older payload without a fingerprint — no check possible
+  }
+  if (!verified) {
+    msgEl.textContent = "Key corrupted in transfer (fingerprint mismatch: " +
+      declaredFp + " vs " + actualFp + ") — re-show the QR on the phone and rescan.";
+    return;
+  }
+  msgEl.textContent = "Public key captured and verified (fingerprint " + actualFp + ") — copy it into GitHub:";
   const key = document.createElement("div");
   key.className = "kv";
   const kv = document.createElement("span"); kv.className = "v";
@@ -256,7 +279,8 @@ async function showSshPubkey(obj) {
   entriesEl.append(btns);
   const hint = document.createElement("div"); hint.className = "kv";
   hint.innerHTML = "GitHub → the vault repo → <b>Settings → Deploy keys</b> → " +
-    "Add deploy key → paste → tick <b>Allow write access</b> → Add. Then on the " +
+    "Add deploy key → paste → tick <b>Allow write access</b> → Add. GitHub shows " +
+    "the same fingerprint (" + actualFp + ") after adding. Then on the " +
     "phone: Setup → Connect remote → git@github.com:&lt;owner&gt;/&lt;repo&gt;.git → " +
     "every sync opens with the screen lock.";
   hint.style.color = "#9aa3b2";

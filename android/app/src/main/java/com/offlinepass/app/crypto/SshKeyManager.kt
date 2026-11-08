@@ -33,7 +33,9 @@ class SshKeyManager(
         /** The SSH wire blob: string(alg) + string(components). */
         val wireBlob: ByteArray,
         /** Full OpenSSH public-key line, ready for a GitHub deploy key. */
-        val openSshLine: String
+        val openSshLine: String,
+        /** ssh-keygen-style fingerprint of the wire blob: "SHA256:<b64>". */
+        val fingerprint: String
     )
 
     fun ensureKeyPair(): PublicKeyInfo {
@@ -60,7 +62,12 @@ class SshKeyManager(
         val wire = wireBlob(pub)
         val alg = keyTypeName(pub)
         val comment = "offlinepass-android-${android.os.Build.MODEL?.replace(" ", "-")}"
-        return PublicKeyInfo(pub.algorithm, pub, wire, "$alg ${Base64.getEncoder().encodeToString(wire)} $comment")
+        // ssh-keygen-format fingerprint: "SHA256:" + unpadded base64 of the
+        // blob's SHA-256 — lets the receiver prove the QR-decoded key is
+        // byte-identical to what this device generated.
+        val fp = "SHA256:" + Base64.getEncoder().withoutPadding()
+            .encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(wire))
+        return PublicKeyInfo(pub.algorithm, pub, wire, "$alg ${Base64.getEncoder().encodeToString(wire)} $comment", fp)
     }
 
     fun hasKeyPair(): Boolean = runCatching { load().containsAlias(alias) }.getOrDefault(false)

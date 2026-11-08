@@ -760,7 +760,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                 val payload = org.json.JSONObject()
                                     .put("type", "offlinepass-ssh-pubkey")
                                     .put("sshKey", info.openSshLine)
-                                    .put("fp", info.algorithm)
+                                    .put("fp", info.fingerprint)
                                     .toString()
                                 screen = Screen.QrftPayload(payload)
                             } catch (e: Exception) {
