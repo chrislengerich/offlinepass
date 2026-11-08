@@ -667,6 +667,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 },
                 onLoadUsb = { usbRestoreLauncher.launch(arrayOf("application/octet-stream")) },
                 onShowSshKey = { showSshKeyQr(Screen.SetupChoice) },
+                onPickAuthSubkey = { lifecycleScope.launch { pickAuthSubkey() } },
                 onEnrollYubikeySsh = { line, subkeyId -> enrollYubikeySsh(line, subkeyId) }
             )
             VaultSession.State.Locked -> UnlockScreen(

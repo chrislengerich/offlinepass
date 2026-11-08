@@ -55,6 +55,7 @@ fun SetupChoiceScreen(
     onLoadGitHub: (remote: String, emails: List<String>, pat: String) -> Unit,
     onLoadUsb: () -> Unit,
     onShowSshKey: () -> Unit = {},
+    onPickAuthSubkey: () -> Unit = {},
     onEnrollYubikeySsh: (sshLine: String, subkeyId: String) -> Unit = { _, _ -> }
 ) {
     var remote by remember {
@@ -73,7 +74,10 @@ fun SetupChoiceScreen(
     // choice (same interaction as Setup's Connect-remote dialog).
     var loadAuth by remember { mutableStateOf(VaultSession.sshSyncMode()) }
     var sshLine by remember { mutableStateOf(VaultSession.yubikeySshLine() ?: "") }
-    var subkeyId by remember { mutableStateOf(VaultSession.yubikeyAuthSubkeyId()?.toString() ?: "") }
+    var subkeyId by remember(VaultSession.pickedAuthSubkeyId) {
+        mutableStateOf(VaultSession.pickedAuthSubkeyId?.let { "%016X".format(it) }
+            ?: VaultSession.yubikeyAuthSubkeyId()?.toString() ?: "")
+    }
 
     val importPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -190,14 +194,18 @@ fun SetupChoiceScreen(
                         "subkey via OpenKeyChain — the key already enrolled in " +
                         "GitHub from desktop pushes (each load asks for the touch).",
                         style = MaterialTheme.typography.bodySmall)
+                    Button(onClick = onPickAuthSubkey, modifier = Modifier.fillMaxWidth()) {
+                        Text("Choose key in OpenKeyChain")
+                    }
                     OutlinedTextField(
-                        value = sshLine, onValueChange = { sshLine = it },
-                        label = { Text("OpenSSH public line (gpg --export-ssh-key)") },
+                        value = subkeyId, onValueChange = { subkeyId = it },
+                        label = { Text("Auth subkey key id (prepopulated by the picker)") },
+                        singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
-                        value = subkeyId, onValueChange = { subkeyId = it },
-                        label = { Text("Auth subkey key id (16 hex)") }, singleLine = true,
+                        value = sshLine, onValueChange = { sshLine = it },
+                        label = { Text("OpenSSH public line (gpg --export-ssh-key)") },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
