@@ -93,16 +93,15 @@ fun SetupTabScreen(
 
         // Local-only vault: offer to attach a remote (git-synced backup +
         // cross-device sync) without touching the local history.
-        var showConnect by remember { mutableStateOf(false) }
+        // Auto-reopen the connect dialog when a draft exists (the SSH-key QR
+        // detour returns here to finish the flow).
+        var showConnect by remember { mutableStateOf(VaultSession.connectDraftOwnerRepo() != null) }
         var showYubikey by remember { mutableStateOf(false) }
         if (cfg?.remoteUrl == null) {
             Text("Local-only: entries commit on this device only.",
                 style = MaterialTheme.typography.bodySmall)
             Button(onClick = { showConnect = true }, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
                 Text("Connect remote (sync online)")
-            }
-            Button(onClick = onShowSshKey, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-                Text("Sync via screenlock SSH key (show public key QR)")
             }
             Button(onClick = { showYubikey = true }, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
                 Text("Sync via YubiKey SSH (OpenKeyChain)")
@@ -112,10 +111,10 @@ fun SetupTabScreen(
                     style = MaterialTheme.typography.bodySmall)
             }
             Text(
-                "Sync via screenlock SSH key: scan the QR with the offlinepass extension, add the key on GitHub " +
-                    "(repo → Settings → Deploy keys → Allow write access), then connect " +
-                    "with a git@ remote — syncs open with a screen-lock prompt. " +
-                    "Sync via YubiKey SSH: paste the auth subkey's OpenSSH line (desktop: gpg --export-ssh-key) " +
+                "Connect remote: pick Screenlock SSH key (the QR enrolls this device's " +
+                    "key as a GitHub deploy key — syncs then open with the screen lock) " +
+                    "or PAT (HTTPS + fine-grained token). " +
+                    "YubiKey SSH: paste the auth subkey's OpenSSH line (desktop: gpg --export-ssh-key) " +
                     "and its key id — every sync asks for the YubiKey touch.",
                 style = MaterialTheme.typography.bodySmall
             )
@@ -162,15 +161,21 @@ fun SetupTabScreen(
             )
         }
         if (showConnect) {
-            // Default: screenlock SSH key with the git@ prefix prepopulated —
-            // the preferred, least-privilege sync path (a PAT is the fallback).
-            var url by remember { mutableStateOf("git@github.com:") }
+            // Short form: owner/repo. The full remote URL is derived per the
+            // chosen auth scheme (git@github.com:owner/repo for the
+            // screenlock key, https://github.com/owner/repo for a PAT). The
+            // draft persists across the QR detour and reopens the dialog.
+            var ownerRepo by remember {
+                mutableStateOf(VaultSession.connectDraftOwnerRepo() ?: "")
+            }
             var pat by remember { mutableStateOf("") }
-            var auth by remember { mutableStateOf("ssh") } // "ssh" | "pat"
-            val isSshUrl = url.startsWith("git@") || url.startsWith("ssh://")
-            // The choice must match the URL's scheme; Connect stays disabled
-            // on mismatch (with the reason inline) so the two paths never tangle.
-            val choiceMatches = auth == if (isSshUrl) "ssh" else "pat"
+            var auth by remember {
+                mutableStateOf(VaultSession.connectDraftAuth() ?: "ssh")
+            }
+            val isSsh = auth == "ssh"
+            val built = if (isSsh) "git@github.com:$ownerRepo" else "https://github.com/$ownerRepo"
+            val ownerRepoValid = ownerRepo.contains("/") &&
+                !ownerRepo.startsWith("/") && !ownerRepo.endsWith("/")
             AlertDialog(
                 onDismissRequest = { showConnect = false },
                 title = { Text("Connect remote") },
@@ -179,44 +184,36 @@ fun SetupTabScreen(
                         Text("The existing local history connects to the remote and merges.",
                             style = MaterialTheme.typography.bodySmall)
                         OutlinedTextField(
-                            value = url, onValueChange = { url = it },
-                            label = { Text("Remote URL (HTTPS, or git@ for SSH)") }, singleLine = true,
+                            value = ownerRepo, onValueChange = { ownerRepo = it },
+                            label = { Text("GitHub owner/repo (e.g. you/offlinepass)") },
+                            singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilterChip(
-                                selected = auth == "ssh",
-                                onClick = {
-                                    auth = "ssh"
-                                    // Prepopulate the GitHub SSH prefix unless
-                                    // the URL is already SSH-form.
-                                    if (!url.startsWith("git@") && !url.startsWith("ssh://"))
-                                        url = "git@github.com:"
-                                },
+                                selected = isSsh,
+                                onClick = { auth = "ssh" },
                                 label = { Text("Screenlock SSH key") }
                             )
                             FilterChip(
-                                selected = auth == "pat",
-                                onClick = {
-                                    auth = "pat"
-                                    if (!url.startsWith("https://") && !url.startsWith("http://"))
-                                        url = "https://github.com/"
-                                },
+                                selected = !isSsh,
+                                onClick = { auth = "pat" },
                                 label = { Text("PAT (HTTPS)") }
                             )
                         }
-                        if (auth == "ssh") {
-                            if (!isSshUrl) {
-                                Text("⚠ The screenlock key authenticates SSH remotes — " +
-                                    "use a git@github.com:<owner>/<repo>.git URL.",
-                                    style = MaterialTheme.typography.bodySmall)
-                            }
+                        Text("Remote: $built", style = MaterialTheme.typography.bodySmall)
+                        if (isSsh) {
                             Text("1. Create & show the public key; scan it with the " +
                                 "offlinepass extension and Copy the key.",
                                 style = MaterialTheme.typography.bodySmall)
                             Button(
-                                onClick = onShowSshKey,
-                                enabled = isSshUrl,
+                                onClick = {
+                                    // Persist the draft: the QR detour closes
+                                    // this dialog — the draft reopens it.
+                                    VaultSession.saveConnectDraft(ownerRepo.trim(), auth)
+                                    onShowSshKey()
+                                },
+                                enabled = ownerRepoValid,
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("Create & show public key") }
                             Text("2. GitHub → the vault repo → Settings → Deploy keys → " +
@@ -226,11 +223,6 @@ fun SetupTabScreen(
                                 "The private key never leaves this device.",
                                 style = MaterialTheme.typography.bodySmall)
                         } else {
-                            if (isSshUrl) {
-                                Text("⚠ PATs work only with HTTPS remotes — switch the URL " +
-                                    "to https://… or choose the screenlock key.",
-                                    style = MaterialTheme.typography.bodySmall)
-                            }
                             OutlinedTextField(
                                 value = pat, onValueChange = { pat = it },
                                 label = { Text("Fine-grained PAT (Contents: read/write)") },
@@ -247,10 +239,9 @@ fun SetupTabScreen(
                     TextButton(
                         onClick = {
                             showConnect = false
-                            onConnectRemote(url.trim(), if (auth == "ssh") "" else pat.trim())
+                            onConnectRemote(built.trim(), if (isSsh) "" else pat.trim())
                         },
-                        enabled = url.isNotBlank() && choiceMatches &&
-                            (auth == "ssh" || pat.isNotBlank())
+                        enabled = ownerRepoValid && (isSsh || pat.isNotBlank())
                     ) { Text("Connect") }
                 },
                 dismissButton = { TextButton(onClick = { showConnect = false }) { Text("Cancel") } }

@@ -746,7 +746,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onConnectRemote = { remote, pat ->
                         lifecycleScope.launch {
                             status = when (val r = VaultSession.connectRemote(remote, pat)) {
-                                VaultSession.Result.Success -> "Remote connected — synced."
+                                VaultSession.Result.Success -> {
+                                    VaultSession.clearConnectDraft()
+                                    "Remote connected — synced."
+                                }
                                 else -> r.toString()
                             }
                         }

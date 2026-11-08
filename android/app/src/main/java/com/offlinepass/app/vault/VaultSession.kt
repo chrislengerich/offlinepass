@@ -746,6 +746,27 @@ object VaultSession {
         return env.devices.size != before
     }
 
+    // -- Connect-remote draft (survives the SSH-key QR detour) ----------------
+
+    fun saveConnectDraft(ownerRepo: String, auth: String) {
+        prefs().edit()
+            .putString("connectDraftOwnerRepo", ownerRepo)
+            .putString("connectDraftAuth", auth)
+            .apply()
+    }
+
+    fun connectDraftOwnerRepo(): String? =
+        prefs().getString("connectDraftOwnerRepo", null)?.takeIf { it.isNotBlank() }
+
+    fun connectDraftAuth(): String? = prefs().getString("connectDraftAuth", null)
+
+    fun clearConnectDraft() {
+        prefs().edit()
+            .remove("connectDraftOwnerRepo")
+            .remove("connectDraftAuth")
+            .apply()
+    }
+
     /** Deletes with a tombstone (survives merges/syncs). */
     suspend fun delete(item: ProtonItem): Result {
         loadedEnvelope?.deletedItemUuids?.add(item.itemUuid)
