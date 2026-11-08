@@ -197,16 +197,18 @@ fun SetupChoiceScreen(
                     }
                 }
                 VaultSession.SSH_SYNC_YUBIKEY -> {
-                    Text("The clone authenticates with the YubiKey's OpenPGP auth " +
-                        "subkey via OpenKeyChain — the key already enrolled in " +
-                        "GitHub from desktop pushes (each load asks for the touch).",
+                    Text("The clone authenticates with the YubiKey's signing " +
+                        "subkey via OpenKeyChain — pick the key below and touch; " +
+                        "the key id and OpenSSH line fill in automatically. GitHub " +
+                        "must have that same line enrolled (deploy key with write " +
+                        "access, or the account SSH key).",
                         style = MaterialTheme.typography.bodySmall)
                     Button(onClick = onPickAuthSubkey, modifier = Modifier.fillMaxWidth()) {
                         Text("Choose key in OpenKeyChain")
                     }
                     OutlinedTextField(
                         value = subkeyId, onValueChange = { subkeyId = it },
-                        label = { Text("Auth subkey key id (prepopulated by the picker)") },
+                        label = { Text("Signing subkey key id (auto-filled by the picker)") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
