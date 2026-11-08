@@ -347,28 +347,17 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     VaultSession.setRecipientKeyIds(VaultSession.recipientKeyIds() - id)
                     status = "Recipient removed."
                 },
-                onNewVault = { remote, pat ->
-                    VaultSession.configure(remote, emptyList())
-                    if (pat.isNotBlank()) VaultSession.savePat(pat)
+                onNewVault = {
+                    // New vaults are LOCAL-ONLY by design (the remote is
+                    // attached later from Setup — "Connect remote").
+                    VaultSession.configure(null, emptyList())
                     status = ""
                     lifecycleScope.launch {
-                        // New vault: git state only (no decrypt of anything),
-                        // then recipients, then the (empty) vault persists on
-                        // first save.
-                        val open = VaultSession.gitOpenOnly()
-                        if (open is VaultSession.Result.Error) {
-                            android.widget.Toast.makeText(this@MainActivity,
-                                "Offline — will sync later", android.widget.Toast.LENGTH_LONG).show()
-                            status = "Offline: repo not fetched. Use Sync now when back online."
-                            if (!File(VaultSession.vaultFilePath()).exists()) {
-                                VaultSession.adopt(Envelope(rev = 0, deviceId = VaultSession.deviceId()))
-                            }
-                            screen = Screen.Search
-                            return@launch
-                        }
+                        // Recipients, then the (empty) vault persists on
+                        // first save (which git-inits the local repo).
                         pickRecipientsUntilDone()
                         screen = Screen.Search
-                        status = "New vault ready — Add entry to begin."
+                        status = "Local-only vault ready — Add entry to begin."
                     }
                 },
                 onImportProton = { remote, pat, uri ->
@@ -421,13 +410,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     lifecycleScope.launch {
                         val open = VaultSession.gitOpenOnly()  // explicit network step
                         if (open is VaultSession.Result.Error) {
+                            // A failed load must NOT adopt a phantom empty
+                            // vault or leave an unlinked repo behind: undo
+                            // the config attempt and stay on Setup to retry.
+                            VaultSession.forgetConfig()
+                            File(VaultSession.gitRootPath()).deleteRecursively()
+                            status = "Load failed: ${open.message} — fix the remote/PAT and retry."
                             android.widget.Toast.makeText(this@MainActivity,
-                                "Offline — will sync later", android.widget.Toast.LENGTH_LONG).show()
-                            status = "Offline: repo not fetched."
-                            if (!File(VaultSession.vaultFilePath()).exists()) {
-                                VaultSession.adopt(Envelope(rev = 0, deviceId = VaultSession.deviceId()))
-                            }
-                            screen = Screen.Search
+                                "Load failed — nothing was changed", android.widget.Toast.LENGTH_LONG).show()
                             return@launch
                         }
                         unlockLoop()
@@ -641,6 +631,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onExportQrft = { screen = Screen.ExportPick },
                     onImportQrft = { cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA) },
                     onPairDevice = { pairCameraLauncher.launch(android.Manifest.permission.CAMERA) },
+                    onConnectRemote = { remote, pat ->
+                        lifecycleScope.launch {
+                            status = when (val r = VaultSession.connectRemote(remote, pat)) {
+                                VaultSession.Result.Success -> "Remote connected — synced."
+                                else -> r.toString()
+                            }
+                        }
+                    },
                     pairedDevices = VaultSession.pairedDevices(),
                     onShowDeviceQr = { device ->
                         // R2: the vault record IS the pairing backup — show

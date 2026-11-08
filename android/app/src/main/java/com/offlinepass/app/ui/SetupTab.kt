@@ -41,6 +41,7 @@ fun SetupTabScreen(
     onPairDevice: () -> Unit = {},
     pairedDevices: List<com.offlinepass.app.vault.DeviceRecord> = emptyList(),
     onShowDeviceQr: (com.offlinepass.app.vault.DeviceRecord) -> Unit = {},
+    onConnectRemote: (String, String) -> Unit = { _, _ -> },
     onRemoveDevice: (String) -> Unit = {}
 ) {
     val cfg = VaultSession.config()
@@ -84,6 +85,53 @@ fun SetupTabScreen(
         }
         Text("Remote: ${cfg?.remoteUrl ?: "(none — local-only)"}")
         Text("Device: ${cfg?.deviceId?.take(8) ?: "-"}   Rev: ${VaultSession.currentRev()}")
+
+        // Local-only vault: offer to attach a remote (git-synced backup +
+        // cross-device sync) without touching the local history.
+        var showConnect by remember { mutableStateOf(false) }
+        if (cfg?.remoteUrl == null) {
+            Text("Local-only: entries commit on this device only.",
+                style = MaterialTheme.typography.bodySmall)
+            Button(onClick = { showConnect = true }, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+                Text("Connect remote (sync online)")
+            }
+        }
+        if (showConnect) {
+            var url by remember { mutableStateOf("https://github.com/") }
+            var pat by remember { mutableStateOf("") }
+            AlertDialog(
+                onDismissRequest = { showConnect = false },
+                title = { Text("Connect remote") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("The existing local history connects to the remote and merges.",
+                            style = MaterialTheme.typography.bodySmall)
+                        OutlinedTextField(
+                            value = url, onValueChange = { url = it },
+                            label = { Text("Remote URL (HTTPS)") }, singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = pat, onValueChange = { pat = it },
+                            label = { Text("Fine-grained PAT (Contents: read/write)") },
+                            singleLine = true,
+                            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showConnect = false
+                            onConnectRemote(url.trim(), pat.trim())
+                        },
+                        enabled = url.isNotBlank() && pat.isNotBlank()
+                    ) { Text("Connect") }
+                },
+                dismissButton = { TextButton(onClick = { showConnect = false }) { Text("Cancel") } }
+            )
+        }
 
         // Sync state lives directly with its button.
         if (cfg?.remoteUrl != null) {

@@ -50,7 +50,7 @@ fun SetupChoiceScreen(
     recipientIds: List<Long>,
     onPickRecipients: () -> Unit,
     onRemoveRecipient: (Long) -> Unit,
-    onNewVault: (remote: String?, pat: String) -> Unit,
+    onNewVault: () -> Unit,
     onImportProton: (remote: String?, pat: String, uri: android.net.Uri) -> Unit,
     onLoadGitHub: (remote: String, emails: List<String>, pat: String) -> Unit,
     onLoadUsb: () -> Unit
@@ -62,7 +62,10 @@ fun SetupChoiceScreen(
 
     val importPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
-    ) { uri -> uri?.let { onImportProton(remote.trim().ifBlank { null }, pat.trim(), it) } }
+    ) { uri -> uri?.let {
+        // A Proton import into a NEW vault is local-only by definition.
+        onImportProton(if (mode == "new") null else remote.trim().ifBlank { null }, pat.trim(), it)
+    } }
 
     Column(
         modifier = Modifier
@@ -78,22 +81,10 @@ fun SetupChoiceScreen(
         }
 
         if (mode == "new") {
-            Text("New vault — recipients are picked from OpenKeyChain before creating/importing.",
+            Text("New vault — local-only: everything is stored and committed on this device." +
+                 " Recipients are picked from OpenKeyChain before creating. A remote can be" +
+                 " attached later from Setup.",
                 style = MaterialTheme.typography.bodySmall)
-            OutlinedTextField(
-                value = remote, onValueChange = { remote = it },
-                label = { Text("GitHub HTTPS remote (blank = local-only)") }, singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            if (remote.isNotBlank()) {
-                OutlinedTextField(
-                    value = pat, onValueChange = { pat = it },
-                    label = { Text("Fine-grained PAT (stored encrypted)") },
-                    singleLine = true,
-                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
             // Recipients — same UI as the Setup tab, BEFORE create/import.
             Text("Recipients (from OpenKeyChain picker)", style = MaterialTheme.typography.titleSmall)
             if (recipientIds.isEmpty()) {
@@ -110,19 +101,15 @@ fun SetupChoiceScreen(
                 Text("Add recipient (pick in OpenKeyChain)")
             }
             Button(
-                onClick = { onNewVault(remote.trim().ifBlank { null }, pat.trim()) },
+                onClick = { onNewVault() },
                 enabled = recipientIds.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth()
-            ) { Text("Create empty vault") }
+            ) { Text("Create local-only vault") }
             Button(
                 onClick = { importPicker.launch(arrayOf("*/*")) },
                 enabled = recipientIds.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Import from Proton Pass export") }
-            if (remote.isBlank()) Text(
-                "Local-only mode: the import is encrypted to the recipients and kept on this device.",
-                style = MaterialTheme.typography.bodySmall
-            )
         } else {
             OutlinedTextField(
                 value = remote, onValueChange = { remote = it },

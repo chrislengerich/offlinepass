@@ -466,7 +466,14 @@ object VaultSession {
                             " — nothing saved. Check the key in OpenKeyChain or pick another signer in Setup.")
                     }
                     val git = VaultGitClient()
-                    if (cfg.remoteUrl == null) git.gitInit(gitRoot())
+                    if (!File(gitRoot(), ".git").exists()) {
+                        // Safety net (live vault session only — a failed LOAD
+                        // never reaches here): a local-only vault that hasn't
+                        // saved yet, or a repo dir that lost its .git. Init
+                        // so THIS save is durable; the push either lands or
+                        // stays pending — the remote never gates a save.
+                        git.gitInit(gitRoot())
+                    }
 
                     // The LOCAL TRUTH FIRST: the change is on disk + committed
                     // regardless of connectivity; the push retries when the
@@ -606,6 +613,7 @@ object VaultSession {
     // -- helpers for UI (USB save/restore, QR export) -----------------------
 
     fun vaultFilePath(): String = vaultFile().absolutePath
+    fun gitRootPath(): String = gitRoot().absolutePath
     fun currentRev(): Long = rev
 
     // -- paired paste devices (Chrome extension; Plan 2) ---------------------
@@ -662,6 +670,39 @@ object VaultSession {
         } finally {
             busy = null
         }
+    }
+
+    /** Attach (or re-attach) a remote to a LOCAL-ONLY vault: stores the PAT,
+     *  connects origin to the existing local history (VaultGitClient.open
+     *  handles a .git without remotes), then syncs (fetch + merge + push).
+     *  On any failure the vault stays local-only — nothing is wiped. */
+    suspend fun connectRemote(remote: String, pat: String): Result {
+        val cfg = config() ?: return Result.Error("No config")
+        if (cfg.remoteUrl != null) return Result.Error("A remote is already configured")
+        if (remote.isBlank() || pat.isBlank()) return Result.Error("Remote URL and PAT are required")
+        savePat(pat)
+        configure(remote, cfg.recipientEmails)
+        busy = "Connecting remote…"
+        try {
+            withContext(Dispatchers.IO) { VaultGitClient().open(remote, pat, gitRoot()) }
+        } catch (e: Exception) {
+            configure(null, cfg.recipientEmails)
+            Log.w(TAG, "connectRemote: open failed: ${e.message}")
+            return Result.Error("Connect failed: ${e.message?.take(60)} — still local-only")
+        } finally {
+            busy = null
+        }
+        val sync = syncNow()
+        if (sync !is Result.Success) {
+            configure(null, cfg.recipientEmails)
+            return Result.Error("Connected, but sync failed: ${syncMessage(sync)} — reverted to local-only")
+        }
+        return Result.Success
+    }
+
+    private fun syncMessage(r: Result): String = when (r) {
+        is Result.Error -> r.message
+        else -> r.toString()
     }
 
     /** Wipes + re-clones the git state, preserving the current vault

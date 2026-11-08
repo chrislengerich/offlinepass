@@ -218,17 +218,22 @@ class VaultSaveTransactionTest {
     // -- post-commit durability ----------------------------------------------
 
     @Test
-    fun remoteModeCommitFailureRollsBack() = runBlocking {
-        // Remote configured but no repo open (Git.open throws in commitDirty).
+    fun remoteModeMissingRepoSelfHealsAndSavesLocally() = runBlocking {
+        // Remote configured but the repo was never cloned (failed setup):
+        // the save must still be durable — init a local repo, commit, and
+        // leave the push pending. The remote never gates a save.
         VaultSession.configure("https://localhost.invalid/repo.git", listOf("user@example.com"))
         seedRepo("PREVIOUS".toByteArray())
-        File(gitRoot(), ".git").deleteRecursively() // make the commit fail
+        File(gitRoot(), ".git").deleteRecursively() // no repo — the failed-clone state
 
         val r = VaultSession.save(listOf(item("New")))
 
-        assertTrue(r is VaultSession.Result.Error)
-        assertEquals("PREVIOUS", vaultFile().readText())
-        assertFalse(VaultSession.state is VaultSession.State.Unlocked)
+        assertTrue("expected Success (self-healed), got $r", r is VaultSession.Result.Success)
+        assertTrue("vault file updated", vaultFile().readText().startsWith("ciphertext:"))
+        assertNotNull("commit landed in the self-healed repo", headId())
+        assertEquals("pending", VaultSession.lastSaveRemoteState)
+        val state = VaultSession.state as VaultSession.State.Unlocked
+        assertEquals(listOf("New"), state.items.map { it.name })
     }
 
     @Test
