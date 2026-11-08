@@ -48,6 +48,15 @@ class VaultGitClient {
         // JGit 7 has no bundled JSch transport; register ours once so SSH
         // remotes ride the Keystore-gated identity.
         com.offlinepass.app.crypto.KeystoreSshSessionFactory.register()
+        // Verbose SSH negotiation logging (single-line INFO/WARN — visible
+        // in logcat even on ROMs that suppress stack traces).
+        com.jcraft.jsch.JSch.setLogger(object : com.jcraft.jsch.Logger {
+            override fun isEnabled(level: Int): Boolean =
+                level >= com.jcraft.jsch.Logger.INFO
+            override fun log(level: Int, message: String) {
+                android.util.Log.i("JSch", message)
+            }
+        })
     }
 
     fun open(remote: String, pat: String, root: File, branch: String = "main"): File {

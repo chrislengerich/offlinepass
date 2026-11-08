@@ -786,6 +786,21 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             }
                         }
                     },
+                    onRotateSshKey = {
+                        lifecycleScope.launch {
+                            status = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                runCatching {
+                                    val m = com.offlinepass.app.crypto.SshKeyManager()
+                                    m.removeKeyPair(); m.ensureKeyPair()
+                                    "SSH key rotated — re-add the deploy key on GitHub with the new fingerprint."
+                                }.getOrElse { "Rotation failed: ${it.message}" }
+                            }
+                        }
+                    },
+                    onRemoveYubikeySsh = {
+                        VaultSession.clearYubikeySsh()
+                        status = "YubiKey SSH enrollment removed (screenlock mode active)."
+                    },
                     onShowSshKey = {
                         lifecycleScope.launch {
                             try {

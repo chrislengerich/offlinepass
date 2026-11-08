@@ -46,6 +46,8 @@ fun SetupTabScreen(
     onShowDeviceQr: (com.offlinepass.app.vault.DeviceRecord) -> Unit = {},
     onConnectRemote: (String, String) -> Unit = { _, _ -> },
     onShowSshKey: () -> Unit = {},
+    onRotateSshKey: () -> Unit = {},
+    onRemoveYubikeySsh: () -> Unit = {},
     onEnrollYubikeySsh: (String, String) -> Unit = { _, _ -> },
     onRemoveDevice: (String) -> Unit = {}
 ) {
@@ -311,6 +313,37 @@ fun SetupTabScreen(
                 style = MaterialTheme.typography.bodySmall
             )
         }
+        HorizontalDivider()
+
+        Text("Deployment (SSH sync identities)", style = MaterialTheme.typography.titleSmall)
+        val sshFp = remember {
+            runCatching {
+                com.offlinepass.app.crypto.SshKeyManager().ensureKeyPair().fingerprint
+            }.getOrNull()
+        }
+        if (sshFp != null) {
+            Text("Screenlock key: $sshFp (60s screenlock gate)", style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = onRotateSshKey, enabled = busy == null) {
+                Text("Rotate key (re-add the deploy key after)")
+            }
+        } else {
+            Text("Screenlock SSH key: not enrolled.", style = MaterialTheme.typography.bodySmall)
+        }
+        val ykLine = VaultSession.yubikeySshLine()
+        if (ykLine != null) {
+            val ykFp = remember(ykLine) {
+                runCatching {
+                    com.offlinepass.app.crypto.PgpSshBridge.fingerprintOf(ykLine)
+                }.getOrNull()
+            }
+            Text("YubiKey auth subkey: ${ykFp ?: "(line unparseable)"}", style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = onRemoveYubikeySsh, enabled = busy == null) {
+                Text("Remove")
+            }
+        } else {
+            Text("YubiKey SSH: not enrolled.", style = MaterialTheme.typography.bodySmall)
+        }
+        Text("Active mode: " + VaultSession.sshSyncMode(), style = MaterialTheme.typography.bodySmall)
         HorizontalDivider()
 
         Text("USB offline copies", style = MaterialTheme.typography.titleSmall)

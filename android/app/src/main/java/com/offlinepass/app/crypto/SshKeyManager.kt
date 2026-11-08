@@ -73,6 +73,13 @@ class SshKeyManager(
 
     fun hasKeyPair(): Boolean = runCatching { load().containsAlias(alias) }.getOrDefault(false)
 
+    /** Removes the enrolled key (rotation/revocation). The caller must
+     *  re-enroll: the GitHub deploy key holding the old public half no
+     *  longer matches. */
+    fun removeKeyPair() {
+        load().deleteEntry(alias)
+    }
+
     /** True when the enrolled key requires user authentication (the
      *  screenlock gate); a pre-gating key is purged and regenerated. */
     private fun isScreenlockGated(ks: KeyStore): Boolean = runCatching {

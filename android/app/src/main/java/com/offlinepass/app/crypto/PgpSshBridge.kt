@@ -40,6 +40,14 @@ object PgpSshBridge {
         val comment: String
     )
 
+    /** ssh-keygen-style fingerprint ("SHA256:<unpadded b64>") of the blob
+     *  inside an OpenSSH public-key line. */
+    fun fingerprintOf(publicKeyLine: String): String {
+        val parsed = parsePublicKeyLine(publicKeyLine)
+        return "SHA256:" + java.util.Base64.getEncoder().withoutPadding()
+            .encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(parsed.wireBlob))
+    }
+
     fun parsePublicKeyLine(line: String): SshPublicKeyLine {
         val parts = line.trim().split(" ").filter { it.isNotBlank() }
         if (parts.size < 2) throw PgpSshBridgeException("SSH public key line needs at least: <alg> <b64blob>")

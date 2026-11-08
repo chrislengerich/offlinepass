@@ -110,6 +110,14 @@ object VaultSession {
 
     /** Persists the YubiKey SSH enrollment (public line + auth subkey id)
      *  and activates the YubiKey SSH sync mode. */
+    fun clearYubikeySsh() {
+        prefs().edit()
+            .remove("yubikeySshLine")
+            .remove("yubikeyAuthSubkeyId")
+            .putString("sshSyncMode", SSH_SYNC_SCREENLOCK)
+            .apply()
+    }
+
     fun setYubikeySsh(sshLine: String, subkeyIdHex: String) {
         prefs().edit()
             .putString("yubikeySshLine", sshLine)
