@@ -49,6 +49,11 @@ object KeystoreSshSessionFactory {
             // mode. VaultSession builds it; null → nothing enrolled.
             val identity = VaultSession.sshIdentityProvider()
                 ?: throw IOException("No SSH identity enrolled (Setup)")
+            val offerFp = "SHA256:" + java.util.Base64.getEncoder().withoutPadding()
+                .encodeToString(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(identity.publicKeyBlob))
+            android.util.Log.i("SshSync", "offering key to $user@$host:$port — " +
+                "fp=$offerFp, alg=${identity.getAlgName()}, blob=${identity.publicKeyBlob.size}B")
             val jsch = JSch()
             jsch.addIdentity(identity, null)
 
