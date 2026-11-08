@@ -49,17 +49,18 @@ object KeystoreSshSessionFactory {
             // mode. VaultSession builds it; null → nothing enrolled.
             val identity = VaultSession.sshIdentityProvider()
                 ?: throw IOException("No SSH identity enrolled (Setup)")
+            val port = if (uri.port > 0) uri.port else 22
+            val user = uri.user ?: "git"
+            val host = uri.host
             val offerFp = "SHA256:" + java.util.Base64.getEncoder().withoutPadding()
                 .encodeToString(java.security.MessageDigest.getInstance("SHA-256")
                     .digest(identity.publicKeyBlob))
-            android.util.Log.i("SshSync", "offering key to $user@$host:$port — " +
-                "fp=$offerFp, alg=${identity.getAlgName()}, blob=${identity.publicKeyBlob.size}B")
+            android.util.Log.i("SshSync", "offering key to $user@$host:$port - " +
+                "fp=$offerFp, alg=" + identity.getAlgName() + ", blob=" + identity.publicKeyBlob.size + "B")
             val jsch = JSch()
             jsch.addIdentity(identity, null)
 
-            val port = if (uri.port > 0) uri.port else 22
-            val user = uri.user ?: "git"
-            val session = jsch.getSession(user, uri.host, port)
+            val session = jsch.getSession(user, host, port)
             session.setConfig("StrictHostKeyChecking", "accept-new")
             session.timeout = tms * 1000
             try {
