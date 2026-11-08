@@ -119,7 +119,28 @@ fun SetupChoiceScreen(
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Create local-only vault") }
         } else {
-            // Sync-auth choice first — the remote URL's scheme follows it.
+            // 1. Load sources first.
+            Text("Load vault from", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        val emails = email.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                        onLoadGitHub(remote.trim(), emails, if (loadAuth == "pat") pat.trim() else "")
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("GitHub") }
+                OutlinedButton(
+                    onClick = { onLoadUsb() },
+                    modifier = Modifier.weight(1f)
+                ) { Text("USB file") }
+                OutlinedButton(
+                    onClick = { importPicker.launch(arrayOf("*/*")) },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Proton export") }
+            }
+
+            // 2. Sync-auth type for the GitHub transport.
+            Text("GitHub sync auth", style = MaterialTheme.typography.titleSmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     modifier = Modifier.weight(1f),
@@ -197,23 +218,14 @@ fun SetupChoiceScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
+
+            // 3. Recipients (the E2E encryption keys for saves from this device).
+            Text("Recipients (E2E encryption, from OpenKeyChain)", style = MaterialTheme.typography.titleSmall)
             OutlinedTextField(
                 value = email, onValueChange = { email = it },
-                label = { Text("OpenKeyChain recipient email(s)") }, singleLine = true,
+                label = { Text("Recipient email(s), comma-separated") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                    val emails = email.split(",").map { it.trim() }.filter { it.isNotBlank() }
-                    onLoadGitHub(remote.trim(), emails, if (loadAuth == "pat") pat.trim() else "")
-                }) { Text("Load from GitHub") }
-                OutlinedButton(onClick = { onLoadUsb() }) { Text("Load from USB file") }
-            }
-            Text("Or bring an existing vault here:", style = MaterialTheme.typography.bodySmall)
-            Button(
-                onClick = { importPicker.launch(arrayOf("*/*")) },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Import from Proton Pass export (local-only)") }
         }
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
     }
