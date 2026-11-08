@@ -333,7 +333,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     val manager = com.offlinepass.app.crypto.SshKeyManager()
                     val info = manager.ensureKeyPair()
                     object : com.jcraft.jsch.Identity {
-                        override fun getAlgName(): String = info.algorithm
+                        // getAlgName must return the SSH algorithm name —
+                        // "RSA" (the JCE name) makes JSch's filter skip the
+                        // identity entirely ("cannot be used as public key
+                        // type") and the auth fails without ever offering.
+                        override fun getAlgName(): String =
+                            if (info.algorithm == "Ed25519") "ssh-ed25519" else "ssh-rsa"
                         override fun getName(): String = "offlinepass-android"
                         override fun getPublicKeyBlob(): ByteArray = info.wireBlob
                         // JSch negotiates the RSA signature algorithm (it prefers
