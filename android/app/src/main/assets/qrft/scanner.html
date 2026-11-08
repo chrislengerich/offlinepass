@@ -36,10 +36,14 @@
         var done = false;
 
         var b64ToBytes = function (b64) {
+          // The generator encodes chunks as UTF-8 of the Latin-1 byte string
+          // before base64 (upstream encode_data) — invert that here, or any
+          // payload byte >= 0x80 (i.e. every gzip stream) is corrupted.
           var bin = atob(b64);
-          var out = new Uint8Array(bin.length);
-          for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-          return out;
+          var raw = new Uint8Array(bin.length);
+          for (var i = 0; i < bin.length; i++) raw[i] = bin.charCodeAt(i);
+          var str = new TextDecoder().decode(raw);
+          return Uint8Array.from(str, function (c) { return c.charCodeAt(0); });
         };
 
         var stopCamera = function () {
