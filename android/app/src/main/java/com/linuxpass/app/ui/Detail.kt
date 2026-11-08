@@ -1,5 +1,6 @@
 package com.linuxpass.app.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -28,7 +29,8 @@ fun EntryDetailScreen(
     status: String,
     busy: String?,
     onBack: () -> Unit,
-    onExportQr: () -> Unit,
+    onExportQr: (Boolean) -> Unit,
+    pairedDevices: List<com.linuxpass.app.vault.DeviceRecord> = emptyList(),
     onSaveChanges: (ProtonItem) -> Unit,
     onEnrollTotp: (String) -> Unit,
     onDelete: () -> Unit
@@ -132,8 +134,31 @@ fun EntryDetailScreen(
         Button(onClick = { showRegenConfirm = true }, modifier = Modifier.fillMaxWidth()) {
             Text("Regenerate password")
         }
-        Button(onClick = onExportQr, modifier = Modifier.fillMaxWidth()) {
+        var exportEncrypted = remember { mutableStateOf(true) }
+        Button(onClick = { onExportQr(exportEncrypted.value) }, modifier = Modifier.fillMaxWidth()) {
             Text("Export as QRFT")
+        }
+        if (pairedDevices.isNotEmpty()) {
+            // Plan 2: single-entry export defaults to the device-wrapped
+            // paste (all paired keys — any one opens it). Unchecked = the
+            // plain QRFT anyone can read.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { exportEncrypted.value = !exportEncrypted.value },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(checked = exportEncrypted.value, onCheckedChange = { exportEncrypted.value = it })
+                Text(
+                    "Encrypt to paired paste keys (${pairedDevices.size})",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        } else {
+            Text(
+                "No paste devices paired (Setup → Pair paste device) — the QR will be plain.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
         if (item.totpUri.isBlank()) {
             Button(onClick = { showTotpEntry = true }, modifier = Modifier.fillMaxWidth()) {

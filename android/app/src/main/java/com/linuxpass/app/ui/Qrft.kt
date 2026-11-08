@@ -61,15 +61,6 @@ fun QrftScreen(payload: String, onBack: () -> Unit) {
                             // chosen file) and start the sender.
                             val js = """
                                 (function(){
-                                    var s = document.getElementById('speed');
-                                    if (s) {
-                                        // Fast (250ms) is fine for direct
-                                        // screen-to-eye, but a camera needs
-                                        // focus time on the dense chunk
-                                        // frames — default to 1s/frame.
-                                        s.value = '1000';
-                                        s.dispatchEvent(new Event('change'));
-                                    }
                                     var t = document.getElementById('text_input');
                                     if (!t) return;
                                     t.value = ${org.json.JSONObject.quote(payload)};

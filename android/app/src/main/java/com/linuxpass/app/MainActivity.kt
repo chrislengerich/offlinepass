@@ -463,12 +463,28 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         status = status,
                         busy = VaultSession.busy,
                         onBack = { screen = Screen.Search },
-                        onExportQr = {
+                        onExportQr = { encrypt ->
                             // Payload is passed in memory (recomputed from
                             // the item on each recomposition) — nothing is
-                            // written to disk for a QR export.
-                            screen = Screen.Qrft(item.itemUuid)
+                            // written to disk for a QR export. Encrypted =
+                            // wrapped to all paired keys (Plan 2); plain
+                            // keeps the legacy readable QR.
+                            val devices = VaultSession.pairedDevices()
+                            if (encrypt && devices.isNotEmpty()) {
+                                lifecycleScope.launch {
+                                    try {
+                                        screen = Screen.QrftPayload(
+                                            DeviceWrap.wrap(entryPayload(item), devices))
+                                        saveToast("Paste encrypted to ${devices.size} key${if (devices.size == 1) "" else "s"}")
+                                    } catch (e: Exception) {
+                                        status = "Device-wrap failed: ${e.message}"
+                                    }
+                                }
+                            } else {
+                                screen = Screen.Qrft(item.itemUuid)
+                            }
                         },
+                        pairedDevices = VaultSession.pairedDevices(),
                         onSaveChanges = { edited ->
                             lifecycleScope.launch {
                                 edited.modifyTime = nowSeconds()
