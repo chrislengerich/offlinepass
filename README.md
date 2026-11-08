@@ -9,6 +9,9 @@ share it —
 - **Android (native app)** — the same vault on the phone: unlock with a
   hardware key, full CRUD, live TOTP, git sync, autofill, and QR/qrft
   exports for the [QR Autofill](../qrautofill) app.
+- **Chrome extension (Chromebook)** — receives an encrypted single-entry
+  paste from the phone's QR and auto-fills it into the browser tab,
+  gated by a security-key PIN + touch.
 
 ```
 $T $                    Linux: qrencode in the terminal
@@ -26,10 +29,13 @@ linuxpass/
 ├── linuxpass.py        # Linux: curses TUI (search, detail, QR, writes, TOTP)
 ├── passlib.py          # Linux: item model, GPG storage, git sync, generators
 ├── test_data.json      # Linux: 5 sample entries for testing
-├── test_passlib.py     # Linux: unit tests (36)
+├── test_passlib.py     # Linux: unit tests (37)
 ├── android/            # Android: Gradle project (UI, crypto, git, autofill)
 │   └── README.md       #   status, spikes, on-device storage map
-└── docs/               # design, work plan, testing plan
+├── extension/          # Chrome MV3 extension: scan/pair/decrypt/autofill
+│   └── selftest.html   #   crypto-chain self-test (fixed cross-impl vectors)
+├── scripts/            # release + vector generation
+└── docs/               # design, work plan, testing plan, extension protocol
 ```
 
 ## The shared vault format
@@ -42,6 +48,8 @@ extended with sync bookkeeping both clients understand:
 | `rev` | monotonic envelope revision, bumped per save |
 | `deviceId` | stable per-clone/per-device id |
 | `deletedItemUuids` | tombstones — deletes survive merges/syncs |
+| `devices` | paired paste targets (Chrome extension security keys); union-merged by keyId, newer copy wins |
+| `removedDeviceIds` | unpaired-device tombstones |
 | *(unknown fields)* | preserved verbatim through round-trips |
 
 The file is **always ciphertext at rest**: GPG-encrypted on the desktop,
@@ -158,13 +166,17 @@ cd android && ./gradlew :app:assembleDebug
   entries)" encodes a JSON array of the selected entries into the looping
   QR sender; "Import from QRFT (scan)" opens the in-app camera scanner
   (vendored jsQR + pako) to reassemble it on another device. Imports
-  dedupe by `itemUuid` — the local version wins on conflict. With a
-  **paste device** paired (Chrome extension, below), the export offers an
-  encrypted-to-device paste instead of plaintext.
-- **Paste devices (Chrome extension)** — pairs a security key so the
-  Chromebook can receive single-entry pastes and auto-fill them in the
-  browser: extension pairs (WebAuthn PRF, touch-gated) and shows a QR that
-  "Import from QRFT" stores; exports can then be wrapped to that key.
+  dedupe by `itemUuid` — the local version wins on conflict.
+- **Encrypted pastes to the browser** — an entry's "Export as QRFT"
+  carries an *"Encrypt to paired paste keys (N)"* checkbox (default on):
+  the paste is encrypted once under a random CEK and wrapped to every
+  paired Chrome-extension key (any one of them opens it, after a
+  security-key PIN + touch); unchecked keeps the plain QR anyone can
+  read. The multi-entry picker wraps to a selectable subset.
+- **Paste devices (Chrome extension)** — Setup → *"Pair paste device
+  (scan)"* reads the extension's single pairing QR into the vault's
+  `devices` records (git-synced, newer copy wins); *"Show QR"* re-renders
+  a record to restore a pairing on a new Chromebook; *"Remove"* unpairs.
   Protocol and threat model: [`docs/extension-protocol.md`](docs/extension-protocol.md).
 - **Sync** — explicit "Sync now" with divergence detection: behind →
   fast-forward, diverged → union-merge and re-encrypt; local-only mode runs
@@ -204,6 +216,65 @@ it is not a guarantee.
 **What a stolen device yields:** vault ciphertext + a wrapped token. No
 plaintext, no keys, no decryptable state.
 
+## Chrome extension (paste receive + autofill)
+
+**What it does** — click the linuxpass icon in Chrome: with a key paired,
+the scan window opens instantly for the tab you clicked from; scan the
+phone's looping paste QR with the Chromebook's camera; decryption starts
+automatically once the transfer completes (insert key → FIDO2 PIN +
+touch — no extra click); an entry whose URLs match the tab
+(subdomain-aware) **auto-fills** and the window closes; no match → entry
+cards with Fill / Reveal / Copy / TOTP-copy. Nothing runs on any site by
+default: `activeTab` + no content scripts — the platform grants access
+only to the tab you clicked on, and every decryption requires the key.
+
+### Install (ChromeOS / desktop Chrome)
+
+1. `chrome://extensions` → enable **Developer mode** → **Load unpacked**
+   → select the `linuxpass/extension/` directory.
+2. Click the linuxpass icon → the pair page opens → follow the two
+   touches (set a **FIDO2 PIN** if Chrome asks — the same PIN your
+   passkeys use, separate from the OpenPGP/PIV PINs).
+3. On the phone: linuxpass → Setup → **"Pair paste device (scan)"** →
+   scan the extension's pairing QR → the record lands in the vault and
+   syncs to all clients via git.
+4. Send a paste: open the entry → **Export as QRFT** → leave
+   *"Encrypt to paired paste keys (N)"* checked → scan the looping QR
+   with the extension (insert + PIN + touch) → auto-filled.
+
+**Requirements:** a security key with the WebAuthn `prf` extension
+(YubiKey 5, fw ≥ 5.3) and Chrome on ChromeOS/desktop. Pairing is per key,
+not per Chromebook — the same key works on any machine via the extension,
+and the pairing record can be re-shown from the phone (Setup → Paste
+devices → "Show QR") to restore a lost browser profile without re-pairing.
+
+### Security model
+
+A paste decrypts only with the paired key present + PIN + touch (touch
+every paste; the PIN re-asks per operation in practice — CTAP2.1
+auth-token expiry). The extension stores public records plus an
+AES-wrapped seed only — the seed never exists in plaintext without the
+touch — makes **no network requests**, and decrypts in memory. The
+security key accumulates no state: non-resident credential, no passkey
+slots used, existing GPG/PIV keys and passkeys untouched. Lost key → it
+alone decrypts nothing; unpair on the phone and re-pair. Lost
+Chromebook/profile → restore from the phone's "Show QR". Full wire
+format, key chain, and threat model:
+[`docs/extension-protocol.md`](docs/extension-protocol.md).
+
+### Troubleshooting
+
+- **Pairing fails with a PRF error** — the key lacks `hmac-secret`
+  (YubiKey fw < 5.3): update the firmware, or pair the ChromeOS platform
+  authenticator instead (PIN-based UV; pairing becomes per-machine).
+- **"No paired key for \<keyId\>"** — that key isn't paired in this
+  browser: pair it, or restore its pairing QR from the phone.
+- **Transfer stalls mid-chunks** — hold the phone steady; the progress
+  line names the missing chunk; if nothing moves for 5s, check the
+  sender's speed selector on the phone.
+- **Decrypt asks for the PIN every time** — expected: the key's PIN/UV
+  token expires between operations; the touch is always required.
+
 ## Releases
 
 Release artifacts (debug + profileable APKs) attach to GitHub releases —
@@ -224,8 +295,17 @@ python3 linuxpass.py
 
 # Android unit tests
 cd android && ./gradlew :app:testDebugUnitTest
+
+# Extension self-test (fixed cross-impl vectors; needs a browser)
+# → chrome://extensions → linuxpass → "Run self-test" link on the pair page
+
+# Regenerate the cross-implementation vectors (protocol change only)
+python3 scripts/gen_device_wrap_vectors.py
 ```
 
 Linux tests cover item parsing, search matching, password generation, TOTP
 (verified against RFC 6238 test vectors), display-name derivation, and file
-round-trips. The Android test matrix is defined in `docs/testing-plan.md`.
+round-trips. The Android test matrix is defined in `docs/testing-plan.md`
+and includes the device-wrap vectors shared with the extension's
+self-test page — both sides assert the same numbers, so the JCE and
+WebCrypto implementations cannot drift apart.

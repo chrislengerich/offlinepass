@@ -25,7 +25,10 @@ with the **PRF (`hmac-secret`) extension**:
   same one passkeys on the key use — one FIDO2 PIN per YubiKey, separate
   from the OpenPGP and PIV PINs. If unset, Chrome prompts to create one
   during pairing (retry lockout is per-power-cycle). Works on Chromebooks
-  without fingerprint readers.
+  without fingerprint readers. In practice the PIN is **re-asked per
+  operation** (the CTAP2.1 `pinUvAuthToken` expires after ~30s of
+  inactivity), while the touch is required every time — the desired
+  posture: possession + knowledge per paste.
 - The ChromeOS platform authenticator (PIN-based UV, per-machine pairing)
   is the documented fallback.
 
