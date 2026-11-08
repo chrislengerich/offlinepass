@@ -15,6 +15,7 @@ document.getElementById("btn_menu").addEventListener("click", (e) => {
   e.preventDefault();
   const q = targetTabId != null ? "?tab=" + targetTabId : "";
   chrome.windows.create({ url: "popup.html" + q, type: "popup", width: 320, height: 460, focused: true });
+  window.close(); // the camera window is replaced by the menu
 });
 
 // Fill target: captured by the popup BEFORE this window opened.
