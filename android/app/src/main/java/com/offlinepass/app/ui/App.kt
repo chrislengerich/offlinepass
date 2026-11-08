@@ -66,7 +66,6 @@ fun SetupChoiceScreen(
         else defaultRemote
         mutableStateOf(initial)
     }
-    var email by remember { mutableStateOf(defaultEmails) }
     var pat by remember { mutableStateOf(prefillPat) }
     var mode by remember { mutableStateOf("load") }
     // The load flow's sync-auth choice: screenlock SSH (default) / YubiKey
@@ -123,10 +122,7 @@ fun SetupChoiceScreen(
             Text("Load vault from", style = MaterialTheme.typography.titleSmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
-                    onClick = {
-                        val emails = email.split(",").map { it.trim() }.filter { it.isNotBlank() }
-                        onLoadGitHub(remote.trim(), emails, if (loadAuth == "pat") pat.trim() else "")
-                    },
+                    onClick = { onLoadGitHub(remote.trim(), emptyList(), if (loadAuth == "pat") pat.trim() else "") },
                     modifier = Modifier.weight(1f)
                 ) { Text("GitHub") }
                 OutlinedButton(
@@ -219,13 +215,8 @@ fun SetupChoiceScreen(
                 )
             }
 
-            // 3. Recipients (the E2E encryption keys for saves from this device).
-            Text("Recipients (E2E encryption, from OpenKeyChain)", style = MaterialTheme.typography.titleSmall)
-            OutlinedTextField(
-                value = email, onValueChange = { email = it },
-                label = { Text("Recipient email(s), comma-separated") }, singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
+            // Recipients are NOT configured here: the loaded repo carries
+            // its recipients (keys/*.public.asc seeded into Setup on load).
         }
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
     }

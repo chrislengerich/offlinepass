@@ -622,6 +622,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                 "Load failed — nothing was changed", android.widget.Toast.LENGTH_LONG).show()
                             return@launch
                         }
+                        // The loaded repo carries its recipients
+                        // (keys/<keyid>.public.asc) — seed the save targets.
+                        VaultSession.seedRecipientsFromRepo()
                         unlockLoop()
                         android.widget.Toast.makeText(this@MainActivity, "Vault loaded",
                             android.widget.Toast.LENGTH_SHORT).show()

@@ -792,6 +792,23 @@ object VaultSession {
         return env.devices.size != before
     }
 
+    /** Seeds the recipient key ids from the repo's materialized public keys
+     *  (keys/<keyid>.public.asc) when none are configured -- a freshly
+     *  loaded vault carries its own recipients. No-op when ids already
+     *  exist (never clobbers). Returns the effective ids. */
+    fun seedRecipientsFromRepo(): List<Long> {
+        if (recipientKeyIds().isNotEmpty()) return recipientKeyIds()
+        val dir = File(gitRoot(), "keys")
+        val ids = dir.listFiles { f -> f.name.endsWith(".public.asc") }
+            ?.mapNotNull { f -> f.name.substringBefore(".").toLongOrNull(16) }
+            .orEmpty()
+        if (ids.isNotEmpty()) {
+            setRecipientKeyIds(ids)
+            Log.i(TAG, "seeded " + ids.size + " recipient key id(s) from the repo's keys/")
+        }
+        return ids
+    }
+
     // -- Connect-remote draft (survives the SSH-key QR detour) ----------------
 
     fun saveConnectDraft(ownerRepo: String, auth: String) {
