@@ -430,21 +430,35 @@ fun SetupTabScreen(
         if (screenLockOn) {
             // The screenlock toggle now governs the idle auto-lock too:
             // after N minutes untouched, the decrypted session is zeroed —
-            // everything is back to encrypted-at-rest.
+            // everything is back to encrypted-at-rest. The timeout is a
+            // free-form field (minutes; 0 = never).
+            var autoLockInput by remember(autoLockMinutes) {
+                mutableStateOf(autoLockMinutes.toString())
+            }
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
             ) {
-                Text("Auto-lock (idle)", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                listOf(0 to "Never", 1 to "1m", 5 to "5m", 15 to "15m").forEach { (mins, label) ->
-                    FilterChip(
-                        selected = autoLockMinutes == mins,
-                        onClick = { onAutoLockChange(mins) },
-                        label = { Text(label) }
-                    )
-                }
+                OutlinedTextField(
+                    value = autoLockInput,
+                    onValueChange = { text ->
+                        autoLockInput = text.filter { it.isDigit() }.take(4)
+                        autoLockInput.toIntOrNull()?.let { onAutoLockChange(it) }
+                    },
+                    label = { Text("Auto-lock (idle minutes; 0 = never)") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                    modifier = Modifier.weight(1f)
+                )
             }
+            Text(
+                "After this many idle minutes the decrypted session is zeroed " +
+                    "(everything back to encrypted at rest). Applies to app use " +
+                    "and backgrounding alike.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
         Row(
             modifier = Modifier.fillMaxWidth(),

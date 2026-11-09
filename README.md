@@ -253,7 +253,8 @@ git**) lets the locked app do almost everything except reveal secrets:
   (GPG unlock for everything).
 
 **Idle auto-lock** (part of the screen-lock toggle, Setup → "Auto-lock
-(idle)": Never / 1m / 5m / 15m, default **5m**): after 5 idle minutes the
+(idle minutes)", a user-editable field — `0` = never, default **5**): after
+5 idle minutes the
 decrypted session is zeroed — every entry, the envelope, and the reveal
 overlay are back to encrypted-at-rest, and the app returns to the sealed
 search list (or the unlock screen when the sealed cache is off).
