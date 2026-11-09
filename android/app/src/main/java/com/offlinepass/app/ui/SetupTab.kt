@@ -466,8 +466,9 @@ fun SetupTabScreen(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                "Screenlock unlock (experimental) — search/list works sealed;" +
-                    " clicking an entry reveals it with a screen-lock prompt.",
+                "Encrypt individual items while in use (experimental) — " +
+                    "search/list works sealed; clicking an entry reveals it " +
+                    "with a screen-lock prompt.",
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodySmall
             )

@@ -17,13 +17,13 @@ Setup tab (persistent):
  3. Enroll security key.
  4. Setup autofill.
  5. Export vault (QRFT export).
- 6. Screenlock unlock (experimental toggle).
+ 6. Encrypt individual items while in use (experimental toggle).
 
 Password search (main page):
  1. Type in, get a list of plaintext matches (rows, similar to linux desktop).
  2. Password options (same as linux desktop) 
 
-Password search — sealed launch (Screenlock unlock ON, experimental):
+Password search — sealed launch (item encryption ON, experimental):
  1. Run: the list + search work immediately, backed by the device-local
     sealed cache's manifest (names, usernames, emails, URLs at rest —
     app-private, never synced; passwords/notes/TOTP stay sealed under a

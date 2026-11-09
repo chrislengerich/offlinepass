@@ -1185,9 +1185,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onScreenlockUnlockToggle = { on ->
                         VaultSession.setScreenlockUnlockEnabled(on)
                         if (!on) sealedReveal = null
-                        status = if (on) "Screenlock unlock ON — search works on the sealed list;" +
+                        status = if (on) "Item encryption while in use ON — search works on the sealed list;" +
                             " clicks reveal with a screen-lock prompt."
-                        else "Screenlock unlock OFF — sealed cache wiped."
+                        else "Item encryption while in use OFF — sealed cache wiped."
                     },
                     onLock = { lockNow("") },
                     onExportQrft = { screen = Screen.ExportPick },

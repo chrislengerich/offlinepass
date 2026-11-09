@@ -28,7 +28,7 @@ import javax.crypto.spec.PSource
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * The device-local sealed cache behind the experimental "Screenlock unlock"
+ * The device-local sealed cache behind the experimental "encrypt individual items while in use"
  * toggle. The GPG-encrypted envelope in the repo stays the only synced
  * representation; this cache is never committed anywhere.
  *

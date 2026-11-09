@@ -147,11 +147,11 @@ cd android && ./gradlew :app:assembleDebug
 
 - **Unlock** — clone/fetch the repo (PAT over HTTPS), decrypt
   `state/10.gpg` via OpenKeyChain (YubiKey touch + PIN); optional
-  biometric/PIN gate before the key. With **Screenlock unlock**
+  biometric/PIN gate before the key. With **Encrypt individual items while in use**
   (experimental, Setup toggle) the app keeps a device-local sealed cache:
   the locked app stays fully searchable (names/usernames/URLs), and
   clicking an entry reveals it after just a screen-lock prompt — see
-  "Screenlock unlock" below.
+  "Encrypt individual items while in use" below.
 - **CRUD + TOTP** — search, add/edit (URL, username/email, editable
   password, notes), update password, enroll TOTP with live countdown,
   tombstoned delete; entries carry a last-modified timestamp (shown in the
@@ -228,7 +228,7 @@ it is not a guarantee.
 **What a stolen device yields:** vault ciphertext + a wrapped token. No
 plaintext, no keys, no decryptable state.
 
-### Screenlock unlock (experimental, Setup toggle; default off)
+### Encrypt individual items while in use (experimental, Setup toggle; default off)
 
 One device-local sealed cache (app-private storage, **never committed to
 git**) lets the locked app do almost everything except reveal secrets:
