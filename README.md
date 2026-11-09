@@ -147,7 +147,11 @@ cd android && ./gradlew :app:assembleDebug
 
 - **Unlock** — clone/fetch the repo (PAT over HTTPS), decrypt
   `state/10.gpg` via OpenKeyChain (YubiKey touch + PIN); optional
-  biometric/PIN gate before the key.
+  biometric/PIN gate before the key. With **Screenlock unlock**
+  (experimental, Setup toggle) the app keeps a device-local sealed cache:
+  the locked app stays fully searchable (names/usernames/URLs), and
+  clicking an entry reveals it after just a screen-lock prompt — see
+  "Screenlock unlock" below.
 - **CRUD + TOTP** — search, add/edit (URL, username/email, editable
   password, notes), update password, enroll TOTP with live countdown,
   tombstoned delete; entries carry a last-modified timestamp (shown in the
@@ -199,7 +203,8 @@ cd android && ./gradlew :app:assembleDebug
 | Vault file (`10.gpg`) | OpenPGP ciphertext to the configured recipients. **Never plaintext on disk.** |
 | Git history | Ciphertext commits only |
 | PAT | AES-256-GCM blob wrapped by AndroidKeyStore (TEE-held) |
-| Decrypted entries | **RAM only**, while the session is unlocked |
+| Decrypted entries | **RAM only**, while the session is unlocked; zeroed by the idle auto-lock (screen-lock toggle, default 5 min), Setup's lock button, or app exit |
+| Sealed cache (`sealed/sealed.json`, experimental) | Manifest (names/usernames/URLs) in the clear + secrets AES-GCM ciphertext under a screenlock-keystore-wrapped KEK; app-private, never synced, wiped on toggle-off |
 | QR exports | Plaintext by explicit user choice (screen = trust boundary); generated in memory and injected into the WebView — never persisted to disk |
 
 **Zeroing.** Decrypted material is deliberately erased, not left behind:
@@ -222,6 +227,39 @@ it is not a guarantee.
 
 **What a stolen device yields:** vault ciphertext + a wrapped token. No
 plaintext, no keys, no decryptable state.
+
+### Screenlock unlock (experimental, Setup toggle; default off)
+
+One device-local sealed cache (app-private storage, **never committed to
+git**) lets the locked app do almost everything except reveal secrets:
+
+- **At rest, plaintext** (app-private, device-only): the manifest the list
+  and search render — names, usernames, emails, URLs, modify times — plus
+  the envelope's public bookkeeping (rev, paired paste devices, tombstones;
+  all non-secret).
+- **At rest, sealed**: each entry's `{password, note, totpUri}` is
+  AES-256-GCM ciphertext under a cache key (KEK) wrapped to an
+  AndroidKeystore RSA key that **requires the device screen lock** (60 s
+  validity window per successful prompt).
+- **Flow**: run → the usual search/list over the manifest → tap an entry →
+  one screen-lock prompt → that entry unseals into its detail view (the
+  session stays locked). Editing → Save promotes to a full session
+  (unseal-all, silent while the auth window is open) and signs via the
+  existing screenlock commit signer. A seal that is stale against the
+  vault file (first use, or after a remote pull) falls back to the GPG
+  unlock once and re-seals; key regeneration (screen-lock enrollment
+  changes) self-heals the same way.
+- **Toggle off** wipes the cache and restores the legacy behavior exactly
+  (GPG unlock for everything).
+
+**Idle auto-lock** (part of the screen-lock toggle, Setup → "Auto-lock
+(idle)": Never / 1m / 5m / 15m, default **5m**): after 5 idle minutes the
+decrypted session is zeroed — every entry, the envelope, and the reveal
+overlay are back to encrypted-at-rest, and the app returns to the sealed
+search list (or the unlock screen when the sealed cache is off).
+Backgrounding the app counts toward the timeout: returning after it has
+expired locks first, before anything touches the session. An in-flight
+OpenKeyChain interaction is never interrupted by the timer.
 
 ## Chrome extension (paste receive + autofill)
 

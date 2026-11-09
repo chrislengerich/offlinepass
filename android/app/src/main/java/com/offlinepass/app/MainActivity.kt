@@ -30,6 +30,7 @@ import com.offlinepass.app.ui.entryPayload
 import com.offlinepass.app.vault.Envelope
 import com.offlinepass.app.vault.PasswordGen
 import com.offlinepass.app.vault.ProtonItem
+import com.offlinepass.app.vault.SealedVault
 import com.offlinepass.app.vault.VaultMerge
 import com.offlinepass.app.vault.VaultSession
 import com.offlinepass.app.ui.ExportTargetPickScreen
@@ -54,6 +55,73 @@ class MainActivity : androidx.activity.ComponentActivity() {
     private var screen by mutableStateOf<Screen>(Screen.SetupChoice)
     private var status by mutableStateOf("")
     private var searchQuery by mutableStateOf("")
+    /** Locked-mode click-through: the one unsealed entry shown in the
+     *  detail overlay. Null ⇒ the sealed search view renders. */
+    private var sealedReveal by mutableStateOf<ProtonItem?>(null)
+    /** An edit typed in a sealed detail that had to be flushed through a
+     *  GPG unlock (stale seal); applied right after unlockLoop succeeds. */
+    private var pendingSealedEdit by mutableStateOf<ProtonItem?>(null)
+    /** The click's destination, deferred across a GPG unlock that ran from
+     *  a sealed flow (stale/missing seal): the item view still opens. */
+    private var afterUnlock: (suspend () -> Unit)? = null
+
+    // -- idle auto-lock (screenLockRequired governs it) -----------------------
+
+    private var lastInteractionMs = android.os.SystemClock.elapsedRealtime()
+    private var autoLockJob: kotlinx.coroutines.Job? = null
+    private var pausedAtMs = 0L
+
+    override fun onPause() {
+        // The idle gap a backgrounding represents is measured from here
+        // (onResume re-checks against the timeout).
+        pausedAtMs = android.os.SystemClock.elapsedRealtime()
+        super.onPause()
+    }
+
+    /** Any touch counts as activity — the idle timer restarts. */
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        lastInteractionMs = android.os.SystemClock.elapsedRealtime()
+        rescheduleAutoLock()
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /** Runs the idle timer while the session is unlocked. Expiry zeroes the
+     *  whole decrypted session (everything back to encrypted-at-rest) and
+     *  returns to the sealed list / unlock screen. Deferred while an
+     *  OpenKeyChain interaction is mid-flight — zeroing mid-unlock would
+     *  let the in-flight result re-lock the vault right after. */
+    private fun rescheduleAutoLock() {
+        autoLockJob?.cancel()
+        autoLockJob = null
+        if (!VaultSession.screenLockRequired()) return
+        val minutes = VaultSession.autoLockMinutes()
+        if (minutes <= 0) return
+        if (VaultSession.state !is VaultSession.State.Unlocked) return
+        val timeoutMs = minutes * 60_000L
+        autoLockJob = lifecycleScope.launch {
+            while (true) {
+                val idleMs = android.os.SystemClock.elapsedRealtime() - lastInteractionMs
+                val remaining = timeoutMs - idleMs
+                if (remaining > 0) { kotlinx.coroutines.delay(remaining); continue }
+                // Idle past the timeout — but not during a crypto interaction.
+                if (VaultSession.busy != null) { kotlinx.coroutines.delay(30_000); continue }
+                lockNow("Locked after inactivity.")
+                return@launch
+            }
+        }
+    }
+
+    /** Single re-lock path: zero the session + clear every sealed-flow
+     *  leftover + return to the default screen. */
+    private fun lockNow(statusMsg: String) {
+        VaultSession.zero()
+        sealedReveal = null
+        pendingSealedEdit = null
+        afterUnlock = null
+        screen = Screen.Search
+        status = statusMsg
+        rescheduleAutoLock()
+    }
     private var pendingInteraction: CancellableContinuation<Intent?>? = null
 
     private val interactionLauncher =
@@ -94,15 +162,30 @@ class MainActivity : androidx.activity.ComponentActivity() {
      * the hardware-key interaction (only when enabled in Setup). */
     private suspend fun biometricGate(): Boolean {
         if (!VaultSession.screenLockRequired()) return true
+        return promptGate("Unlock offlinepass", "Device lock required before the security key")
+    }
+
+    /** Platform BiometricPrompt (API 28+): no FragmentActivity needed, so
+     *  the Activity-Result registry keeps working. A success opens the
+     *  keystore validity window for ALL time-based keys the authenticated
+     *  authenticator satisfies (the seal key, the signing key, the SSH key
+     *  share the 60s window). strongOrCredential: the framework-enforced
+     *  authenticator set (BIOMETRIC_STRONG | DEVICE_CREDENTIAL) — matches
+     *  the seal key's binding exactly, so any prompt success opens it. */
+    private suspend fun promptGate(title: String, subtitle: String, strongOrCredential: Boolean = false): Boolean {
         return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
-            // Platform BiometricPrompt (API 28+): no FragmentActivity needed,
-            // so the Activity-Result registry keeps working.
             val cancel = android.os.CancellationSignal()
-            val prompt = android.hardware.biometrics.BiometricPrompt.Builder(this)
-                .setTitle("Unlock offlinepass")
-                .setSubtitle("Device lock required before the security key")
-                .setDeviceCredentialAllowed(true)
-                .build()
+            val builder = android.hardware.biometrics.BiometricPrompt.Builder(this)
+                .setTitle(title)
+                .setSubtitle(subtitle)
+            if (strongOrCredential && android.os.Build.VERSION.SDK_INT >= 30) {
+                builder.setAllowedAuthenticators(
+                    android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG
+                        or android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+            } else {
+                builder.setDeviceCredentialAllowed(true)
+            }
+            val prompt = builder.build()
             cont.invokeOnCancellation { cancel.cancel() }
             prompt.authenticate(
                 cancel,
@@ -131,6 +214,28 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 VaultSession.Result.Success -> {
                     android.widget.Toast.makeText(this, "Vault unlocked", android.widget.Toast.LENGTH_SHORT).show()
                     if (screen == Screen.SetupChoice) screen = Screen.Search
+                    // A sealed-detail edit that waited for the key unlock.
+                    pendingSealedEdit?.let { edited ->
+                        pendingSealedEdit = null
+                        edited.modifyTime = nowSeconds()
+                        val items = unlockedItems().map {
+                            if (it.itemUuid == edited.itemUuid) edited else it
+                        }
+                        when (saveLoop(items)) {
+                            VaultSession.Result.Success -> {
+                                saveToast("Saved (after key unlock)")
+                                status = "Saved (rev ${VaultSession.currentRev()})."
+                                screen = Screen.Detail(edited.itemUuid)
+                            }
+                            else -> status = "Save failed after the key unlock — edit again in the list."
+                        }
+                    }
+                    sealedReveal = null
+                    rescheduleAutoLock()
+                    afterUnlock?.let { action ->
+                        afterUnlock = null
+                        action()
+                    }
                     return
                 }
                 is VaultSession.Result.Interaction -> { launchInteraction(r.pendingIntent); awaitInteraction() }
@@ -140,8 +245,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         screen = Screen.SetupChoice
                         status = "No vault on this device — create or import one below."
                     } else status = r.message
+                    // A declined/failed unlock must not run a stale action
+                    // on some later, unrelated unlock.
+                    afterUnlock = null
+                    pendingSealedEdit = null
                     return
                 }
+                is VaultSession.Result.NeedsKeyDecrypt, is VaultSession.Result.Revealed ->
+                    return // sealed-mode results never reach the GPG unlock loop
             }
         }
         status = "Unlock aborted after interaction retry."
@@ -176,6 +287,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     }
                 }
                 is VaultSession.Result.Error -> { status = "Recipient: ${r.message}"; return }
+                is VaultSession.Result.NeedsKeyDecrypt, is VaultSession.Result.Revealed ->
+                    return // unreachable from the recipient picker
             }
         }
         status = "Recipient picking aborted."
@@ -291,6 +404,20 @@ class MainActivity : androidx.activity.ComponentActivity() {
      *  invokes the handler from Dispatchers.IO. */
     override fun onResume() {
         super.onResume()
+        // Backgrounded past the auto-lock timeout? Lock before anything
+        // else touches the session.
+        if (pausedAtMs > 0) {
+            val gapMs = android.os.SystemClock.elapsedRealtime() - pausedAtMs
+            pausedAtMs = 0L
+            if (VaultSession.state is VaultSession.State.Unlocked &&
+                VaultSession.screenLockRequired() &&
+                VaultSession.autoLockMinutes() > 0 &&
+                gapMs >= VaultSession.autoLockMinutes() * 60_000L
+            ) {
+                lockNow("Locked after inactivity.")
+            }
+        }
+        lastInteractionMs = android.os.SystemClock.elapsedRealtime()
         VaultSession.interactionHandler = { pi ->
             withContext(kotlinx.coroutines.Dispatchers.Main) {
                 launchInteraction(pi)
@@ -306,6 +433,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // SSH syncs open the key's 60s validity window with a screen-lock
         // interaction (biometric or device credential) before the transport.
         VaultSession.syncAuthGate = { biometricGate() }
+        // Sealed-cache unseals open the SAME window with their own prompt
+        // (the reveal on click-through; the save reuses a still-open one).
+        // Framework-enforced authenticator set matching the seal key.
+        VaultSession.sealGate = { title, subtitle ->
+            promptGate(title, subtitle, strongOrCredential = true)
+        }
         // First push to an EMPTY remote: confirm before creating the remote
         // main branch.
         VaultSession.firstPushGate = {
@@ -582,12 +715,16 @@ class MainActivity : androidx.activity.ComponentActivity() {
             // temp files). A swipe-away kill reclaims memory with the
             // process; this covers every deliberate exit.
             VaultSession.zero()
+            sealedReveal = null
+            pendingSealedEdit = null
+            screen = Screen.Search
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         VaultSession.init(applicationContext)
+        SealedVault.init(applicationContext)
         // Spike extras forward (S1/S3 keep working).
         val keys = listOf("path", "email", "exportKey", "probeSign", "autostart")
         val received = keys.mapNotNull { k -> intent.getStringExtra(k)?.let { k to it } }.toMap()
@@ -724,13 +861,147 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 onPickAuthSubkey = { lifecycleScope.launch { pickAuthSubkey() } },
                 onEnrollYubikeySsh = { line, subkeyId -> enrollYubikeySsh(line, subkeyId) }
             )
-            VaultSession.State.Locked -> UnlockScreen(
-                status = status,
-                busy = VaultSession.busy,
-                patMissing = VaultSession.config()?.remoteUrl != null && !VaultSession.hasPat(),
-                onPatSave = { VaultSession.savePat(it); status = "PAT stored (encrypted)." },
-                onUnlock = { lifecycleScope.launch { unlockLoop() } }
-            )
+            VaultSession.State.Locked -> when {
+                // Sealed-mode click-through: the one revealed entry's detail.
+                // Editing/saving rides the promotion + existing signing gates.
+                sealedReveal != null -> EntryDetailScreen(
+                    item = sealedReveal!!,
+                    status = status,
+                    busy = VaultSession.busy,
+                    pairedDevices = VaultSession.sealedPairedDevices(),
+                    onBack = { sealedReveal = null; status = "" },
+                    onExportQr = { encrypt ->
+                        lifecycleScope.launch {
+                            val item = sealedReveal ?: return@launch
+                            when (val r = VaultSession.promoteSealedSession()) {
+                                VaultSession.Result.Success -> {
+                                    sealedReveal = null
+                                    exportQr(item, encrypt)
+                                }
+                                is VaultSession.Result.NeedsKeyDecrypt -> {
+                                    afterUnlock = { exportQr(item, encrypt) }
+                                    unlockLoop()
+                                }
+                                is VaultSession.Result.Error -> sealedToast(r.message)
+                                else -> {}
+                            }
+                        }
+                    },
+                    onSaveChanges = { edited ->
+                        lifecycleScope.launch {
+                            when (val r = VaultSession.saveSealed(edited)) {
+                                VaultSession.Result.Success -> {
+                                    sealedReveal = null
+                                    screen = Screen.Search
+                                    saveToast("Saved")
+                                    status = "Saved (rev ${VaultSession.currentRev()})."
+                                }
+                                is VaultSession.Result.NeedsKeyDecrypt -> {
+                                    pendingSealedEdit = edited
+                                    unlockLoop()
+                                }
+                                is VaultSession.Result.Error -> sealedToast(r.message)
+                                else -> {}
+                            }
+                        }
+                    },
+                    onEnrollTotp = { secret ->
+                        lifecycleScope.launch {
+                            val base = sealedReveal ?: return@launch
+                            when (val r = VaultSession.saveSealed(
+                                base.copy(totpUri = secret, modifyTime = nowSeconds()))) {
+                                VaultSession.Result.Success -> {
+                                    sealedReveal = null
+                                    screen = Screen.Search
+                                    saveToast("TOTP enrolled")
+                                    status = "TOTP enrolled (rev ${VaultSession.currentRev()})."
+                                }
+                                is VaultSession.Result.NeedsKeyDecrypt -> {
+                                    pendingSealedEdit =
+                                        base.copy(totpUri = secret, modifyTime = nowSeconds())
+                                    unlockLoop()
+                                }
+                                is VaultSession.Result.Error -> sealedToast(r.message)
+                                else -> {}
+                            }
+                        }
+                    },
+                    onDelete = {
+                        lifecycleScope.launch {
+                            val item = sealedReveal ?: return@launch
+                            when (val r = VaultSession.promoteSealedSession()) {
+                                VaultSession.Result.Success -> {
+                                    sealedReveal = null
+                                    when (val r = VaultSession.delete(item)) {
+                                        VaultSession.Result.Success -> {
+                                            screen = Screen.Search
+                                            saveToast("Deleted")
+                                            status = "Deleted."
+                                        }
+                                        is VaultSession.Result.Error -> sealedToast(r.message)
+                                        else -> {}
+                                    }
+                                }
+                                is VaultSession.Result.NeedsKeyDecrypt -> {
+                                    afterUnlock = {
+                                        when (val dr = VaultSession.delete(item)) {
+                                            VaultSession.Result.Success -> {
+                                                screen = Screen.Search
+                                                saveToast("Deleted")
+                                                status = "Deleted."
+                                            }
+                                            is VaultSession.Result.Error -> sealedToast(dr.message)
+                                            else -> {}
+                                        }
+                                    }
+                                    unlockLoop()
+                                }
+                                is VaultSession.Result.Error -> sealedToast(r.message)
+                                else -> {}
+                            }
+                        }
+                    }
+                )
+                // Sealed-mode default view: the SAME search/list, backed by
+                // the manifest (names/usernames/URLs). Clicks gate + unseal.
+                // No extra buttons: search + item reveal is the whole flow;
+                // Add/Setup promote on tap, stale seals fall back to the key.
+                VaultSession.screenlockUnlockEnabled() &&
+                        VaultSession.sealedManifestItems().isNotEmpty() -> SearchScreen(
+                    items = VaultSession.sealedManifestItems(),
+                    busy = VaultSession.busy,
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    onOpen = { stub ->
+                        lifecycleScope.launch {
+                            when (val r = VaultSession.revealSealed(
+                                stub.itemUuid, stub.displayName)) {
+                                is VaultSession.Result.Revealed -> {
+                                    sealedReveal = r.item
+                                    status = ""
+                                }
+                                is VaultSession.Result.NeedsKeyDecrypt -> {
+                                    val uuid = stub.itemUuid
+                                    afterUnlock = { screen = Screen.Detail(uuid) }
+                                    unlockLoop()
+                                }
+                                is VaultSession.Result.Error -> sealedToast(r.message)
+                                else -> {}
+                            }
+                        }
+                    },
+                    onAdd = { lifecycleScope.launch { promoteOrUnlock(Screen.AddEntry) } },
+                    onSetup = { lifecycleScope.launch { promoteOrUnlock(Screen.Setup) } }
+                )
+                // Legacy locked screen (toggle off, or no seal yet).
+                else -> UnlockScreen(
+                    status = status,
+                    busy = VaultSession.busy,
+                    patMissing = VaultSession.config()?.remoteUrl != null && !VaultSession.hasPat(),
+                    onPatSave = { VaultSession.savePat(it); status = "PAT stored (encrypted)." },
+                    onUnlock = { lifecycleScope.launch { unlockLoop() } }
+                )
+            }
             is VaultSession.State.Unlocked -> when (val s = screen) {
                 Screen.SetupChoice, Screen.Search -> SearchScreen(
                     items = unlockedItems(),
@@ -750,27 +1021,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         status = status,
                         busy = VaultSession.busy,
                         onBack = { screen = Screen.Search },
-                        onExportQr = { encrypt ->
-                            // Payload is passed in memory (recomputed from
-                            // the item on each recomposition) — nothing is
-                            // written to disk for a QR export. Encrypted =
-                            // wrapped to all paired keys (Plan 2); plain
-                            // keeps the legacy readable QR.
-                            val devices = VaultSession.pairedDevices()
-                            if (encrypt && devices.isNotEmpty()) {
-                                lifecycleScope.launch {
-                                    try {
-                                        screen = Screen.QrftPayload(
-                                            DeviceWrap.wrap(entryPayload(item), devices))
-                                        saveToast("Paste encrypted to ${devices.size} key${if (devices.size == 1) "" else "s"}")
-                                    } catch (e: Exception) {
-                                        status = "Device-wrap failed: ${e.message}"
-                                    }
-                                }
-                            } else {
-                                screen = Screen.Qrft(item.itemUuid)
-                            }
-                        },
+                        onExportQr = { encrypt -> exportQr(item, encrypt) },
                         pairedDevices = VaultSession.pairedDevices(),
                         onSaveChanges = { edited ->
                             lifecycleScope.launch {
@@ -924,7 +1175,21 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onEnableAutofill = { requestAutofillService() },
                     screenLockOn = VaultSession.screenLockOn,
                     onScreenLockToggle = { on -> handleScreenLockToggle(on) },
-                    onLock = { VaultSession.zero() },
+                    autoLockMinutes = VaultSession.autoLockMinutes(),
+                    onAutoLockChange = { mins ->
+                        VaultSession.setAutoLockMinutes(mins)
+                        status = "Auto-lock: ${if (mins == 0) "never" else "$mins min"}."
+                        rescheduleAutoLock()
+                    },
+                    screenlockUnlockOn = VaultSession.screenlockUnlockEnabled(),
+                    onScreenlockUnlockToggle = { on ->
+                        VaultSession.setScreenlockUnlockEnabled(on)
+                        if (!on) sealedReveal = null
+                        status = if (on) "Screenlock unlock ON — search works on the sealed list;" +
+                            " clicks reveal with a screen-lock prompt."
+                        else "Screenlock unlock OFF — sealed cache wiped."
+                    },
+                    onLock = { lockNow("") },
                     onExportQrft = { screen = Screen.ExportPick },
                     onImportQrft = { cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA) },
                     onPairDevice = { pairCameraLauncher.launch(android.Manifest.permission.CAMERA) },
@@ -1035,7 +1300,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
     private fun handleScreenLockToggle(on: Boolean) {
         if (!on) {
             VaultSession.setScreenLockRequired(false)
-            status = "Screen lock gate off."
+            lockNow("Screen lock gate off — session zeroed.")
             return
         }
         when (VaultSession.isDeviceCredentialReady()) {
@@ -1068,6 +1333,51 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
     private fun unlockedItems(): List<ProtonItem> =
         (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
+
+    /** Single-entry QRFT export (Detail + sealed reveal): encrypted =
+     *  wrapped to all paired keys (Plan 2); plain = the legacy readable
+     *  QR. Payload is recomputed in memory each time — nothing is written
+     *  to disk. */
+    private fun exportQr(item: ProtonItem, encrypt: Boolean) {
+        val devices = VaultSession.pairedDevices()
+        if (encrypt && devices.isNotEmpty()) {
+            lifecycleScope.launch {
+                try {
+                    screen = Screen.QrftPayload(
+                        DeviceWrap.wrap(entryPayload(item), devices))
+                    saveToast("Paste encrypted to ${devices.size} key${if (devices.size == 1) "" else "s"}")
+                } catch (e: Exception) {
+                    status = "Device-wrap failed: ${e.message}"
+                }
+            }
+        } else {
+            screen = Screen.Qrft(item.itemUuid)
+        }
+    }
+
+    /** Sealed flows have no status line — failures surface as toasts. */
+    private fun sealedToast(msg: String) {
+        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    /** Sealed-mode promotion: unseal the cache into a full session; on a
+     *  stale/missing seal the GPG unlock runs instead. Navigates to [then]
+     *  on success. */
+    private suspend fun promoteOrUnlock(then: Screen?) {
+        when (val r = VaultSession.promoteSealedSession()) {
+            VaultSession.Result.Success -> {
+                sealedReveal = null
+                screen = then ?: Screen.Search
+                rescheduleAutoLock()
+            }
+            is VaultSession.Result.NeedsKeyDecrypt -> {
+                then?.let { t -> afterUnlock = { screen = t } }
+                unlockLoop()
+            }
+            is VaultSession.Result.Error -> sealedToast(r.message)
+            else -> {}
+        }
+    }
 
     private fun currentDetailItem(uuid: String): ProtonItem? =
         unlockedItems().firstOrNull { it.itemUuid == uuid }

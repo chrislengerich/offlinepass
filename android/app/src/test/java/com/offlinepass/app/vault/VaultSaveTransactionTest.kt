@@ -60,7 +60,9 @@ class VaultSaveTransactionTest {
             return true
         }
 
-        override suspend fun fetchPublicKeyArmored(keyId: Long): OpenPgpClient.PublicKey =
+        override suspend fun fetchPublicKeyArmored(
+            keyId: Long, requestData: android.content.Intent?
+        ): OpenPgpClient.PublicKey =
             OpenPgpClient.PublicKey.Success(
                 "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfake\n-----END PGP PUBLIC KEY BLOCK-----"
             )

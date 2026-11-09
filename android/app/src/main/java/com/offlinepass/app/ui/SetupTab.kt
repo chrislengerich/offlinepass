@@ -38,6 +38,10 @@ fun SetupTabScreen(
     onUseOpenKeyChain: () -> Unit = {},
     screenLockOn: Boolean,
     onScreenLockToggle: (Boolean) -> Unit,
+    autoLockMinutes: Int = 5,
+    onAutoLockChange: (Int) -> Unit = {},
+    screenlockUnlockOn: Boolean = false,
+    onScreenlockUnlockToggle: (Boolean) -> Unit = {},
     onLock: () -> Unit,
     onExportQrft: () -> Unit,
     onImportQrft: () -> Unit,
@@ -422,6 +426,40 @@ fun SetupTabScreen(
                 style = MaterialTheme.typography.bodySmall
             )
             Switch(checked = screenLockOn, onCheckedChange = { onScreenLockToggle(it) })
+        }
+        if (screenLockOn) {
+            // The screenlock toggle now governs the idle auto-lock too:
+            // after N minutes untouched, the decrypted session is zeroed —
+            // everything is back to encrypted-at-rest.
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                Text("Auto-lock (idle)", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                listOf(0 to "Never", 1 to "1m", 5 to "5m", 15 to "15m").forEach { (mins, label) ->
+                    FilterChip(
+                        selected = autoLockMinutes == mins,
+                        onClick = { onAutoLockChange(mins) },
+                        label = { Text(label) }
+                    )
+                }
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                "Screenlock unlock (experimental) — search/list works sealed;" +
+                    " clicking an entry reveals it with a screen-lock prompt.",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall
+            )
+            Switch(
+                checked = screenlockUnlockOn,
+                onCheckedChange = { onScreenlockUnlockToggle(it) })
         }
         Button(onClick = onLock, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Lock vault (zero decrypted data)")

@@ -40,6 +40,10 @@ object VaultSession {
         object Success : Result()
         data class Interaction(val pendingIntent: android.app.PendingIntent) : Result()
         data class Error(val message: String) : Result()
+        /** Sealed cache stale/missing → the UI must run the GPG unlock. */
+        data class NeedsKeyDecrypt(val reason: String) : Result()
+        /** One entry unsealed from the sealed cache (locked-mode reveal). */
+        data class Revealed(val item: ProtonItem) : Result()
     }
 
     data class Config(
@@ -151,6 +155,12 @@ object VaultSession {
      *  key's 60s validity window opens on a successful interaction). Set
      *  by MainActivity; must run on Main. */
     var syncAuthGate: (suspend () -> Boolean)? = null
+
+    /** UI hook for the screen-lock prompt that opens the SEAL key's 60s
+     *  validity window (biometric/credential; runs on Main). One successful
+     *  prompt unlocks ALL time-based keystore keys for the window, so the
+     *  reveal unseal and a following commit-signing prompt share it. */
+    var sealGate: (suspend (title: String, subtitle: String) -> Boolean)? = null
 
     /** The auth subkey id picked in OpenKeyChain (reactive — the Setup
      *  enrollment dialog prepopulates its field from this). */
@@ -425,6 +435,7 @@ object VaultSession {
                         rev = env.rev
                         loadedEnvelope = env
                         state = State.Unlocked(env.items)
+                        sealIfEnabled(env.items, env)
                         Log.i(TAG, "unlocked: ${env.items.size} items, rev=${env.rev}")
                         return Result.Success
                     }
@@ -673,6 +684,7 @@ object VaultSession {
                         git.commitFile(gitRoot(), "Update 10.gpg (rev ${env.rev})", signer)
                         syncStatus = "Committed locally (rev ${env.rev}, no remote)"
                     }
+                    sealIfEnabled(items, env)
                     Result.Success
                 } catch (e: Exception) {
                     // Anything throwing inside the transaction window rolls
@@ -756,6 +768,138 @@ object VaultSession {
     fun setScreenLockRequired(on: Boolean) {
         prefs().edit().putBoolean("screenLockRequired", on).apply()
         screenLockOn = on
+        if (!on) {
+            // The toggle now means "the app is screenlock-governed": the
+            // pre-unlock prompt AND the idle auto-lock. Turning it off
+            // means no governance — a running session is zeroed right
+            // here so nothing plaintext outlives the decision.
+            zero()
+        }
+    }
+
+    /** Idle auto-lock timeout in minutes (0 = never); only meaningful
+     *  while [screenLockRequired] is on. */
+    fun autoLockMinutes(): Int = prefs().getInt("autoLockMinutes", 5)
+
+    fun setAutoLockMinutes(n: Int) {
+        prefs().edit().putInt("autoLockMinutes", n).apply()
+    }
+
+    // -- screenlock unlock (experimental, default OFF) --------------------------
+    //
+    // The device-local sealed cache (SealedVault): the locked app renders
+    // the manifest (names/usernames/URLs) and gates only the click-through.
+    // OFF = exact legacy behavior (GPG unlock for everything); turning it
+    // off wipes the cache.
+
+    fun screenlockUnlockEnabled(): Boolean =
+        prefs().getBoolean("screenlockUnlock", false)
+
+    fun setScreenlockUnlockEnabled(on: Boolean) {
+        prefs().edit().putBoolean("screenlockUnlock", on).apply()
+        if (!on) SealedVault.wipe()
+    }
+
+    /** Re-seals the cache when the toggle is on. Fire-and-forget; failures
+     *  only log (the repo's GPG envelope stays the source of truth). */
+    private fun sealIfEnabled(items: List<ProtonItem>, env: Envelope) {
+        if (screenlockUnlockEnabled()) SealedVault.seal(items, env, File(vaultFilePath()))
+    }
+
+    /** Locked-mode list backing: manifest stubs (secrets empty). Empty when
+     *  the toggle is off or no cache exists — the UI falls back to the
+     *  legacy unlock screen. */
+    fun sealedManifestItems(): List<ProtonItem> =
+        if (screenlockUnlockEnabled()) SealedVault.manifestItems() else emptyList()
+
+    /** Paired paste devices from the sealed cache's public metadata — the
+     *  export checkbox renders correctly even in a locked session. */
+    fun sealedPairedDevices(): List<DeviceRecord> = SealedVault.pairedDevices()
+
+    /** Locked-mode click-through: one screen-lock prompt, then the entry's
+     *  secrets unseal for the detail view. The session STAYS Locked. No
+     *  busy/progress state — the screen just sits until the item opens. */
+    suspend fun revealSealed(uuid: String, name: String): Result {
+        if (!screenlockUnlockEnabled() || !SealedVault.hasCache())
+            return Result.NeedsKeyDecrypt("no seal")
+        // A stale seal would resurrect outdated secrets — the key unlock
+        // (which re-seals) is required first.
+        if (!SealedVault.isFresh(File(vaultFilePath())))
+            return Result.NeedsKeyDecrypt("Seal is outdated — a sync pulled a newer vault")
+        val gate = sealGate ?: return Result.Error("Screen-lock gate unavailable")
+        val ok = runCatching {
+            gate("Reveal entry", "Screen lock unlocks \"$name\"")
+        }.getOrDefault(false)
+        if (!ok) return Result.Error("Screen lock declined")
+        return try {
+            val item = SealedVault.reveal(uuid)
+                ?: return Result.NeedsKeyDecrypt("Sealed data unreadable — re-seal via the key unlock")
+            Result.Revealed(item)
+        } catch (e: Exception) {
+            if (SealedVault.isKeyMismatch(e)) return Result.NeedsKeyDecrypt("Seal key regenerated")
+            Result.Error(sealedErrorMessage(e))
+        }
+    }
+
+    /**
+     * Unseals the whole sealed cache into a full session (envelope metadata
+     * included). Quiet when the keystore auth window is still open from a
+     * recent prompt (the reveal); one screen-lock prompt otherwise. The GPG
+     * unlock is required only when the seal is stale or missing.
+     */
+    suspend fun promoteSealedSession(): Result {
+        if (!screenlockUnlockEnabled() || !SealedVault.hasCache())
+            return Result.NeedsKeyDecrypt("no seal")
+        if (!SealedVault.isFresh(File(vaultFilePath())))
+            return Result.NeedsKeyDecrypt("Seal is outdated — a sync pulled a newer vault")
+        return try {
+            val items = try {
+                SealedVault.unsealAll()
+            } catch (e: Exception) {
+                if (!SealedVault.isAuthError(e)) throw e
+                // Window closed since the reveal: one prompt reopens it.
+                val gate = sealGate ?: return Result.Error("Screen-lock gate unavailable")
+                val ok = runCatching {
+                    gate("Unlock offlinepass", "Screen lock opens your passwords")
+                }.getOrDefault(false)
+                if (!ok) return Result.Error("Screen lock declined")
+                SealedVault.unsealAll()
+            }
+            if (items.isEmpty())
+                return Result.NeedsKeyDecrypt("Sealed cache unreadable — re-seal via the key unlock")
+            val env = SealedVault.toEnvelope(items)
+            rev = env.rev
+            loadedEnvelope = env
+            state = State.Unlocked(items)
+            Log.i(TAG, "promoted sealed session: ${items.size} items, rev=${env.rev}")
+            Result.Success
+        } catch (e: Exception) {
+            if (SealedVault.isKeyMismatch(e)) return Result.NeedsKeyDecrypt("Seal key regenerated")
+            Result.Error(sealedErrorMessage(e))
+        }
+    }
+
+    /**
+     * Sealed-mode save (edit from a single-entry reveal): promotes to a
+     * full session, then runs the NORMAL save transaction — including the
+     * existing commit-signing screen-lock interaction. One auth window
+     * covers both the seal key and the signing key.
+     */
+    suspend fun saveSealed(edited: ProtonItem): Result {
+        when (val p = promoteSealedSession()) {
+            is Result.Success -> {}
+            else -> return p
+        }
+        val items = (state as? State.Unlocked)?.items
+            ?: return Result.Error("Session unavailable")
+        val merged = items.map { if (it.itemUuid == edited.itemUuid) edited else it }
+        return save(merged)
+    }
+
+    private fun sealedErrorMessage(e: Exception): String {
+        Log.w(TAG, "sealed op failed: ${e.javaClass.name}: ${e.message}", e)
+        return if (SealedVault.isAuthError(e)) "Screen lock required — try again"
+        else "${e.javaClass.simpleName}: ${e.message}"
     }
 
     fun isDeviceCredentialReady(): Int =
@@ -1071,6 +1215,7 @@ object VaultSession {
                         rev = merged.rev
                         loadedEnvelope = merged
                         state = State.Unlocked(merged.items)
+                        sealIfEnabled(merged.items, merged)
                         syncStatus = "Merged + pushed (rev ${merged.rev})"
                     }
                 }
@@ -1092,6 +1237,7 @@ object VaultSession {
                 rev = r.env.rev
                 loadedEnvelope = r.env
                 state = State.Unlocked(r.env.items)
+                sealIfEnabled(r.env.items, r.env)
             }
             else -> Log.w(TAG, "post-pull decrypt failed")
         }
@@ -1175,6 +1321,7 @@ object VaultSession {
         rev = env.rev
         loadedEnvelope = env
         state = State.Unlocked(env.items)
+        sealIfEnabled(env.items, env)
     }
 
     /**

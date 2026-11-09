@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebViewAssetLoader
@@ -25,6 +26,15 @@ import androidx.webkit.WebViewClientCompat
 fun QrftScreen(payload: String, onBack: () -> Unit) {
     val context = LocalContext.current
     var fileCallback by remember { mutableStateOf<android.webkit.ValueCallback<Array<Uri>>?>(null) }
+
+    // Keep the screen awake while the QRFT loop renders — a mid-transfer
+    // dim would interrupt the scan. Cleared on dispose so the rest of the
+    // app keeps its normal timeout.
+    val view = LocalView.current
+    DisposableEffect(Unit) {
+        view.keepScreenOn = true
+        onDispose { view.keepScreenOn = false }
+    }
 
     val filePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
