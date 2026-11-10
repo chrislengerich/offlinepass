@@ -256,6 +256,35 @@ fun SetupChoiceScreen(
     }
 }
 
+/** Entry gate (screenlock toggle on): a screenlock prompt is required
+ *  before ANY content — fresh app start or after the idle timeout. A
+ *  success reveals the sealed list; a decline keeps the gate up. */
+@Composable
+fun LockGateScreen(
+    status: String,
+    busy: String?,
+    onUnlock: () -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(Modifier.height(64.dp))
+        Text("offlinepass", style = MaterialTheme.typography.headlineSmall)
+        Text("Locked", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "The screen lock is required to continue " +
+                "(biometric or device PIN).",
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Button(onClick = onUnlock, enabled = busy == null) {
+            Text(busy ?: "Unlock")
+        }
+        if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
 /** Locked state: one button, one key touch — plus a PAT field when the
  * remote needs a token that isn't stored yet. */
 @Composable

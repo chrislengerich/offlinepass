@@ -19,6 +19,7 @@ import androidx.lifecycle.lifecycleScope
 import com.offlinepass.app.ui.Screen
 import com.offlinepass.app.ui.SetupChoiceScreen
 import com.offlinepass.app.ui.UnlockScreen
+import com.offlinepass.app.ui.LockGateScreen
 import com.offlinepass.app.ui.SearchScreen
 import com.offlinepass.app.ui.SetupTabScreen
 import com.offlinepass.app.ui.AddEntryScreen
@@ -64,12 +65,24 @@ class MainActivity : androidx.activity.ComponentActivity() {
     /** The click's destination, deferred across a GPG unlock that ran from
      *  a sealed flow (stale/missing seal): the item view still opens. */
     private var afterUnlock: (suspend () -> Unit)? = null
+    /** Entry gate: with the screenlock toggle on, opening the app (fresh
+     *  start or after the idle timeout) requires the screenlock prompt
+     *  BEFORE any content — sealed list included. */
+    private var entryGateDone by mutableStateOf(false)
 
     // -- idle auto-lock (screenLockRequired governs it) -----------------------
 
     private var lastInteractionMs = android.os.SystemClock.elapsedRealtime()
     private var autoLockJob: kotlinx.coroutines.Job? = null
     private var pausedAtMs = 0L
+    /** Entry-gate auto-prompt waits for this — a BiometricPrompt launched
+     *  before the window is focusable is canceled before it shows. */
+    private var hasWindowFocus by mutableStateOf(false)
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        hasWindowFocus = hasFocus
+    }
 
     override fun onPause() {
         // The idle gap a backgrounding represents is measured from here
@@ -112,15 +125,31 @@ class MainActivity : androidx.activity.ComponentActivity() {
     }
 
     /** Single re-lock path: zero the session + clear every sealed-flow
-     *  leftover + return to the default screen. */
+     *  leftover + return to the default screen. Also re-arms the entry
+     *  gate: the next foreground entry needs the screenlock prompt again. */
     private fun lockNow(statusMsg: String) {
         VaultSession.zero()
         sealedReveal = null
         pendingSealedEdit = null
         afterUnlock = null
+        entryGateDone = false
         screen = Screen.Search
         status = statusMsg
         rescheduleAutoLock()
+    }
+
+    /** The entry gate prompt (fingerprint/PIN). Satisfying it once per
+     *  foreground session opens the sealed list; the timeout re-arms it. */
+    private suspend fun entryGate() {
+        if (entryGateDone) return
+        val ok = promptGate("Unlock offlinepass", "Screen lock required to view passwords")
+        if (ok) {
+            entryGateDone = true
+            lastInteractionMs = android.os.SystemClock.elapsedRealtime()
+            rescheduleAutoLock()
+        } else {
+            status = "Screen lock required to continue."
+        }
     }
     private var pendingInteraction: CancellableContinuation<Intent?>? = null
 
@@ -231,6 +260,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         }
                     }
                     sealedReveal = null
+                    entryGateDone = true
                     rescheduleAutoLock()
                     afterUnlock?.let { action ->
                         afterUnlock = null
@@ -717,6 +747,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
             VaultSession.zero()
             sealedReveal = null
             pendingSealedEdit = null
+            afterUnlock = null
+            entryGateDone = false
             screen = Screen.Search
         }
     }
@@ -862,6 +894,25 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 onEnrollYubikeySsh = { line, subkeyId -> enrollYubikeySsh(line, subkeyId) }
             )
             VaultSession.State.Locked -> when {
+                // Entry gate first: screenlock toggle on → the prompt is
+                // required before ANY content (fresh start or post-timeout).
+                VaultSession.screenLockRequired() && !entryGateDone &&
+                        VaultSession.screenlockUnlockEnabled() &&
+                        VaultSession.sealedManifestItems().isNotEmpty() -> {
+                    androidx.compose.runtime.LaunchedEffect(Unit) {
+                        // Launching a BiometricPrompt before the window is
+                        // focusable gets it canceled before it ever shows
+                        // (error 5). Wait for real window focus first.
+                        while (!hasWindowFocus) kotlinx.coroutines.delay(100)
+                        kotlinx.coroutines.delay(200)
+                        entryGate()
+                    }
+                    LockGateScreen(
+                        status = status,
+                        busy = VaultSession.busy,
+                        onUnlock = { lifecycleScope.launch { entryGate() } }
+                    )
+                }
                 // Sealed-mode click-through: the one revealed entry's detail.
                 // Editing/saving rides the promotion + existing signing gates.
                 sealedReveal != null -> EntryDetailScreen(
