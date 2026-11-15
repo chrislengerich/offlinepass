@@ -727,7 +727,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
             VaultSession.yubikeySshLineDraft = line
             VaultSession.loadSshLineState.value = line
             VaultSession.loadSubkeyIdState.value = "%016X".format(signedWith)
-            status = ("Signing subkey 0x%016X — OpenSSH line populated.")
+            // The PICK is the enrollment: persist immediately — the load-
+            // screen chip previously evaporated at the load (the identity
+            // read empty prefs) and the self-test saw nothing.
+            VaultSession.setYubikeySsh(line, "%016X".format(signedWith))
+            status = ("Signing subkey 0x%016X — OpenSSH line populated (enrolled).")
                 .format(signedWith)
         } else {
             status = ("Signing subkey 0x%016X — the OpenSSH line " +
