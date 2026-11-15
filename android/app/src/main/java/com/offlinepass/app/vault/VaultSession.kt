@@ -1053,9 +1053,30 @@ object VaultSession {
                                     "Ed25519 verified: r||s at offset $o of the packet body (input: $name)")
                             }
                         }
+                        // Full offline analysis kit: the key material, the
+                        // sig packet hex, the digest and the enrolled line.
+                        runCatching {
+                            val fc = openPgpClientFactory(appContext)
+                            var fr2: Intent? = null
+                            var mat: String? = null
+                            var g = 0
+                            while (g++ < 3 && mat == null) {
+                                when (val fk = fc.fetchPublicKeyArmored(subkeyId, fr2)) {
+                                    is OpenPgpClient.PublicKey.Success -> mat = fk.armored
+                                    is OpenPgpClient.PublicKey.UserInteraction ->
+                                        fr2 = interactionHandler?.invoke(fk.pendingIntent) ?: break
+                                    else -> break
+                                }
+                            }
+                            File(appContext.filesDir, "last-selftest-sig.asc").writeText(
+                                "ENROLLED-LINE: $line\n\nSUBKEY-ID: 0x%016X\n".format(subkeyId) +
+                                    "\nDIGEST: " + digest.joinToString("") { "%02x".format(it) } +
+                                    "\n\nSIG-PACKET-HEX:\n" + sigBody.joinToString("") { "%02x".format(it) } +
+                                    "\n\nKEY-MATERIAL:\n" + (mat ?: "(unavailable)"))
+                        }
                         return SshSelfTest(false,
                             "Ed25519: NO 64-byte window verifies over any input (point=${point.size}B, " +
-                                "packet body=${sigBody.size}B) — the sig armor + line are saved for offline analysis")
+                                "packet body=${sigBody.size}B) — the full analysis kit is saved to last-selftest-sig.asc")
                     }
                     val bridged = runCatching {
                         val raw = PgpSshBridge.extractRawSignature(r.armored, parsedLine)
