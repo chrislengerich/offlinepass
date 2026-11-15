@@ -5,3 +5,5 @@ test_data_backup.json
 offlinepassstorage_pat
 dist/
 *.keystore
+android/app-release-signed.apk
+android/app-release-signed.apk.idsig

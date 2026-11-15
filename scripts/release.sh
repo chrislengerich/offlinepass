@@ -63,7 +63,7 @@ gpg_key_args() {
 # -- build -------------------------------------------------------------------
 
 cmd_build() {
-  ( cd "$ANDROID_DIR" && ./gradlew :app:assembleDebug :app:assembleProfileable --console=plain )
+  ( cd "$ANDROID_DIR" && ./gradlew :app:assembleDebug :app:assembleProfileable :app:assembleRelease --console=plain )
   mkdir -p "$STAGE"
   cp "$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk" \
      "$STAGE/offlinepass-$VERSION-debug.apk"
