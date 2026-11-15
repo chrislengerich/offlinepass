@@ -1086,6 +1086,11 @@ object VaultSession {
             }
             if (variantFailed) continue
         }
+        // Persist the matrix outcomes for offline diagnosis.
+        runCatching {
+            File(appContext.filesDir, "last-selftest-sig.asc").writeText(
+                "MATRIX-OUTCOMES:\n" + outcomes.joinToString("\n"))
+        }
         return SshSelfTest(false, "no variant succeeded — " + outcomes.joinToString("; "))
     }
 
