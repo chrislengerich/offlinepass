@@ -33,6 +33,19 @@ object YubiKitSshAuth {
         return usbManager.deviceList.values.firstOrNull { it.vendorId == YUBICO_VENDOR_ID }
     }
 
+    /** The attached-device diagnostic string: the device name/vid/pid and
+     *  the USB permission state — or "(no YubiKey enumerated)". */
+    fun deviceInfo(context: Context): String {
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: return "no USB service"
+        val devices = usbManager.deviceList
+        val yubi = devices.values.firstOrNull { it.vendorId == YUBICO_VENDOR_ID }
+            ?: return "no YubiKey enumerated (${devices.size} USB devices)"
+        return "${yubi.deviceName} vid=${"%04x".format(yubi.vendorId)} " +
+            "pid=${"%04x".format(yubi.productId)} " +
+            "permission=${usbManager.hasPermission(yubi)}"
+    }
+
     /** A YubiKey is attached AND the USB permission for it is granted. */
     fun deviceReady(context: Context): Boolean {
         val device = findDevice(context) ?: return false

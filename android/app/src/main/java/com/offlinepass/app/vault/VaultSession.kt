@@ -1027,6 +1027,10 @@ object VaultSession {
             .getOrElse { return SshSelfTest(false, "enrolled SSH line unparsable: ${it.message}") }
         val data = "offlinepass ssh-auth self-test".toByteArray()
 
+        // The device state, surfaced in the verdict: the YubiKit branch
+        // requires an enumerated, USB-permitted YubiKey.
+        val deviceInfo = com.offlinepass.app.crypto.YubiKitSshAuth.deviceInfo(appContext)
+
         // The YubiKit path FIRST: a YubiKey attached = the card signs on
         // its SIGNATURE slot (the enrolled S subkey) — PIN + touch, and
         // the signature is VERIFIED LOCALLY against the enrolled line's
@@ -1060,9 +1064,10 @@ object VaultSession {
         if (com.offlinepass.app.crypto.YubiKitSshAuth.findDevice(appContext) != null &&
             !com.offlinepass.app.crypto.YubiKitSshAuth.requestPermission(appContext)
         ) {
-            return SshSelfTest(false, "USB permission denied for the YubiKey")
+            return SshSelfTest(false, "USB permission denied for the YubiKey ($deviceInfo)")
         }
 
+        // No YubiKit path: the OKK fallback (which cannot card-sign).
         val client = openPgpClientFactory(appContext)
 
         // The key material: to resolve the key's PRIMARY id (a matrix
