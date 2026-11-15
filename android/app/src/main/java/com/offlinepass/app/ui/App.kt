@@ -151,8 +151,7 @@ fun SetupChoiceScreen(
                     onClick = {
                         onClearStatus()
                         loadAuth = VaultSession.SSH_SYNC_SCREENLOCK
-                        if (!remote.startsWith("git@") && !remote.startsWith("ssh://"))
-                            remote = "git@github.com:"
+                        remote = VaultSession.convertRemote(remote, "ssh")
                     },
                     label = { Text("Screenlock SSH", maxLines = 1) }
                 )
@@ -162,8 +161,7 @@ fun SetupChoiceScreen(
                     onClick = {
                         onClearStatus()
                         loadAuth = VaultSession.SSH_SYNC_YUBIKEY
-                        if (!remote.startsWith("git@") && !remote.startsWith("ssh://"))
-                            remote = "git@github.com:"
+                        remote = VaultSession.convertRemote(remote, "ssh")
                     },
                     label = { Text("GPG (Yubikey)", maxLines = 1) }
                 )
@@ -173,8 +171,7 @@ fun SetupChoiceScreen(
                     onClick = {
                         onClearStatus()
                         loadAuth = "pat"
-                        if (!remote.startsWith("https://") && !remote.startsWith("http://"))
-                            remote = "https://github.com/"
+                        remote = VaultSession.convertRemote(remote, "pat")
                     },
                     label = { Text("PAT (HTTPS)", maxLines = 1) }
                 )

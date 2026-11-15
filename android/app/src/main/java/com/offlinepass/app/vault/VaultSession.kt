@@ -988,6 +988,41 @@ object VaultSession {
 
     fun connectDraftAuth(): String? = prefs().getString("connectDraftAuth", null)
 
+    /** Converts the remote between the sync-auth schemes WITHOUT losing the
+     *  user's text: already-correct forms pass through; recognizable
+     *  other-scheme forms are rebuilt (git@host:path ⇄ https://host/path);
+     *  partial/bare text gets the target prefix PREPENDED, never replaced
+     *  (the old handlers clobbered the whole field on every chip switch). */
+    fun convertRemote(remote: String, mode: String): String {
+        if (remote.isBlank()) return if (mode == "pat") "https://github.com/" else "git@github.com:"
+        val sshOk = remote.startsWith("git@") || remote.startsWith("ssh://")
+        val httpsOk = remote.startsWith("https://") || remote.startsWith("http://")
+        if (mode != "pat" && sshOk) return remote
+        if (mode == "pat" && httpsOk) return remote
+        val rest = remote
+            .removePrefix("git@").removePrefix("ssh://")
+            .removePrefix("https://").removePrefix("http://")
+        val colon = rest.indexOf(':')
+        val slash = rest.indexOf('/')
+        val firstSep = listOf(colon, slash).filter { it >= 1 }.minOrNull() ?: rest.length
+        val host = rest.substring(0, firstSep)
+        val looksLikeHost = host.contains('.')
+        val isSshMode = mode != "pat"
+        return when {
+            looksLikeHost && colon >= 1 && (slash == -1 || colon < slash) ->
+                if (isSshMode) "git@$host:${rest.substring(colon + 1)}"
+                else "https://$host/${rest.substring(colon + 1).removePrefix("/")}"
+            looksLikeHost && slash >= 1 ->
+                if (isSshMode) "git@$host:${rest.substring(slash + 1)}"
+                else "https://$host/${rest.substring(slash + 1)}"
+            looksLikeHost -> // bare host: just the scheme prefix.
+                if (isSshMode) "git@$host:" else "https://$host/"
+            else -> // bare owner/repo or mid-typing: prepend, don't discard.
+                if (isSshMode) "git@github.com:" + rest.trimEnd(':').removePrefix("/")
+                else "https://github.com/" + rest.trimEnd('/')
+        }
+    }
+
     fun clearConnectDraft() {
         prefs().edit()
             .remove("connectDraftOwnerRepo")
