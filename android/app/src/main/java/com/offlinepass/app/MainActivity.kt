@@ -682,8 +682,16 @@ class MainActivity : androidx.activity.ComponentActivity() {
         while (fetchGuard++ < 3 && line == null) {
             when (val fr = fetchClient.fetchPublicKeyArmored(keyId, fetchReq)) {
                 is com.offlinepass.app.crypto.OpenPgpClient.PublicKey.Success -> {
+                    // YubiKey mode: the AUTH slot key — the same subkey
+                    // the desktop gpg-agent serves for SSH. Other modes:
+                    // the sign-capable subkey (OKK signs with it).
+                    val resolver = if (com.offlinepass.app.vault.VaultSession
+                            .sshSyncMode() == com.offlinepass.app.vault.VaultSession
+                            .SSH_SYNC_YUBIKEY)
+                        com.offlinepass.app.crypto.PgpSshBridge::authSubkeyKeyId
+                    else com.offlinepass.app.crypto.PgpSshBridge::signingSubkeyKeyId
                     val resolved = runCatching {
-                        com.offlinepass.app.crypto.PgpSshBridge.signingSubkeyKeyId(fr.armored, keyId)
+                        resolver(fr.armored, keyId)
                     }.getOrElse {
                         Log.w(TAG, "signing-subkey resolution: ${it.message}")
                         keyId
@@ -692,8 +700,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     if (resolved != keyId) {
                         VaultSession.pickedAuthSubkeyId = resolved
                         VaultSession.loadSubkeyIdState.value = "%016X".format(resolved)
-                        status = ("Picker returned 0x%016X — signing resolves to the " +
-                            "S subkey 0x%016X.").format(keyId, resolved)
+                        status = ("Picker returned 0x%016X — resolves to the " +
+                            "subkey 0x%016X.").format(keyId, resolved)
                     }
                     line = runCatching {
                         com.offlinepass.app.crypto.PgpSshBridge.sshLineForKeyMaterial(
@@ -718,10 +726,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
             // screen chip previously evaporated at the load (the identity
             // read empty prefs) and the self-test saw nothing.
             VaultSession.setYubikeySsh(line, "%016X".format(signedWith))
-            status = ("Signing subkey 0x%016X — OpenSSH line populated (enrolled).")
+            status = ("Auth subkey 0x%016X — OpenSSH line populated (enrolled).")
                 .format(signedWith)
         } else {
-            status = ("Signing subkey 0x%016X — the OpenSSH line " +
+            status = ("Auth subkey 0x%016X — the OpenSSH line " +
                 "could not be fetched; paste it from the desktop " +
                 "(gpg --export-ssh-key).").format(keyId)
         }

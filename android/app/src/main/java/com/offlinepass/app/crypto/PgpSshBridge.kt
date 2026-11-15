@@ -135,9 +135,25 @@ object PgpSshBridge {
      * RFC 4880: an absent KEY FLAGS subpacket means "all capabilities" —
      * treated as sign-capable.
      */
-    fun signingSubkeyKeyId(armoredKeyring: String, preferredKeyId: Long?): Long? {
+    fun signingSubkeyKeyId(armoredKeyring: String, preferredKeyId: Long?): Long? =
+        capableSubkeyKeyId(armoredKeyring, preferredKeyId, SIGN_FLAG)
+
+    /** The AUTHENTICATION-capable subkey (key flags 0x20) — the SSH auth
+     *  key the desktop gpg-agent uses and the YubiKey's AUT slot holds.
+     *  Same resolution rules as [signingSubkeyKeyId]. */
+    fun authSubkeyKeyId(armoredKeyring: String, preferredKeyId: Long?): Long? =
+        capableSubkeyKeyId(armoredKeyring, preferredKeyId, AUTH_FLAG)
+
+    private const val SIGN_FLAG = 0x02
+    private const val AUTH_FLAG = 0x20
+
+    private fun capableSubkeyKeyId(
+        armoredKeyring: String,
+        preferredKeyId: Long?,
+        flagBit: Int,
+    ): Long? {
         val data = dearmor(armoredKeyring)
-        val grantsSign = linkedMapOf<Long, Boolean>()
+        val grantsFlag = linkedMapOf<Long, Boolean>()
         val sawFlags = linkedMapOf<Long, Boolean>()
         val isSubkey = linkedMapOf<Long, Boolean>()
         var currentKeyId: Long? = null
@@ -151,26 +167,26 @@ object PgpSshBridge {
                         (acc shl 8) or (sha1[sha1.size - 8 + k].toLong() and 0xFF)
                     }
                     currentKeyId = pktId
-                    grantsSign.putIfAbsent(pktId, false)
+                    grantsFlag.putIfAbsent(pktId, false)
                     sawFlags.putIfAbsent(pktId, false)
                     isSubkey.putIfAbsent(pktId, tag == 14)
                 }
                 2 -> if (currentKeyId != null) {
                     val flags = keyFlagsInSignature(body) ?: continue
                     sawFlags[currentKeyId] = true
-                    if (flags and 0x02 != 0) grantsSign[currentKeyId] = true
+                    if (flags and flagBit != 0) grantsFlag[currentKeyId] = true
                 }
             }
         }
         // A key only counts when it exists in the material; capable = granted
         // by a self-sig, or no flags information at all (RFC 4880 default).
         fun capable(id: Long): Boolean =
-            grantsSign.containsKey(id) &&
-                (grantsSign[id] == true || sawFlags[id] != true)
+            grantsFlag.containsKey(id) &&
+                (grantsFlag[id] == true || sawFlags[id] != true)
         if (preferredKeyId != null && capable(preferredKeyId)) return preferredKeyId
-        // Prefer a sign-capable SUBKEY; a capable primary is the fallback.
-        return grantsSign.keys.firstOrNull { capable(it) && isSubkey[it] == true }
-            ?: grantsSign.keys.firstOrNull { capable(it) }
+        // Prefer a capable SUBKEY; a capable primary is the fallback.
+        return grantsFlag.keys.firstOrNull { capable(it) && isSubkey[it] == true }
+            ?: grantsFlag.keys.firstOrNull { capable(it) }
     }
 
     /** The KEY FLAGS bits of a signature's HASHED subpacket area (null when
@@ -274,7 +290,14 @@ object PgpSshBridge {
 
     /** The SSH wire blob from the OpenPGP key material. */
     private fun sshBlobFor(alg: Int, mpis: List<ByteArray>): Pair<String, ByteArray> = when (alg) {
-        PK_ALG_RSA -> "ssh-rsa" to (sshString("ssh-rsa".toByteArray()) + sshString(mpis[1]) + sshString(mpis[0]))
+        // The RSA e and n are MPINTs (RFC 4253 §6.6): when the value's high
+        // bit is set the leading 0x00 sign byte is REQUIRED — OpenPGP MPIs
+        // strip leading zeros, so a 4096-bit modulus whose first byte is
+        // ≥ 0x80 would otherwise parse as NEGATIVE (and be rejected by
+        // strict parsers — measured: BC's "RSA modulus has a small prime
+        // factor" on the offer).
+        PK_ALG_RSA -> "ssh-rsa" to (sshString("ssh-rsa".toByteArray()) +
+            sshString(sshMpint(mpis[1])) + sshString(sshMpint(mpis[0])))
         PK_ALG_ECDSA -> {
             val curve = curveNameForOid(mpis[0])
             val q = mpis[1]
@@ -297,6 +320,11 @@ object PgpSshBridge {
         else -> throw PgpSshBridgeException("unsupported curve OID")
     }
 
+    /** The canonical SSH mpint: values with the high bit set carry the
+     *  leading 0x00 sign byte (RFC 4251 §5). OpenPGP MPIs strip it. */
+    private fun sshMpint(v: ByteArray): ByteArray =
+        if (v.isNotEmpty() && (v[0].toInt() and 0x80) != 0) byteArrayOf(0x00) + v else v
+
     /** Generic dearmor: strips the ASCII armor headers/footers, decodes
      *  the base64 body. */
     private fun dearmor(armored: String): ByteArray {
@@ -315,7 +343,12 @@ object PgpSshBridge {
         var p = readU32String(blob, 0).second          // skip algorithm string
         p = readU32String(blob, p).second             // skip e
         val (n, _) = readU32String(blob, p)           // n
-        return n.size
+        // Canonical mpints carry the leading 0x00 sign byte ONLY when the
+        // value's high bit is set (RFC 4251 §5) — the modulus is the value
+        // without it. (A blob of leading zeros is just zero-fill: no strip.)
+        return if (n.size > 1 && n[0] == 0x00.toByte() &&
+            (n[1].toInt() and 0x80) != 0
+        ) n.size - 1 else n.size
     }
 
     /**

@@ -65,6 +65,14 @@ android {
             // android.util.Log calls inside the crypto classes (the
             // YubiKeySsh diagnostics) are no-ops in plain unit tests.
             isReturnDefaultValues = true
+            all {
+                it.testLogging {
+                    events("failed")
+                    setShowStandardStreams(true)
+                }
+                it.systemProperty("org.slf4j.simpleLogger.defaultLogLevel", "debug")
+                it.systemProperty("org.slf4j.simpleLogger.showThreadName", "false")
+            }
         }
     }
 
@@ -124,6 +132,10 @@ dependencies {
     testImplementation("org.mockito:mockito-core:5.8.0")
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:$coroutinesVersion")
+    // A real local SSH server for the no-network handshake tests (JVM only —
+    // never packaged). slf4j-simple surfaces the server's auth decisions.
+    testImplementation("org.apache.sshd:sshd-core:2.12.1")
+    testImplementation("org.slf4j:slf4j-simple:2.0.13")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")

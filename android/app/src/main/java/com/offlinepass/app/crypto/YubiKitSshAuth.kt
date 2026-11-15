@@ -18,10 +18,12 @@ import com.yubico.yubikit.openpgp.OpenPgpSession
  * SIGNATURE slot — which is the S subkey already enrolled on GitHub (the
  * same line the OKK/software path used), so no re-enrollment is needed.
  *
- * The caller supplies the bare DigestInfo (`SshRsaPkcs1.digestInfo`) —
- * the card pads on-device — and receives the RAW signature bytes (the
- * card's RSA over the padded block — exactly what an ssh-rsa signature
- * carries).
+ * The card's AUT slot is used (INTERNAL AUTHENTICATE) — the SAME key the
+ * desktop gpg-agent serves for SSH and the one enrolled on GitHub. Unlike
+ * the SIG slot's PSO:CDS, INTERNAL AUTHENTICATE does RAW RSA with NO
+ * on-card padding, so the caller supplies the FULL PKCS#1 v1.5 block
+ * (`SshRsaPkcs1.pkcs1SignBlock`) and receives the raw RSA result —
+ * exactly what an ssh-rsa signature carries.
  */
 object YubiKitSshAuth {
 
@@ -122,15 +124,14 @@ object YubiKitSshAuth {
         try {
             val session = OpenPgpSession(connection as SmartCardConnection)
             try {
-                // extended=false = verify FOR SIGNATURE (the Javadoc:
-                // "false to verify for signature use, true for other
-                // uses; with extended=true sign operations are NOT
-                // allowed"). True → P2=0x82 and PSO:CDS fails 0x6982.
-                session.verifyUserPin(pin, false)
+                // INTERNAL AUTHENTICATE (the AUT slot) requires the PW1
+                // verified "for other" — extended=TRUE here (P2=0x82; for
+                // the SIG slot this exact flag was the 0x6982 bug).
+                session.verifyUserPin(pin, true)
                 android.util.Log.i("YubiKeySsh",
-                    "yubikit: PIN verified — PSO:CDS on the SIGNATURE slot " +
-                        "(touch the key if its LED blinks)")
-                val sig = session.sign(payload)
+                    "yubikit: PIN verified — INTERNAL AUTHENTICATE on the " +
+                        "AUTH slot (touch the key if its LED blinks)")
+                val sig = session.authenticate(payload)
                 android.util.Log.i("YubiKeySsh", "yubikit: card signed (${sig.size} bytes)")
                 return sig
             } finally {

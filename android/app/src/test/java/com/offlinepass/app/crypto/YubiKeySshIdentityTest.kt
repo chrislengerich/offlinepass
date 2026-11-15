@@ -9,9 +9,10 @@ import org.junit.Test
 
 /**
  * YubiKeySshIdentity's YubiKit branch, without hardware: the "card" is a
- * software RSA key doing exactly what the OpenPGP applet does with the
- * bare DigestInfo it receives (on-device PKCS#1 v1.5 padding + raw RSA —
- * see SshRsaPkcs1Test for the padding model). The injected signer lambda
+ * software RSA key doing exactly what the OpenPGP applet's AUT slot does
+ * with the INTERNAL AUTHENTICATE payload — RAW RSA over the received
+ * block, NO padding (the client builds the full PKCS#1 v1.5 block; see
+ * SshRsaPkcs1Test for both slot models). The injected signer lambda
  * stands in for YubiKitSshAuth, so the SSH wire framing, the payload the
  * signer gets, and the PIN-cancelled path are all testable.
  */
@@ -33,12 +34,8 @@ class YubiKeySshIdentityTest {
         return b.copyOfRange(off + 4, off + 4 + len) to off + 4 + len
     }
 
-    /** The card: pad the received DigestInfo on-device, raw RSA. */
-    private fun simulateCardSign(di: ByteArray, privateKey: java.security.PrivateKey, modulusSize: Int): ByteArray {
-        val pad = modulusSize - di.size - 3
-        assertTrue("DI does not fit", pad >= 8)
-        val block = byteArrayOf(0x00, 0x01) + ByteArray(pad) { 0xFF.toByte() } +
-            byteArrayOf(0x00) + di
+    /** The card: RAW RSA over the received block — no padding on-card. */
+    private fun simulateCardSign(block: ByteArray, privateKey: java.security.PrivateKey): ByteArray {
         val c = javax.crypto.Cipher.getInstance("RSA/ECB/NoPadding")
         c.init(javax.crypto.Cipher.DECRYPT_MODE, privateKey)
         return c.doFinal(block)
@@ -51,30 +48,36 @@ class YubiKeySshIdentityTest {
         val pub = kp.public as java.security.interfaces.RSAPublicKey
         val e = pub.publicExponent.toByteArray().dropWhile { it == 0.toByte() }.toByteArray()
         val n = pub.modulus.toByteArray().dropWhile { it == 0.toByte() }.toByteArray()
-        val blob = sshString("ssh-rsa".toByteArray()) + sshString(e) + sshString(n)
+        // Canonical mpints: the leading 0x00 sign byte when the high bit is
+        // set (RFC 4251 §5) — without it strict parsers read n as negative.
+        fun mpint(v: ByteArray) = if ((v[0].toInt() and 0x80) != 0) byteArrayOf(0) + v else v
+        val blob = sshString("ssh-rsa".toByteArray()) + sshString(mpint(e)) + sshString(mpint(n))
         val line = "ssh-rsa " + java.util.Base64.getEncoder().encodeToString(blob)
         val modulusSize = (pub.modulus.bitLength() + 7) / 8
 
         var receivedPayload: ByteArray? = null
         val identity = YubiKeySshIdentity(
             client = null,
-            authSubkeyId = 0x63EBEE3E00698013L,
+            // 0xF9C2099733B184AD unsigned — Kotlin hex literals cannot exceed Long.MAX
+            authSubkeyId = -0x63DF668CC4E7B53L,
             publicKeyLine = line,
             interaction = { null },
             yubiKitSigner = { payload ->
                 receivedPayload = payload
-                simulateCardSign(payload, kp.private, modulusSize)
+                simulateCardSign(payload, kp.private)
             })
 
         val message = "offlinepass ssh-auth self-test".toByteArray()
         val wire = identity.getSignature(message, "rsa-sha2-512")
         assertNotNull("the YubiKit branch must produce a signature", wire)
 
-        // The signer received the BARE DigestInfo (83 bytes for SHA-512:
-        // 19-byte prefix + 64-byte digest), not a padded block.
-        val di = receivedPayload!!
-        assertEquals(83, di.size)
-        assertEquals(0x30.toByte(), di[0])
+        // The signer received the FULL PKCS#1 v1.5 block (the AUT slot's
+        // raw RSA needs the padding done client-side).
+        val block = receivedPayload!!
+        assertEquals(modulusSize, block.size)
+        assertEquals(0x00.toByte(), block[0])
+        assertEquals(0x01.toByte(), block[1])
+        assertEquals(0xFF.toByte(), block[2])
 
         // The wire: string(algorithm) + string(raw signature).
         val (alg, p1) = readString(wire!!, 0)
@@ -96,7 +99,10 @@ class YubiKeySshIdentityTest {
         val pub = kp.public as java.security.interfaces.RSAPublicKey
         val e = pub.publicExponent.toByteArray().dropWhile { it == 0.toByte() }.toByteArray()
         val n = pub.modulus.toByteArray().dropWhile { it == 0.toByte() }.toByteArray()
-        val blob = sshString("ssh-rsa".toByteArray()) + sshString(e) + sshString(n)
+        // Canonical mpints: the leading 0x00 sign byte when the high bit is
+        // set (RFC 4251 §5) — without it strict parsers read n as negative.
+        fun mpint(v: ByteArray) = if ((v[0].toInt() and 0x80) != 0) byteArrayOf(0) + v else v
+        val blob = sshString("ssh-rsa".toByteArray()) + sshString(mpint(e)) + sshString(mpint(n))
         val line = "ssh-rsa " + java.util.Base64.getEncoder().encodeToString(blob)
 
         val identity = YubiKeySshIdentity(

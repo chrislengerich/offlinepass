@@ -353,9 +353,73 @@ class PgpSshBridgeTest {
         // e: SSH mpint of 65537
         val eMpi = sshString(e)
         assertArrayEquals(eMpi, blob.copyOfRange(algStr.size, algStr.size + eMpi.size))
-        // n: SSH mpint of the 64-byte modulus
-        val nMpi = sshString(n)
+        // n: SSH mpint of the 64-byte modulus — canonical (0xC0 sets the
+        // high bit → the leading 0x00 sign byte is REQUIRED, RFC 4251 §5).
+        val nMpi = sshString(byteArrayOf(0x00) + n)
         assertArrayEquals(nMpi, blob.copyOfRange(blob.size - nMpi.size, blob.size))
         assertEquals(algStr.size + eMpi.size + nMpi.size, blob.size)
     }
+    // -- The AUTH-capable subkey resolution (the YubiKey mode) ---------------
+
+    @Test
+    fun authSubkeyResolvesWhenPreferredCantAuth() {
+        // 0x20 = the authenticate flag; the sub1 holds sign only.
+        val keyring = keyring(sub1Flags = 0x02, sub2Flags = 0x20)
+        val data = java.util.Base64.getEncoder().encodeToString(keyring)
+        val sub2Id = keyIdOf(pubkeyBody(byteArrayOf(4, 5, 6), byteArrayOf(1, 0, 1)))
+        assertEquals(sub2Id, PgpSshBridge.authSubkeyKeyId(data, 12345L))
+    }
+
+    @Test
+    fun authSubkeyPrefersPreferredWhenAuthCapable() {
+        val keyring = keyring(sub1Flags = 0x20, sub2Flags = 0x02)
+        val data = java.util.Base64.getEncoder().encodeToString(keyring)
+        val sub1Id = keyIdOf(pubkeyBody(byteArrayOf(1, 2, 3), byteArrayOf(1, 0, 1)))
+        assertEquals(sub1Id, PgpSshBridge.authSubkeyKeyId(data, sub1Id))
+    }
+
+    @Test
+    fun authSubkeyReturnsNullWhenNothingCanAuth() {
+        val keyring = keyring(sub1Flags = 0x02, sub2Flags = 0x04)
+        val data = java.util.Base64.getEncoder().encodeToString(keyring)
+        assertEquals(null, PgpSshBridge.authSubkeyKeyId(data, null))
+    }
+
+    // -- Canonical ssh-rsa mpints (the sign-byte rule) ------------------------
+
+    @Test
+    fun rsaBlobCarriesTheSignByteForHighBitModuli() {
+        // A modulus whose first byte has the high bit set — like the real
+        // RSA-4096 subkey measured on-device (n starting 0xc6) — MUST get
+        // the leading 0x00 mpint sign byte in the SSH blob (RFC 4251 §5);
+        // OpenPGP MPIs strip it, and the non-canonical blob parses as a
+        // NEGATIVE modulus (strict parsers reject the offer).
+        val n = byteArrayOf(0xC6.toByte(), 0x01, 0x02, 0x03)  // high bit set
+        val e = byteArrayOf(0x01, 0x00, 0x01)
+        val sub = rsaPubkeyBody(n, e)
+        val subId = keyIdOf(sub)
+        val primary = pubkeyBody(byteArrayOf(9, 9, 9), byteArrayOf(1, 0, 1))
+        val keyring = java.util.Base64.getEncoder().encodeToString(
+            pkt(6, primary) + pkt(2, sigBodyWithFlags(1, 8, 0x01)) +
+            pkt(14, sub) + pkt(2, sigBodyWithFlags(1, 8, 0x20)))
+        val armored = "-----BEGIN PGP PUBLIC KEY BLOCK-----\n\n" + keyring +
+            "\n-----END PGP PUBLIC KEY BLOCK-----"
+        val line = PgpSshBridge.sshLineForKeyMaterial(armored, subId, "t")
+        val blob = java.util.Base64.getDecoder().decode(line.split(" ")[1])
+        // string("ssh-rsa") + string(e) + string(n): e needs no sign byte,
+        // n (0xC6…) MUST be 5 bytes with the leading 0x00.
+        var p = 0
+        fun str(): ByteArray {
+            val len = ((blob[p].toInt() and 0xFF) shl 24) or ((blob[p+1].toInt() and 0xFF) shl 16) or
+                ((blob[p+2].toInt() and 0xFF) shl 8) or (blob[p+3].toInt() and 0xFF)
+            val v = blob.copyOfRange(p + 4, p + 4 + len); p += 4 + len; return v
+        }
+        assertArrayEquals("ssh-rsa".toByteArray(), str())
+        assertArrayEquals(e, str())
+        val nWire = str()
+        assertEquals(5, nWire.size)
+        assertEquals(0x00.toByte(), nWire[0])
+        assertArrayEquals(n, nWire.copyOfRange(1, 5))
+    }
+
 }
