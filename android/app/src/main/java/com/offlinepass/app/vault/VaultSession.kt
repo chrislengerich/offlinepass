@@ -1018,7 +1018,7 @@ object VaultSession {
      * itself here, and the tool stays around as a permanent regression
      * check for the auth path.
      */
-    suspend fun sshAuthSelfTest(): SshSelfTest {
+    suspend fun sshAuthSelfTest(onStatus: (String) -> Unit = {}): SshSelfTest {
         val subkeyId = yubikeyAuthSubkeyId()
             ?: return SshSelfTest(false, "no YubiKey SSH subkey enrolled (Setup → Choose key)")
         val line = yubikeySshLine()
@@ -1035,19 +1035,37 @@ object VaultSession {
         // signature is VERIFIED LOCALLY against the enrolled line's public
         // key. No OpenKeyChain, NO NETWORK: the whole sign chain is tested
         // offline.
-        if (com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(appContext)) {
+        // A YubiKey ATTACHED = the YubiKit path is mandatory: request the
+        // USB permission first if needed, then the card signs. The OKK
+        // fallback below runs only when NO YubiKey is enumerated —
+        // otherwise the first run grants permission and then wrongly
+        // launches the OpenKeyChain interaction.
+        if (com.offlinepass.app.crypto.YubiKitSshAuth.findDevice(appContext) != null) {
+            if (!com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(appContext)) {
+                onStatus("USB permission for the YubiKey…")
+                if (!com.offlinepass.app.crypto.YubiKitSshAuth.requestPermission(appContext)) {
+                    return SshSelfTest(false, "USB permission denied for the YubiKey")
+                }
+            }
             val pin = openPgpPinPrompt?.invoke()
                 ?: return SshSelfTest(false, "OpenPGP PIN cancelled")
             // The card's slot touch policy may require a PHYSICAL touch on
-            // the YubiKey itself — there is no phone-side prompt for that;
-            // the UI layer sets the "waiting for touch" status before this.
-            val sigBlock = runCatching {
-                val block = com.offlinepass.app.crypto.SshRsaPkcs1.pkcs1SignBlock(
-                    "SHA-512", data,
-                    com.offlinepass.app.crypto.PgpSshBridge
-                        .rsaModulusSize(parsedLine.wireBlob))
-                com.offlinepass.app.crypto.YubiKitSshAuth.sign(appContext, pin, block)
-            }.getOrElse { e ->
+            // the YubiKey itself — there is no phone-side prompt for that.
+            onStatus("Touch the YubiKey when its LED blinks…")
+            // Blocking USB I/O must leave the main thread — on Main the UI
+            // freezes: no status, no verdict, no log.
+            val signOutcome = kotlinx.coroutines.withContext(
+                kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val block = com.offlinepass.app.crypto.SshRsaPkcs1.pkcs1SignBlock(
+                        "SHA-512", data,
+                        com.offlinepass.app.crypto.PgpSshBridge
+                            .rsaModulusSize(parsedLine.wireBlob))
+                    com.offlinepass.app.crypto.YubiKitSshAuth.sign(appContext, pin, block)
+                }
+            }
+            val sigBlock = signOutcome.getOrElse { e ->
+                android.util.Log.e("YubiKeySsh", "yubikit sign failed", e)
                 return SshSelfTest(false, "YubiKit sign: ${e.message}")
             }
             val verified = runCatching {
@@ -1064,14 +1082,7 @@ object VaultSession {
         }
 
         // No YubiKey attached: the OKK fallback (the software keys; OKK's
-        // remote API cannot card-sign). The USB permission request runs
-        // only when a card is enumerated, so the user can attach one.
-        if (com.offlinepass.app.crypto.YubiKitSshAuth.findDevice(appContext) != null &&
-            !com.offlinepass.app.crypto.YubiKitSshAuth.requestPermission(appContext)
-        ) {
-            return SshSelfTest(false, "USB permission denied for the YubiKey")
-        }
-
+        // remote API cannot card-sign).
         val client = openPgpClientFactory(appContext)
 
         // The key material: the OKK path's sign and the diagnostics.

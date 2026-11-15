@@ -101,17 +101,25 @@ object YubiKitSshAuth {
             throw java.io.IOException("USB permission not granted for the YubiKey")
         }
         val ykDevice = UsbYubiKeyDevice(usbManager, device)
+        android.util.Log.i("YubiKeySsh", "yubikit: opening SmartCardConnection to ${device.deviceName}")
         val connection = ykDevice.openConnection(SmartCardConnection::class.java)
+        android.util.Log.i("YubiKeySsh", "yubikit: connection open — verifying the user PIN")
         try {
             val session = OpenPgpSession(connection as SmartCardConnection)
             try {
                 session.verifyUserPin(pin, true)
-                return session.sign(payload)
+                android.util.Log.i("YubiKeySsh",
+                    "yubikit: PIN verified — PSO:CDS on the SIGNATURE slot " +
+                        "(touch the key if its LED blinks)")
+                val sig = session.sign(payload)
+                android.util.Log.i("YubiKeySsh", "yubikit: card signed (${sig.size} bytes)")
+                return sig
             } finally {
                 session.close()
             }
         } finally {
             runCatching { connection.close() }
+            android.util.Log.i("YubiKeySsh", "yubikit: connection closed")
         }
     }
 }

@@ -960,11 +960,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 onPickAuthSubkey = { lifecycleScope.launch { pickAuthSubkey() } },
                 onSshSelfTest = {
                     lifecycleScope.launch {
-                        // The card's touch policy: the YubiKey itself blinks
-                        // and waits for a finger — there's no phone-side
-                        // prompt for the card's touch.
-                        status = "Touch the YubiKey when its LED blinks…"
-                        val v = VaultSession.sshAuthSelfTest()
+                        val v = VaultSession.sshAuthSelfTest { status = it }
                         status = (if (v.ok) "✅ SSH self-test OK — " else "❌ SSH self-test FAILED — ") + v.detail
                     }
                 },
@@ -1352,7 +1348,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onEnrollYubikeySsh = { line, subkeyId -> enrollYubikeySsh(line, subkeyId) },
                     onSshSelfTest = {
                         lifecycleScope.launch {
-                            val v = VaultSession.sshAuthSelfTest()
+                            val v = VaultSession.sshAuthSelfTest { status = it }
                             status = (if (v.ok) "✅ SSH self-test OK — " else "❌ SSH self-test FAILED — ") + v.detail
                         }
                     },
