@@ -69,6 +69,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
      *  start or after the idle timeout) requires the screenlock prompt
      *  BEFORE any content — sealed list included. */
     private var entryGateDone by mutableStateOf(false)
+    /** The OpenPGP PIN request (YubiKit card signing): non-null = the
+     *  dialog is up; call with the PIN, or null on cancel. */
+    private var pinCallback by mutableStateOf<((String?) -> Unit)?>(null)
 
     // -- idle auto-lock (screenLockRequired governs it) -----------------------
 
@@ -473,6 +476,16 @@ class MainActivity : androidx.activity.ComponentActivity() {
         VaultSession.sealGate = { title, subtitle ->
             promptGate(title, subtitle, strongOrCredential = true)
         }
+        // YubiKit card signing: the OpenPGP applet's user PIN, asked once
+        // per identity session and never stored.
+        VaultSession.openPgpPinPrompt = {
+            kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+                pinCallback = { value ->
+                    pinCallback = null
+                    cont.resume(value?.toCharArray())
+                }
+            }
+        }
         // First push to an EMPTY remote: confirm before creating the remote
         // main branch.
         VaultSession.firstPushGate = {
@@ -486,15 +499,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     val line = VaultSession.yubikeySshLine()
                     val subkey = VaultSession.yubikeyAuthSubkeyId()
                     if (line == null || subkey == null) null
-                    else com.offlinepass.app.crypto.YubiKeySshIdentity(
-                        com.offlinepass.app.crypto.OpenPgpClient(applicationContext),
-                        subkey, line
-                    ) { pi ->
-                        withContext(kotlinx.coroutines.Dispatchers.Main) {
-                            launchInteraction(pi)
-                            awaitInteraction()
-                        }
-                    }
+                    else VaultSession.buildSshIdentity(
+                        com.offlinepass.app.crypto.OpenPgpClient(applicationContext)
+                    )
                 }
                 else -> {
                     val manager = com.offlinepass.app.crypto.SshKeyManager()
@@ -799,6 +806,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 onBack = { screen = sshKeyBackScreen }
             )
             return
+        }
+        val pinCallbackNow = pinCallback
+        if (pinCallbackNow != null) {
+            com.offlinepass.app.ui.PinPromptDialog(pinCallbackNow)
         }
         when (VaultSession.state) {
             VaultSession.State.NoConfig -> SetupChoiceScreen(

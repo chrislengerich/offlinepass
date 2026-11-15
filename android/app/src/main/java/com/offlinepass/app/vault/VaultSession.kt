@@ -143,7 +143,10 @@ object VaultSession {
     var sshIdentityProvider: () -> com.jcraft.jsch.Identity? = { null }
 
     /** Builds the active SSH identity for a sync, or null when the chosen
-     *  mode isn't fully enrolled. */
+     *  mode isn't fully enrolled. The backend: a YubiKey attached over USB
+     *  → YubiKit (the card's SIGNATURE slot — the enrolled S subkey, no
+     *  OpenKeyChain); otherwise the OpenKeyChain path (which works for
+     *  software-resident keys and cannot card-sign). */
     fun buildSshIdentity(client: OpenPgpClient): com.jcraft.jsch.Identity? {
         return when (sshSyncMode()) {
             SSH_SYNC_YUBIKEY -> {
@@ -151,7 +154,21 @@ object VaultSession {
                 val subkeyId = yubikeyAuthSubkeyId() ?: return null
                 val interaction = interactionHandler
                     ?: throw IllegalStateException("Interaction needs the UI layer")
-                YubiKeySshIdentity(client, subkeyId, line, interaction)
+                val context = appContext
+                val yubiKitSigner: (suspend (payload: ByteArray) -> ByteArray)? =
+                    if (com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(context)) {
+                        val pinPrompt = openPgpPinPrompt
+                        var cachedPin: CharArray? = null
+                        { payload: ByteArray ->
+                            val pin = cachedPin
+                                ?: pinPrompt?.invoke()
+                                ?: throw java.io.IOException("OpenPGP PIN cancelled")
+                            cachedPin = pin
+                            com.offlinepass.app.crypto.YubiKitSshAuth.sign(context, pin, payload)
+                        }
+                    } else null
+                com.offlinepass.app.crypto.YubiKeySshIdentity(
+                    client, subkeyId, line, interaction, yubiKitSigner)
             }
             else -> null // screenlock mode uses the Keystore identity directly
         }
@@ -167,6 +184,11 @@ object VaultSession {
      *  prompt unlocks ALL time-based keystore keys for the window, so the
      *  reveal unseal and a following commit-signing prompt share it. */
     var sealGate: (suspend (title: String, subtitle: String) -> Boolean)? = null
+
+    /** UI hook: the OpenPGP applet's USER PIN for YubiKit card signing.
+     *  Shows a dialog, returns the PIN (or null on cancel); the PIN is
+     *  never stored — it is used once and dropped. */
+    var openPgpPinPrompt: (suspend () -> CharArray?)? = null
 
     /** The auth subkey id picked in OpenKeyChain (reactive — the Setup
      *  enrollment dialog prepopulates its field from this). */

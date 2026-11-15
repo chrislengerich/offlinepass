@@ -17,7 +17,10 @@ class YubiKeySshIdentity(
     private val client: OpenPgpClient,
     private val authSubkeyId: Long,
     private val publicKeyLine: String,
-    private val interaction: suspend (android.app.PendingIntent) -> android.content.Intent?
+    private val interaction: suspend (android.app.PendingIntent) -> android.content.Intent?,
+    /** When non-null: the YubiKit backend (the card's SIGNATURE slot) —
+     *  bypasses OpenKeyChain entirely. */
+    private val yubiKitSigner: (suspend (payload: ByteArray) -> ByteArray)? = null
 ) : Identity {
 
     companion object {
@@ -34,6 +37,26 @@ class YubiKeySshIdentity(
     override fun getPublicKeyBlob(): ByteArray = parsed.wireBlob
 
     override fun getSignature(data: ByteArray, algorithm: String): ByteArray? {
+        // The YubiKit backend: the card's SIGNATURE slot signs the PKCS#1
+        // DigestInfo directly — no OpenKeyChain, works for card-resident
+        // keys. The PIN arrives via the hook (once per identity session).
+        if (yubiKitSigner != null) {
+            return try {
+                val payload = com.offlinepass.app.crypto.SshRsaPkcs1
+                    .pkcs1SignBlock(algorithm, data, com.offlinepass.app.crypto.PgpSshBridge.rsaModulusSize(parsed.wireBlob))
+                val raw = kotlinx.coroutines.runBlocking { yubiKitSigner?.invoke(payload) }
+                    ?: run {
+                        lastAuthError = "OpenPGP PIN cancelled"
+                        return null
+                    }
+                android.util.Log.i("YubiKeySsh", "yubikit sig: alg=$algorithm, ${raw.size} bytes")
+                sshString(algorithm.toByteArray()) + sshString(raw)
+            } catch (e: Exception) {
+                android.util.Log.w("YubiKeySsh", "yubikit sign failed: ${e.message}")
+                lastAuthError = e.message
+                return null
+            }
+        }
         // JSch negotiates the algorithm (rsa-sha2-512 first for RSA keys)
         // and embeds the returned bytes verbatim. The blob's INNER algorithm
         // name must match the signature's ACTUAL hash (from the PGP

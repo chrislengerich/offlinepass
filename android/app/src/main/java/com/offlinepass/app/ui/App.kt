@@ -256,6 +256,42 @@ fun SetupChoiceScreen(
     }
 }
 
+/** The OpenPGP applet's user PIN (YubiKit card signing): shown when a
+ *  signature needs it, once per identity session; never stored. */
+@Composable
+fun PinPromptDialog(onPin: (String?) -> Unit) {
+    var pinInput by remember { mutableStateOf("") }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { onPin(null) },
+        title = { Text("Security key PIN") },
+        text = {
+            Column {
+                Text(
+                    "The OpenPGP card's PIN unlocks the signature " +
+                        "(the card holds the signing key).",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedTextField(
+                    value = pinInput, onValueChange = { pinInput = it },
+                    label = { Text("PIN") },
+                    singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input
+                        .PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onPin(pinInput) }, enabled = pinInput.isNotBlank()) {
+                Text("OK")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { onPin(null) }) { Text("Cancel") }
+        }
+    )
+}
+
 /** Entry gate (screenlock toggle on): a screenlock prompt is required
  *  before ANY content — fresh app start or after the idle timeout. A
  *  success reveals the sealed list; a decline keeps the gate up. */
