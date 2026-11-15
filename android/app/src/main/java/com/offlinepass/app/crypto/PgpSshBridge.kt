@@ -302,13 +302,14 @@ object PgpSshBridge {
 
     /** The RAW signature bytes (no SSH framing) for the given OpenSSH
      *  algorithm — RSA padded to modulus size, ECDSA as 0x04||r||s,
-     *  Ed25519 as r||s — plus the PGP hash algorithm used. */
-    fun extractRawSignature(armored: String, sshAlgorithm: String): RawSig {
+     *  Ed25519 as r||s — plus the PGP hash algorithm used. The LINE variant
+     *  carries the modulus size (RSA signatures must be padded to it). */
+    fun extractRawSignature(armored: String, sshAlgorithm: String): RawSig =
+        extractRawSignature(armored, SshPublicKeyLine(sshAlgorithm, ByteArray(0), ""))
+
+    fun extractRawSignature(armored: String, line: SshPublicKeyLine): RawSig {
         val (pubkeyAlg, hashAlg, mpis) = parsePgpSignature(armored)
-        return RawSig(
-            rawSignatureBytes(pubkeyAlg, hashAlg, mpis,
-                SshPublicKeyLine(sshAlgorithm, ByteArray(0), "")),
-            hashAlg)
+        return RawSig(rawSignatureBytes(pubkeyAlg, hashAlg, mpis, line), hashAlg)
     }
 
     /** The SSH signature-algorithm name matching a PGP hash for an
@@ -427,37 +428,52 @@ object PgpSshBridge {
     }
 
     /** The signing key id from an OpenPGP detached signature, taken from
-     *  the ISSUER subpacket (type 16, 8 bytes) or the ISSUER FINGERPRINT
-     *  subpacket (type 33 — modern OpenKeyChain/gpg emit this; its last 8
-     *  bytes are the key id) — both normally in the unhashed area. Used
-     *  after a keyless sign request to learn WHICH key OpenKeyChain used. */
+     *  the ISSUER subpacket (type 16) or the ISSUER FINGERPRINT subpacket
+     *  (type 33) — scanned in BOTH subpacket areas. Measured against real
+     *  gpg/OKK output: the SUBPACKET LENGTH INCLUDES THE TYPE OCTET
+     *  (measured sample: len=9, type=16, then the 8-byte key id), so the
+     *  value lives at p+2..p+1+len and each area's scan advances by
+     *  1 + len. */
     fun issuingKeyId(armored: String): Long? {
         val packet = dearmorFirstSignaturePacket(armored)
         val body = parsePacketBody(packet)
+        var issuer: Long? = null
+        var issuerFpr: Long? = null
         var p = 4
         val hashedLen = u16(body, p); p += 2 + hashedLen
         val unhashedLen = u16(body, p); p += 2
         val unhashedEnd = p + unhashedLen
-        var issuer: Long? = null
-        var issuerFpr: Long? = null
         while (p + 2 <= unhashedEnd && p + 2 <= body.size) {
-            val len = body[p].toInt() and 0xFF
-            val type = body[p + 1].toInt() and 0xFF
+            val lb = body[p].toInt() and 0xFF
+            val len: Int
+            val hdrLen: Int
             when {
-                type == 16 && len == 8 -> {
+                lb < 192 -> { len = lb; hdrLen = 1 }
+                lb < 255 -> { len = ((lb - 192) shl 8) or (body[p + 1].toInt() and 0xFF); hdrLen = 2 }
+                else -> { len = ((body[p + 1].toInt() and 0xFF) shl 24) or
+                    ((body[p + 2].toInt() and 0xFF) shl 16) or
+                    ((body[p + 3].toInt() and 0xFF) shl 8) or
+                    (body[p + 4].toInt() and 0xFF); hdrLen = 5 }
+            }
+            if (p + hdrLen + len > unhashedEnd || p + hdrLen + len > body.size) break
+            val type = body[p + hdrLen].toInt() and 0xFF
+            // value = body[p+hdrLen+1 .. p+hdrLen+len] (len-1 bytes).
+            val valueStart = p + hdrLen + 1
+            when (type) {
+                16 -> if (len == 9) {
                     issuer = (0 until 8).fold(0L) { acc, k ->
-                        (acc shl 8) or (body[p + 2 + k].toLong() and 0xFF)
+                        (acc shl 8) or (body[valueStart + k].toLong() and 0xFF)
                     }
                 }
-                type == 33 && len in 21..32 -> {
-                    // ISSUER FINGERPRINT: 32-byte v4 fp (20 for v3) — the
-                    // key id is its LAST 8 bytes.
+                33 -> if (len in 22..33) {
+                    // value = 1 version byte + fpr; the key id = the fpr's
+                    // last 8 bytes = the value's last 8.
                     issuerFpr = (0 until 8).fold(0L) { acc, k ->
-                        (acc shl 8) or (body[p + 2 + len - 8 + k].toLong() and 0xFF)
+                        (acc shl 8) or (body[p + hdrLen + len - 8 + k].toLong() and 0xFF)
                     }
                 }
             }
-            p += 2 + len
+            p += hdrLen + len
         }
         android.util.Log.i("PgpSshBridge",
             "issuingKeyId: issuer=" + (issuer?.let { "%016X".format(it) } ?: "none") +

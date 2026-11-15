@@ -92,7 +92,9 @@ class YubiKeySshIdentity(
             when (r) {
                 is OpenPgpClient.SignDetached.Ok ->
                     return try {
-                        PgpSshBridge.extractRawSignature(r.armored, parsed.algorithm)
+                        // parsed carries the REAL modulus (the enrolled
+                        // line's blob) — the RSA signature pads to IT.
+                        PgpSshBridge.extractRawSignature(r.armored, parsed)
                     } catch (e: PgpSshBridge.PgpSshBridgeException) {
                         android.util.Log.w("YubiKeySsh", "pgp→ssh bridge: ${e.message}")
                         lastAuthError = "signature bridge: ${e.message}"

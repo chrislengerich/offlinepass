@@ -738,8 +738,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
     /** Persists the YubiKey SSH enrollment (works pre-load: prefs only). */
     private fun enrollYubikeySsh(sshLine: String, subkeyId: String) {
-        val keyId = subkeyId.toLongOrNull(16)
-        if (keyId == null) {
+        // Unsigned 64-bit hex: ids with the high bit set are legal (see the
+        // reader in VaultSession — the base-10/toLongOrNull parse was the
+        // root cause of the silent "Auth cancelled").
+        val keyId = runCatching { java.lang.Long.parseUnsignedLong(subkeyId, 16) }.getOrNull()
+        if (subkeyId.length != 16 || keyId == null) {
             status = "Auth subkey id must be 16 hex digits."
         } else {
             VaultSession.setYubikeySsh(sshLine, subkeyId)
@@ -1313,6 +1316,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     },
                     onShowSshKey = { showSshKeyQr(Screen.Setup) },
                     onEnrollYubikeySsh = { line, subkeyId -> enrollYubikeySsh(line, subkeyId) },
+                    onSshSelfTest = {
+                        lifecycleScope.launch {
+                            val v = VaultSession.sshAuthSelfTest()
+                            status = (if (v.ok) "✅ SSH self-test OK — " else "❌ SSH self-test FAILED — ") + v.detail
+                        }
+                    },
                     onPickAuthSubkey = {
                         lifecycleScope.launch { pickAuthSubkey() }
                     },

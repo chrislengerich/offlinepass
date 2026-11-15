@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.offlinepass.app.crypto.OpenPgpClient
 import com.offlinepass.app.crypto.OpenPgpOps
+import com.offlinepass.app.crypto.PgpSshBridge
 import com.offlinepass.app.crypto.SshKeyManager
 import com.offlinepass.app.crypto.YubiKeySshIdentity
 import java.io.File
@@ -110,7 +111,12 @@ object VaultSession {
     }
 
     fun yubikeySshLine(): String? = prefs().getString("yubikeySshLine", null)
-    fun yubikeyAuthSubkeyId(): Long? = prefs().getString("yubikeyAuthSubkeyId", null)?.toLongOrNull()
+    fun yubikeyAuthSubkeyId(): Long? = prefs().getString("yubikeyAuthSubkeyId", null)
+        // The stored value is UNSIGNED 64-bit hex; ids with the high bit set
+        // (very common) are negative as signed Longs — base-10 parsing or
+        // toLongOrNull(16) would return null for exactly the ids real keys
+        // have. (This was the root cause of the silent "Auth cancelled".)
+        ?.let { runCatching { java.lang.Long.parseUnsignedLong(it, 16) }.getOrNull() }
 
     /** Persists the YubiKey SSH enrollment (public line + auth subkey id)
      *  and activates the YubiKey SSH sync mode. */
@@ -975,6 +981,56 @@ object VaultSession {
     val loadAuthState = mutableStateOf("")
 
     // -- connect-remote draft (survives the SSH-key QR detour) ----------------
+
+    // -- SSH auth self-test (Setup; integration check of the whole chain) ------
+
+    /** Verdict of the OpenKeyChain sign → bridge → SSH-framing chain. */
+    data class SshSelfTest(val ok: Boolean, val detail: String)
+
+    /**
+     * Runs the exact signing chain the YubiKey SSH sync uses — a detached
+     * sign over a test blob with the ENROLLED subkey (OpenKeyChain shows
+     * its own PIN/touch interaction), then verifies the signature's issuer
+     * matches the enrolled subkey and that the bridge produces valid SSH
+     * framing. The point is DIAGNOSIS: a silent OKK rejection names
+     * itself here, and the tool stays around as a permanent regression
+     * check for the auth path.
+     */
+    suspend fun sshAuthSelfTest(): SshSelfTest {
+        val subkeyId = yubikeyAuthSubkeyId()
+            ?: return SshSelfTest(false, "no YubiKey SSH subkey enrolled (Setup → Choose key)")
+        val line = yubikeySshLine()
+            ?: return SshSelfTest(false, "no YubiKey SSH line enrolled")
+        val parsedLine = runCatching { PgpSshBridge.parsePublicKeyLine(line) }
+            .getOrElse { return SshSelfTest(false, "enrolled SSH line unparsable: ${it.message}") }
+        val client = openPgpClientFactory(appContext)
+        val data = "offlinepass ssh-auth self-test".toByteArray()
+        var reqData: Intent? = null
+        var guard = 0
+        while (guard++ < 3) {
+            when (val r = client.trySignDetached(data, subkeyId, reqData)) {
+                is OpenPgpClient.SignDetached.Ok -> {
+                    val issuer = PgpSshBridge.issuingKeyId(r.armored)
+                    if (issuer != null && issuer != subkeyId) return SshSelfTest(false,
+                        "OKK signed with 0x%016X, not the enrolled 0x%016X".format(issuer, subkeyId))
+                    val bridged = runCatching {
+                        val raw = PgpSshBridge.extractRawSignature(r.armored, parsedLine)
+                        Triple(PgpSshBridge.rsaSigNameForHash(raw.hashAlg), raw.hashAlg, raw.bytes.size)
+                    }.getOrElse { return SshSelfTest(false, "bridge failed: ${it.message}") }
+                    return SshSelfTest(true,
+                        "signed by 0x%016X (hash %d → %s, %d raw bytes → SSH framing OK)"
+                            .format(subkeyId, bridged.second, bridged.first, bridged.third))
+                }
+                is OpenPgpClient.SignDetached.UserInteraction -> {
+                    reqData = interactionHandler?.invoke(r.pendingIntent)
+                        ?: return SshSelfTest(false, "interaction needs the UI layer")
+                }
+                is OpenPgpClient.SignDetached.Error ->
+                    return SshSelfTest(false, "OKK error: ${r.message}")
+            }
+        }
+        return SshSelfTest(false, "aborted after interaction retries")
+    }
 
     fun saveConnectDraft(ownerRepo: String, auth: String) {
         prefs().edit()
