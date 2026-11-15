@@ -682,16 +682,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
         while (fetchGuard++ < 3 && line == null) {
             when (val fr = fetchClient.fetchPublicKeyArmored(keyId, fetchReq)) {
                 is com.offlinepass.app.crypto.OpenPgpClient.PublicKey.Success -> {
-                    // YubiKey mode: the AUTH slot key — the same subkey
-                    // the desktop gpg-agent serves for SSH. Other modes:
-                    // the sign-capable subkey (OKK signs with it).
-                    val resolver = if (com.offlinepass.app.vault.VaultSession
-                            .sshSyncMode() == com.offlinepass.app.vault.VaultSession
-                            .SSH_SYNC_YUBIKEY)
-                        com.offlinepass.app.crypto.PgpSshBridge::authSubkeyKeyId
-                    else com.offlinepass.app.crypto.PgpSshBridge::signingSubkeyKeyId
+                    // The SIG slot signs with the SIGN-capable subkey —
+                    // the S subkey already enrolled on GitHub. (The AUT
+                    // slot needs a 512-byte challenge and fails 0x6581 on
+                    // this transport; see YubiKitSshAuth's header note.)
                     val resolved = runCatching {
-                        resolver(fr.armored, keyId)
+                        com.offlinepass.app.crypto.PgpSshBridge
+                            .signingSubkeyKeyId(fr.armored, keyId)
                     }.getOrElse {
                         Log.w(TAG, "signing-subkey resolution: ${it.message}")
                         keyId

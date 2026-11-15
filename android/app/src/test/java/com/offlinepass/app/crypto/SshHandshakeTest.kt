@@ -43,11 +43,17 @@ class SshHandshakeTest {
         return out
     }
 
-    /** The card: RAW RSA over the received PKCS#1 block (AUT slot). */
+    /** The card: PKCS#1 v1.5 pad the received DigestInfo on-device, then
+     *  the raw private op — the SIG slot's PSO:CDS model. */
     private fun simulateCardSign(
-        block: ByteArray,
+        di: ByteArray,
         privateKey: java.security.PrivateKey,
+        modulusSize: Int,
     ): ByteArray {
+        val pad = modulusSize - di.size - 3
+        assertTrue("DI does not fit", pad >= 8)
+        val block = byteArrayOf(0x00, 0x01) + ByteArray(pad) { 0xFF.toByte() } +
+            byteArrayOf(0x00) + di
         val c = javax.crypto.Cipher.getInstance("RSA/ECB/NoPadding")
         c.init(javax.crypto.Cipher.DECRYPT_MODE, privateKey)
         return c.doFinal(block)
@@ -128,10 +134,10 @@ class SshHandshakeTest {
     @Test
     fun simulatedCardSignsASuccessfulHandshake() {
         val identity = identityWith { payload ->
-            // The client side sends the full PKCS#1 block; the card signs raw.
-            assertTrue("payload must be the padded block", payload.size == modulusSize.value &&
-                payload[0] == 0x00.toByte() && payload[1] == 0x01.toByte())
-            simulateCardSign(payload, enrolled.private)
+            // The client sends the bare DigestInfo; the card pads + signs.
+            assertTrue("payload must be the bare DigestInfo",
+                payload.size == 83 && payload[0] == 0x30.toByte())
+            simulateCardSign(payload, enrolled.private, modulusSize.value)
         }
         connect(identity)
     }
@@ -159,7 +165,9 @@ class SshHandshakeTest {
         val identity = YubiKeySshIdentity(
             client = null, authSubkeyId = 1L, publicKeyLine = strangerLine,
             interaction = { null },
-            yubiKitSigner = { payload -> simulateCardSign(payload, stranger.private) })
+            yubiKitSigner = { payload ->
+                simulateCardSign(payload, stranger.private, 256)
+            })
         try {
             connect(identity)
             throw AssertionError("the handshake must NOT succeed with an unenrolled key")

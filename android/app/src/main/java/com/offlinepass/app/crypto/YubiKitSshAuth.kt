@@ -18,12 +18,19 @@ import com.yubico.yubikit.openpgp.OpenPgpSession
  * SIGNATURE slot — which is the S subkey already enrolled on GitHub (the
  * same line the OKK/software path used), so no re-enrollment is needed.
  *
- * The card's AUT slot is used (INTERNAL AUTHENTICATE) — the SAME key the
- * desktop gpg-agent serves for SSH and the one enrolled on GitHub. Unlike
- * the SIG slot's PSO:CDS, INTERNAL AUTHENTICATE does RAW RSA with NO
- * on-card padding, so the caller supplies the FULL PKCS#1 v1.5 block
- * (`SshRsaPkcs1.pkcs1SignBlock`) and receives the raw RSA result —
- * exactly what an ssh-rsa signature carries.
+ * The card's SIGNATURE slot is used (PSO:CDS) — the S subkey already
+ * enrolled on GitHub. The card does the PKCS#1 v1.5 padding on-device:
+ * the caller supplies the BARE DigestInfo (`SshRsaPkcs1.digestInfo`) and
+ * receives the raw RSA result over the padded block — exactly what an
+ * ssh-rsa signature carries.
+ *
+ * Measured on-device (YubiKey 5, RSA-4096): PSO:CDS with the small
+ * DigestInfo command is the configuration that passes the full chain;
+ * long (512-byte) command payloads fail with 0x6581 on this transport —
+ * both the padded PSO:CDS block and the AUT slot's INTERNAL AUTHENTICATE
+ * challenge (which has no on-card padding and thus always requires 512
+ * bytes for a 4096-bit key). The AUT slot stays a documented dead end
+ * until a transport-level fix exists.
  */
 object YubiKitSshAuth {
 
@@ -132,14 +139,14 @@ object YubiKitSshAuth {
                         "uifSIG=${session.getUif(com.yubico.yubikit.openpgp.KeyRef.SIG)} " +
                         "uifAUT=${session.getUif(com.yubico.yubikit.openpgp.KeyRef.AUT)} " +
                         "payload=${payload.size}B")
-                // INTERNAL AUTHENTICATE (the AUT slot) requires the PW1
-                // verified "for other" — extended=TRUE here (P2=0x82; for
-                // the SIG slot this exact flag was the 0x6982 bug).
-                session.verifyUserPin(pin, true)
+                // extended=false = verify FOR SIGNATURE (the Javadoc:
+                // "false to verify for signature use, true for other
+                // uses"). True → P2=0x82 and PSO:CDS fails 0x6982.
+                session.verifyUserPin(pin, false)
                 android.util.Log.i("YubiKeySsh",
-                    "yubikit: PIN verified — INTERNAL AUTHENTICATE on the " +
-                        "AUTH slot (touch the key if its LED blinks)")
-                val sig = session.authenticate(payload)
+                    "yubikit: PIN verified — PSO:CDS on the SIGNATURE slot " +
+                        "(touch the key if its LED blinks)")
+                val sig = session.sign(payload)
                 android.util.Log.i("YubiKeySsh", "yubikit: card signed (${sig.size} bytes)")
                 return sig
             } finally {

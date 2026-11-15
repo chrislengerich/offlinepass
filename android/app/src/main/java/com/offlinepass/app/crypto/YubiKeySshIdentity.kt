@@ -45,13 +45,11 @@ class YubiKeySshIdentity(
         // keys. The PIN arrives via the hook (once per identity session).
         if (yubiKitSigner != null) {
             return try {
-                // The AUTH slot's INTERNAL AUTHENTICATE does RAW RSA —
-                // the client builds the full PKCS#1 v1.5 block (the SIG
-                // slot's PSO:CDS would want the bare DigestInfo instead).
+                // The BARE DigestInfo — the SIG slot's card pads
+                // on-device (long pre-padded commands fail 0x6581 on this
+                // transport; see YubiKitSshAuth's header note).
                 val payload = com.offlinepass.app.crypto.SshRsaPkcs1
-                    .pkcs1SignBlock(algorithm, data,
-                        com.offlinepass.app.crypto.PgpSshBridge
-                            .rsaModulusSize(parsed.wireBlob))
+                    .digestInfo(algorithm, data)
                 val raw = kotlinx.coroutines.runBlocking { yubiKitSigner?.invoke(payload) }
                     ?: run {
                         lastAuthError = "OpenPGP PIN cancelled"

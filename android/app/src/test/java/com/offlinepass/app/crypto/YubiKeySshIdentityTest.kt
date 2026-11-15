@@ -9,12 +9,12 @@ import org.junit.Test
 
 /**
  * YubiKeySshIdentity's YubiKit branch, without hardware: the "card" is a
- * software RSA key doing exactly what the OpenPGP applet's AUT slot does
- * with the INTERNAL AUTHENTICATE payload — RAW RSA over the received
- * block, NO padding (the client builds the full PKCS#1 v1.5 block; see
- * SshRsaPkcs1Test for both slot models). The injected signer lambda
- * stands in for YubiKitSshAuth, so the SSH wire framing, the payload the
- * signer gets, and the PIN-cancelled path are all testable.
+ * software RSA key doing exactly what the OpenPGP applet's SIG slot does
+ * with the PSO:CDS payload — on-device PKCS#1 v1.5 padding of the BARE
+ * DigestInfo, then the raw private op (the AUT-slot model — raw RSA over
+ * a client-padded block — lives in SshRsaPkcs1Test). The injected signer
+ * lambda stands in for YubiKitSshAuth, so the SSH wire framing, the
+ * payload the signer gets, and the PIN-cancelled path are all testable.
  */
 class YubiKeySshIdentityTest {
 
@@ -34,8 +34,17 @@ class YubiKeySshIdentityTest {
         return b.copyOfRange(off + 4, off + 4 + len) to off + 4 + len
     }
 
-    /** The card: RAW RSA over the received block — no padding on-card. */
-    private fun simulateCardSign(block: ByteArray, privateKey: java.security.PrivateKey): ByteArray {
+    /** The card: PKCS#1 v1.5 pad the received DigestInfo on-device, then
+     *  the raw private op — the SIG slot's PSO:CDS model. */
+    private fun simulateCardSign(
+        di: ByteArray,
+        privateKey: java.security.PrivateKey,
+        modulusSize: Int,
+    ): ByteArray {
+        val pad = modulusSize - di.size - 3
+        assertTrue("DI does not fit", pad >= 8)
+        val block = byteArrayOf(0x00, 0x01) + ByteArray(pad) { 0xFF.toByte() } +
+            byteArrayOf(0x00) + di
         val c = javax.crypto.Cipher.getInstance("RSA/ECB/NoPadding")
         c.init(javax.crypto.Cipher.DECRYPT_MODE, privateKey)
         return c.doFinal(block)
@@ -64,20 +73,18 @@ class YubiKeySshIdentityTest {
             interaction = { null },
             yubiKitSigner = { payload ->
                 receivedPayload = payload
-                simulateCardSign(payload, kp.private)
+                simulateCardSign(payload, kp.private, modulusSize)
             })
 
         val message = "offlinepass ssh-auth self-test".toByteArray()
         val wire = identity.getSignature(message, "rsa-sha2-512")
         assertNotNull("the YubiKit branch must produce a signature", wire)
 
-        // The signer received the FULL PKCS#1 v1.5 block (the AUT slot's
-        // raw RSA needs the padding done client-side).
-        val block = receivedPayload!!
-        assertEquals(modulusSize, block.size)
-        assertEquals(0x00.toByte(), block[0])
-        assertEquals(0x01.toByte(), block[1])
-        assertEquals(0xFF.toByte(), block[2])
+        // The signer received the BARE DigestInfo (83 bytes for SHA-512:
+        // 19-byte prefix + 64-byte digest) — the card pads on-device.
+        val di = receivedPayload!!
+        assertEquals(83, di.size)
+        assertEquals(0x30.toByte(), di[0])
 
         // The wire: string(algorithm) + string(raw signature).
         val (alg, p1) = readString(wire!!, 0)
