@@ -60,31 +60,27 @@ fun SetupChoiceScreen(
     onEnrollYubikeySsh: (sshLine: String, subkeyId: String) -> Unit = { _, _ -> },
     onClearStatus: () -> Unit = {}
 ) {
-    // rememberSaveable: the fields survive chip switches (the GPG/PAT
-    // sections dispose on chip change), the QR detour and process death.
-    var remote by rememberSaveable {
+    // Field state lives on the VaultSession singleton (see the drafts note
+    // there): this ROM recreates activities aggressively enough that
+    // composition-scoped state doesn't survive the chip switches / QR detour.
+    var remote by VaultSession.loadRemoteState
+    var pat by VaultSession.loadPatState
+    var mode by rememberSaveable { mutableStateOf("load") }
+    var loadAuth by VaultSession.loadAuthState
+    var sshLine by VaultSession.loadSshLineState
+    var subkeyId by VaultSession.loadSubkeyIdState
+    // One-time blank defaults (converges; the user's values win afterwards).
+    if (remote.isBlank()) {
         // Default is the URL per the DEFAULT sync-auth choice: an https
         // default viewed as an SSH choice becomes the git@ form.
         val default = if (VaultSession.sshSyncMode() != "pat" &&
             defaultRemote.startsWith("https://")
         ) defaultRemote.replaceFirst("https://", "git@").replaceFirst("/", ":")
         else defaultRemote
-        mutableStateOf(default)
+        remote = default
     }
-    var pat by rememberSaveable { mutableStateOf(prefillPat) }
-    var mode by rememberSaveable { mutableStateOf("load") }
-    // The load flow's sync-auth choice: screenlock SSH (default) / YubiKey
-    // SSH / PAT (HTTPS, deprecated). The URL's scheme prefix follows the
-    // choice (same interaction as Setup's Connect-remote dialog).
-    var loadAuth by rememberSaveable { mutableStateOf(VaultSession.sshSyncMode()) }
-    var sshLine by rememberSaveable(VaultSession.yubikeySshLineDraft) {
-        mutableStateOf(VaultSession.yubikeySshLineDraft
-            ?: VaultSession.yubikeySshLine() ?: "")
-    }
-    var subkeyId by rememberSaveable(VaultSession.pickedAuthSubkeyId) {
-        mutableStateOf(VaultSession.pickedAuthSubkeyId?.let { "%016X".format(it) }
-            ?: VaultSession.yubikeyAuthSubkeyId()?.toString() ?: "")
-    }
+    if (pat.isBlank()) pat = prefillPat
+    if (loadAuth.isBlank()) loadAuth = VaultSession.sshSyncMode()
 
     val importPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()

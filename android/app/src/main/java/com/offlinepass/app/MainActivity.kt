@@ -704,6 +704,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     signedWith = resolved
                     if (resolved != keyId) {
                         VaultSession.pickedAuthSubkeyId = resolved
+                        VaultSession.loadSubkeyIdState.value = "%016X".format(resolved)
                         status = ("Picker returned 0x%016X — signing resolves to the " +
                             "S subkey 0x%016X.").format(keyId, resolved)
                     }
@@ -724,6 +725,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
         if (line != null) {
             VaultSession.yubikeySshLineDraft = line
+            VaultSession.loadSshLineState.value = line
+            VaultSession.loadSubkeyIdState.value = "%016X".format(signedWith)
             status = ("Signing subkey 0x%016X — OpenSSH line populated.")
                 .format(signedWith)
         } else {

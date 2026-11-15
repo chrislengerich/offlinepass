@@ -961,7 +961,20 @@ object VaultSession {
         return ids
     }
 
-    // -- Connect-remote draft (survives the SSH-key QR detour) ----------------
+    // -- load-screen drafts ----------------------------------------------------
+    //
+    // Held on the SINGLETON (not in remember/rememberSaveable): this ROM
+    // recreates/kills activities aggressively enough that composition-scoped
+    // state does not survive the chip switches or the QR detour. Process-
+    // lifetime state is immune to all of it.
+
+    val loadRemoteState = mutableStateOf("")
+    val loadPatState = mutableStateOf("")
+    val loadSshLineState = mutableStateOf("")
+    val loadSubkeyIdState = mutableStateOf("")
+    val loadAuthState = mutableStateOf("")
+
+    // -- connect-remote draft (survives the SSH-key QR detour) ----------------
 
     fun saveConnectDraft(ownerRepo: String, auth: String) {
         prefs().edit()
