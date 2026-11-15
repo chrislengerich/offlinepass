@@ -143,11 +143,23 @@ Build:
 cd android && ./gradlew :app:assembleDebug
 ```
 
+Release build (R8-minified, unsigned) + hardware-key APK signing — the
+same security key offlinecam signs with (OpenPGP applet via OpenSC/PKCS11;
+expect the touch):
+
+```bash
+cd android && ./gradlew :app:assembleRelease && ./sign.sh
+# → android/app-release-signed.apk
+```
+
 ### What it does
 
-- **Unlock** — clone/fetch the repo (PAT over HTTPS), decrypt
-  `state/10.gpg` via OpenKeyChain (YubiKey touch + PIN); optional
-  biometric/PIN gate before the key. With **Encrypt individual items while in use**
+- **Unlock** — clone/fetch the repo (SSH: the screenlock keystore key by
+  default, or the YubiKey OpenPGP auth subkey; HTTPS+PAT is deprecated),
+  decrypt `state/10.gpg` via OpenKeyChain (YubiKey touch + PIN). With the
+  **screen-lock toggle** on, the prompt is also required at app open and
+  after the idle timeout (entry gate) — before any content. With
+  **Encrypt individual items while in use**
   (experimental, Setup toggle) the app keeps a device-local sealed cache:
   the locked app stays fully searchable (names/usernames/URLs), and
   clicking an entry reveals it after just a screen-lock prompt — see
@@ -193,7 +205,9 @@ cd android && ./gradlew :app:assembleDebug
   attached later (Setup → Connect remote) — new vaults always start
   local-only.
 - **Setup tab** — remote config, recipients (OpenKeyChain picker), commit
-  signer, USB save/restore, autofill enablement, screen-lock gate,
+  signer, USB save/restore, autofill enablement, screen-lock toggle
+  (pre-key prompt, app-open entry gate, idle auto-lock with a
+  configurable minutes field), item-encryption toggle (experimental),
   lock-vault action.
 
 ### Security posture
@@ -243,7 +257,9 @@ git**) lets the locked app do almost everything except reveal secrets:
   validity window per successful prompt).
 - **Flow**: run → the usual search/list over the manifest → tap an entry →
   one screen-lock prompt → that entry unseals into its detail view (the
-  session stays locked). Editing → Save promotes to a full session
+  session stays locked). With the screen-lock toggle on, the prompt is
+  also required BEFORE the list itself at app open and after the idle
+  timeout (entry gate). Editing → Save promotes to a full session
   (unseal-all, silent while the auth window is open) and signs via the
   existing screenlock commit signer. A seal that is stale against the
   vault file (first use, or after a remote pull) falls back to the GPG
@@ -323,10 +339,11 @@ format, key chain, and threat model:
 
 ## Releases
 
-Release artifacts (debug + profileable APKs) attach to GitHub releases —
-`docs/release.md` and `scripts/release.sh` cover build → sign → verify →
-publish. `scripts/release.sh verify <version>` re-checks signatures and
-checksums at any time.
+Release artifacts (debug + profileable + hardware-key-signed release APKs)
+attach to GitHub releases — `docs/release.md` and `scripts/release.sh`
+cover build → sign → verify → publish. `scripts/release.sh verify <version>`
+re-checks signatures and checksums at any time. Device installs should use
+the hardware-key-signed release APK (`android/sign.sh`).
 
 ## Testing
 

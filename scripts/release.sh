@@ -72,42 +72,52 @@ cmd_build() {
   # Existing signatures survive a rebuild only if the bytes are identical;
   # any stale sidecar for CHANGED artifacts is stale by definition.
   rm -f "$STAGE"/*.asc
-  if [ ! -f "$STAGE/RELEASE_NOTES.md" ]; then
-    cat > "$STAGE/RELEASE_NOTES.md" <<'NOTES'
-## offlinepass v0.9.0
-
-First packaged release of both clients.
+  # The hardware-key-signed release APK (android/sign.sh — the device-
+  # install artifact) joins the stage when it exists.
+  if [ -f "$ANDROID_DIR/app-release-signed.apk" ]; then
+    cp "$ANDROID_DIR/app-release-signed.apk" \
+       "$STAGE/offlinepass-$VERSION-release.apk"
+    rm -f "$STAGE/offlinepass-$VERSION-release.apk.asc"
+  fi
+  if [ ! -f "$STAGE/RELEASE_NOTES.md" ] || [ "${OFFLINEPASS_RENOTES:-0}" = 1 ]; then
+    cat > "$STAGE/RELEASE_NOTES.md" <<NOTES
+## offlinepass v$VERSION
 
 ### Android (com.offlinepass.app)
-- Hardware-key unlock (OpenKeyChain/YubiKey) with optional biometric gate
-- Full CRUD: add/edit with editable generated password + notes, TOTP enroll
-  with live countdown, tombstoned delete
-- Last-modified timestamps, list entry count, secondary sort (most recent
-  first, default on)
-- QRFT phone↔phone transfer: multi-entry export (pick entries / select all)
-  and in-app camera import with dedupe (local version wins on conflict)
-- Signed git commits via OpenKeyChain (pre-flight sign-key check with the
-  interaction loop surfaced to the UI)
-- USB save/restore, union-merge sync, local-only mode, autofill service
-- Security: ciphertext at rest, zero-on-exit + lock action, plaintext temp
-  files zero-filled and deleted on every decrypt/encrypt
+- **Encrypt individual items while in use (experimental toggle)** — the
+  locked app stays fully searchable (names/usernames/URLs from a
+  device-local sealed manifest; never synced), and tapping an entry
+  reveals it after one screen-lock prompt; editing saves ride the
+  existing screenlock commit signer
+- **Screen-lock toggle now governs the whole app**: entry gate at app
+  open / after the idle timeout, plus **idle auto-lock** with a
+  configurable minutes field (default 5) — everything zeroed back to
+  encrypted-at-rest
+- Sync-auth options: screenlock SSH key (default, deploy-key least
+  privilege), YubiKey OpenPGP SSH, HTTPS+PAT (deprecated)
+- Screenlock commit signing (keystore-gated, public key published to
+  keys/ for verification)
+- QRFT phone↔phone transfer (multi-entry export + camera import with
+  dedupe), encrypted pastes to the paired Chrome extension
+- Signing: android/sign.sh — hardware-key PKCS11 via apksigner (same
+  security key as offlinecam); the release APK is the device-install
+  artifact
 
 ### Artifacts
-- `offlinepass-vX.Y.Z-debug.apk` — debuggable, signed with the debug key
-  (installable via adb)
-- `offlinepass-vX.Y.Z-profileable.apk` — minified release + <profileable>
-  (profilers can attach). Android-keystore signing is deferred: the APK
-  itself is unsigned (not installable until APK-signed); its integrity is
-  attested by the GPG detached signature.
-- `*.asc` — detached armored GPG signatures over each APK (security key);
-  verify: `gpg --verify <file>.asc <file>`
-- `SHA256SUMS.txt` — sha256 of both APKs
+- \`offlinepass-vX.Y.Z-release.apk\` — minified release build, signed with
+  the hardware security key (adb-installable)
+- \`offlinepass-vX.Y.Z-debug.apk\` — debuggable, signed with the debug key
+- \`offlinepass-vX.Y.Z-profileable.apk\` — minified + <profileable>,
+  unsigned (integrity attested by its GPG signature)
+- \`*.asc\` — detached armored GPG signatures over each APK; verify:
+  \`gpg --verify <file>.asc <file>\`
+- \`SHA256SUMS.txt\` — sha256 of every artifact
 NOTES
   fi
   checksums
   echo
   echo "Staged: $STAGE"
-  echo "Next:   scripts/release.sh sign $VERSION   (gpg --detach-sign --armor both APKs)"
+  echo "Next:   scripts/release.sh sign $VERSION   (gpg --detach-sign --armor every artifact)"
 }
 
 # -- sign --------------------------------------------------------------------
