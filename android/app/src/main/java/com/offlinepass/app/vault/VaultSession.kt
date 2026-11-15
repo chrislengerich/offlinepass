@@ -982,16 +982,6 @@ object VaultSession {
             .apply()
     }
 
-    // -- load-screen drafts (survive the QR detour + app restarts) ------------
-
-    /** Keys: "remote", "pat", "sshLine", "subkeyId", "authMode". */
-    fun loadDraft(key: String): String =
-        prefs().getString("loadDraft_$key", null) ?: ""
-
-    fun saveLoadDraft(key: String, value: String) {
-        prefs().edit().putString("loadDraft_$key", value).apply()
-    }
-
     /** Deletes with a tombstone (survives merges/syncs). */
     suspend fun delete(item: ProtonItem): Result {
         loadedEnvelope?.deletedItemUuids?.add(item.itemUuid)

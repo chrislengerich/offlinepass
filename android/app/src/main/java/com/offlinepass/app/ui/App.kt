@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -59,38 +60,30 @@ fun SetupChoiceScreen(
     onEnrollYubikeySsh: (sshLine: String, subkeyId: String) -> Unit = { _, _ -> },
     onClearStatus: () -> Unit = {}
 ) {
-    var remote by remember {
-        // Persisted draft first (survives the QR detour + restarts); the
-        // default is the URL per the DEFAULT sync-auth choice: an https
+    // rememberSaveable: the fields survive chip switches (the GPG/PAT
+    // sections dispose on chip change), the QR detour and process death.
+    var remote by rememberSaveable {
+        // Default is the URL per the DEFAULT sync-auth choice: an https
         // default viewed as an SSH choice becomes the git@ form.
         val default = if (VaultSession.sshSyncMode() != "pat" &&
             defaultRemote.startsWith("https://")
         ) defaultRemote.replaceFirst("https://", "git@").replaceFirst("/", ":")
         else defaultRemote
-        mutableStateOf(VaultSession.loadDraft("remote").ifBlank { default })
+        mutableStateOf(default)
     }
-    var pat by remember { mutableStateOf(VaultSession.loadDraft("pat").ifBlank { prefillPat }) }
-    var mode by remember { mutableStateOf("load") }
+    var pat by rememberSaveable { mutableStateOf(prefillPat) }
+    var mode by rememberSaveable { mutableStateOf("load") }
     // The load flow's sync-auth choice: screenlock SSH (default) / YubiKey
     // SSH / PAT (HTTPS, deprecated). The URL's scheme prefix follows the
     // choice (same interaction as Setup's Connect-remote dialog).
-    var loadAuth by remember { mutableStateOf(VaultSession.loadDraft("authMode").ifBlank { VaultSession.sshSyncMode() }) }
-    // Every edit persists: "type in once" — across the QR detour, screen
-    // switches and app restarts. The fetched key material (a fresh
-    // OpenKeyChain pick) still takes precedence over drafts.
-    val updateRemote: (String) -> Unit = {
-        remote = it
-        VaultSession.saveLoadDraft("remote", it)
-    }
-    var sshLine by remember(VaultSession.yubikeySshLineDraft) {
+    var loadAuth by rememberSaveable { mutableStateOf(VaultSession.sshSyncMode()) }
+    var sshLine by rememberSaveable(VaultSession.yubikeySshLineDraft) {
         mutableStateOf(VaultSession.yubikeySshLineDraft
-            ?: VaultSession.yubikeySshLine()
-            ?: VaultSession.loadDraft("sshLine").ifBlank { "" })
+            ?: VaultSession.yubikeySshLine() ?: "")
     }
-    var subkeyId by remember(VaultSession.pickedAuthSubkeyId) {
+    var subkeyId by rememberSaveable(VaultSession.pickedAuthSubkeyId) {
         mutableStateOf(VaultSession.pickedAuthSubkeyId?.let { "%016X".format(it) }
-            ?: VaultSession.yubikeyAuthSubkeyId()?.toString()
-            ?: VaultSession.loadDraft("subkeyId").ifBlank { "" })
+            ?: VaultSession.yubikeyAuthSubkeyId()?.toString() ?: "")
     }
 
     val importPicker = rememberLauncherForActivityResult(
@@ -162,9 +155,8 @@ fun SetupChoiceScreen(
                     onClick = {
                         onClearStatus()
                         loadAuth = VaultSession.SSH_SYNC_SCREENLOCK
-                        VaultSession.saveLoadDraft("authMode", loadAuth)
                         if (!remote.startsWith("git@") && !remote.startsWith("ssh://"))
-                            updateRemote("git@github.com:")
+                            remote = "git@github.com:"
                     },
                     label = { Text("Screenlock SSH", maxLines = 1) }
                 )
@@ -174,9 +166,8 @@ fun SetupChoiceScreen(
                     onClick = {
                         onClearStatus()
                         loadAuth = VaultSession.SSH_SYNC_YUBIKEY
-                        VaultSession.saveLoadDraft("authMode", loadAuth)
                         if (!remote.startsWith("git@") && !remote.startsWith("ssh://"))
-                            updateRemote("git@github.com:")
+                            remote = "git@github.com:"
                     },
                     label = { Text("GPG (Yubikey)", maxLines = 1) }
                 )
@@ -186,15 +177,14 @@ fun SetupChoiceScreen(
                     onClick = {
                         onClearStatus()
                         loadAuth = "pat"
-                        VaultSession.saveLoadDraft("authMode", loadAuth)
                         if (!remote.startsWith("https://") && !remote.startsWith("http://"))
-                            updateRemote("https://github.com/")
+                            remote = "https://github.com/"
                     },
                     label = { Text("PAT (HTTPS)", maxLines = 1) }
                 )
             }
             OutlinedTextField(
-                value = remote, onValueChange = updateRemote,
+                value = remote, onValueChange = { remote = it },
                 label = { Text("GitHub remote (HTTPS, or git@ for SSH)") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -221,20 +211,14 @@ fun SetupChoiceScreen(
                         Text("Choose key in OpenKeyChain")
                     }
                     OutlinedTextField(
-                        value = subkeyId, onValueChange = {
-                        subkeyId = it
-                        VaultSession.saveLoadDraft("subkeyId", it)
-                    },
+                        value = subkeyId, onValueChange = { subkeyId = it },
                         label = { Text("Subkey key id (auto-filled by the picker)") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
                 "pat" -> OutlinedTextField(
-                    value = pat, onValueChange = {
-                        pat = it
-                        VaultSession.saveLoadDraft("pat", it)
-                    },
+                    value = pat, onValueChange = { pat = it },
                     label = { Text("Fine-grained PAT (deprecated; stored encrypted)") },
                     singleLine = true,
                     visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
