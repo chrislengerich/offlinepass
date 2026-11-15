@@ -1057,10 +1057,8 @@ object VaultSession {
             val signOutcome = kotlinx.coroutines.withContext(
                 kotlinx.coroutines.Dispatchers.IO) {
                 runCatching {
-                    val block = com.offlinepass.app.crypto.SshRsaPkcs1.pkcs1SignBlock(
-                        "SHA-512", data,
-                        com.offlinepass.app.crypto.PgpSshBridge
-                            .rsaModulusSize(parsedLine.wireBlob))
+                    val block = com.offlinepass.app.crypto.SshRsaPkcs1
+                        .digestInfo("SHA-512", data)
                     com.offlinepass.app.crypto.YubiKitSshAuth.sign(appContext, pin, block)
                 }
             }

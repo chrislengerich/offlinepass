@@ -18,9 +18,10 @@ import com.yubico.yubikit.openpgp.OpenPgpSession
  * SIGNATURE slot — which is the S subkey already enrolled on GitHub (the
  * same line the OKK/software path used), so no re-enrollment is needed.
  *
- * The caller supplies the PKCS#1 v1.5 block (`SshRsaPkcs1`) and receives
- * the RAW signature bytes (the card's RSA over the DigestInfo — exactly
- * what an ssh-rsa signature carries).
+ * The caller supplies the bare DigestInfo (`SshRsaPkcs1.digestInfo`) —
+ * the card pads on-device — and receives the RAW signature bytes (the
+ * card's RSA over the padded block — exactly what an ssh-rsa signature
+ * carries).
  */
 object YubiKitSshAuth {
 
