@@ -627,48 +627,28 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
     }
 
-    /** Keyless DETACHED_SIGN: OpenKeyChain opens ITS OWN key picker (all
-     *  keys, hardware badges shown); the user picks the YubiKey's auth
-     *  subkey and touches — a test signature proves the path and the
-     *  response's issuer subpacket reveals the used key id. */
+    /** The YubiKey SSH enrollment's key selection: OpenKeyChain's OWN
+     *  picker (SELECT_SIGN_KEY_ID) — an explicit, keyed choice. The
+     *  earlier keyless-sign variant silently used OKK's DEFAULT key
+     *  (whatever was granted first), which is how a software key got
+     *  enrolled instead of the YubiKey's. */
     private suspend fun pickAuthSubkey() {
+        val client = com.offlinepass.app.crypto.OpenPgpClient(applicationContext)
         var reqData: Intent? = null
         var guard = 0
         while (guard++ < 3) {
-            when (val r = com.offlinepass.app.crypto.OpenPgpClient(applicationContext)
-                .trySignDetached("offlinepass auth-subkey test".toByteArray(), null, reqData)
-            ) {
-                is com.offlinepass.app.crypto.OpenPgpClient.SignDetached.Ok -> {
-                    android.util.Log.i("YubiKeySsh", "picker sign succeeded, armored " + r.armored.length + " chars")
-                    val keyId = com.offlinepass.app.crypto.PgpSshBridge
-                        .issuingKeyId(r.armored)
-                    if (keyId == null) {
-                        status = "Could not read the selected key's id."
-                        return
-                    }
-                    VaultSession.pickedAuthSubkeyId = keyId
-                    fetchAndPopulateSshLine(keyId)
+            when (val r = client.pickSignKey(reqData)) {
+                is com.offlinepass.app.crypto.OpenPgpClient.SignKey.Picked -> {
+                    android.util.Log.i("YubiKeySsh", "picked key id: 0x%016X".format(r.keyId))
+                    fetchAndPopulateSshLine(r.keyId)
                     return
                 }
-                is com.offlinepass.app.crypto.OpenPgpClient.SignDetached.UserInteraction -> {
-                    launchInteraction(r.pendingIntent)
-                    val data = awaitInteraction()
-                    // For a KEYLESS sign request, OpenKeyChain's picker
-                    // returns the picked key's id in the interaction result
-                    // itself (the same extra pickSignKey reads). The sign
-                    // itself never completes in this flow — the line comes
-                    // from the key-material fetch, not the signature.
-                    val picked = data?.getLongExtra(
-                        com.offlinepass.app.crypto.OpenPgpClient.EXTRA_SIGN_KEY_ID, -1L) ?: -1L
-                    if (picked != -1L) {
-                        VaultSession.pickedAuthSubkeyId = picked
-                        fetchAndPopulateSshLine(picked)
-                        return
-                    }
-                    reqData = data // no id in the reply — continue the sign loop
+                is com.offlinepass.app.crypto.OpenPgpClient.SignKey.NeedsInteraction -> {
+                    reqData = com.offlinepass.app.vault.VaultSession.interactionHandler
+                        ?.invoke(r.pendingIntent) ?: return
                 }
-                is com.offlinepass.app.crypto.OpenPgpClient.SignDetached.Error -> {
-                    status = "Key selection failed: ${r.message}"
+                is com.offlinepass.app.crypto.OpenPgpClient.SignKey.Error -> {
+                    status = "Key selection failed in OpenKeyChain."
                     return
                 }
             }
