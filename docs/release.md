@@ -21,8 +21,8 @@ The profileable build installs alongside the debug build (application id
 ### 1. Build + stage
 
 ```bash
-scripts/release.sh build 0.9.0
-# → dist/v0.9.0/: unsigned profileable APK, debug APK, release notes, checksums
+scripts/release.sh build 0.10.0
+# → dist/v0.10.0/: unsigned profileable APK, debug APK, release notes, checksums
 ```
 
 ### 2. Sign (manual — the release holder does this)
@@ -33,8 +33,8 @@ token, so expect the touch prompt. To pick a non-default key, export
 `OFFLINEPASS_GPG_KEY=<keyid/email>`:
 
 ```bash
-scripts/release.sh sign 0.9.0
-# → offlinepass-v0.9.0-debug.apk.asc, offlinepass-v0.9.0-profileable.apk.asc
+scripts/release.sh sign 0.10.0
+# → offlinepass-v0.10.0-debug.apk.asc, offlinepass-v0.10.0-profileable.apk.asc
 ```
 
 Existing `.asc` files are kept (don't get overwritten), so re-running
@@ -46,7 +46,7 @@ installed for development).
 ### 3. Verify
 
 ```bash
-scripts/release.sh verify 0.9.0
+scripts/release.sh verify 0.10.0
 # apksigner verify on both APKs + sha256 check
 ```
 
@@ -55,8 +55,8 @@ scripts/release.sh verify 0.9.0
 Commit the release work first (the script refuses to run on a dirty tree):
 
 ```bash
-git add -A && git commit -m "Release v0.9.0"
-scripts/release.sh publish 0.9.0
+git add -A && git commit -m "Release v0.10.0"
+scripts/release.sh publish 0.10.0
 ```
 
 `publish` creates the annotated tag (`OFFLINEPASS_SIGN_TAG=1` for a GPG-signed
@@ -79,8 +79,8 @@ version explicitly to every script step; the scripts never touch Gradle.
 ## Install from a release
 
 ```bash
-gh release download v0.9.0 -R <owner>/<repo> -p '*-profileable.apk'
-adb install -r offlinepass-v0.9.0-profileable.apk
+gh release download v0.10.0 -R <owner>/<repo> -p '*-profileable.apk'
+adb install -r offlinepass-v0.10.0-profileable.apk
 ```
 
 The debug APK installs with `-r` the same way.
