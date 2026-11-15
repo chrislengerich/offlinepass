@@ -142,33 +142,41 @@ object VaultSession {
      *  Set by MainActivity; returns null when the mode isn't enrolled. */
     var sshIdentityProvider: () -> com.jcraft.jsch.Identity? = { null }
 
-    /** Builds the active SSH identity for a sync, or null when the chosen
-     *  mode isn't fully enrolled. The backend: a YubiKey attached over USB
-     *  → YubiKit (the card's SIGNATURE slot — the enrolled S subkey, no
-     *  OpenKeyChain); otherwise the OpenKeyChain path (which works for
-     *  software-resident keys and cannot card-sign). */
-    fun buildSshIdentity(client: OpenPgpClient): com.jcraft.jsch.Identity? {
+    /** Why the SSH identity is unavailable (set by [buildSshIdentity]) —
+     *  the transport surfaces this INSTEAD of the generic "not enrolled"
+     *  error when set. */
+    @Volatile var sshIdentityUnavailable: String? = null
+
+    /** Builds the active SSH identity for a sync/load, or null when the
+     *  chosen mode isn't fully usable. YubiKey mode = the YubiKit card
+     *  path ONLY (the SIGNATURE slot, no OpenKeyChain): when the key is
+     *  not attached/permitted, the build FAILS FAST with a clear message —
+     *  the OKK card-sign fallback is a measured dead end
+     *  (UNSUPPORTED_ACTION) and silently confusing. */
+    fun buildSshIdentity(): com.jcraft.jsch.Identity? {
+        sshIdentityUnavailable = null
         return when (sshSyncMode()) {
             SSH_SYNC_YUBIKEY -> {
                 val line = yubikeySshLine() ?: return null
                 val subkeyId = yubikeyAuthSubkeyId() ?: return null
-                val interaction = interactionHandler
-                    ?: throw IllegalStateException("Interaction needs the UI layer")
                 val context = appContext
-                val yubiKitSigner: (suspend (payload: ByteArray) -> ByteArray)? =
-                    if (com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(context)) {
-                        val pinPrompt = openPgpPinPrompt
-                        var cachedPin: CharArray? = null
-                        { payload: ByteArray ->
-                            val pin = cachedPin
-                                ?: pinPrompt?.invoke()
-                                ?: throw java.io.IOException("OpenPGP PIN cancelled")
-                            cachedPin = pin
-                            com.offlinepass.app.crypto.YubiKitSshAuth.sign(context, pin, payload)
-                        }
-                    } else null
+                if (!com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(context)) {
+                    sshIdentityUnavailable = "The YubiKey is not attached (or USB access was " +
+                        "not granted) — plug it in and retry."
+                    return null
+                }
+                val pinPrompt = openPgpPinPrompt
+                var cachedPin: CharArray? = null
+                val yubiKitSigner: (suspend (payload: ByteArray) -> ByteArray) = { payload: ByteArray ->
+                    val pin = cachedPin
+                        ?: pinPrompt?.invoke()
+                        ?: throw java.io.IOException("OpenPGP PIN cancelled")
+                    cachedPin = pin
+                    com.offlinepass.app.crypto.YubiKitSshAuth.sign(context, pin, payload)
+                }
                 com.offlinepass.app.crypto.YubiKeySshIdentity(
-                    client, subkeyId, line, interaction, yubiKitSigner)
+                    client = null, authSubkeyId = subkeyId, publicKeyLine = line,
+                    interaction = { null }, yubiKitSigner = yubiKitSigner)
             }
             else -> null // screenlock mode uses the Keystore identity directly
         }
@@ -1335,9 +1343,10 @@ object VaultSession {
             // Enrollment + gate depend on the active SSH identity mode.
             if (sshSyncMode() == SSH_SYNC_YUBIKEY) {
                 if (yubikeySshLine() == null || yubikeyAuthSubkeyId() == null)
-                    return Result.Error("Enroll the YubiKey SSH key first (Setup → paste the SSH line)")
-                // The gate is the YubiKey touch inside the OpenKeyChain
-                // interaction during the handshake — no pre-auth needed.
+                    return Result.Error("Enroll the YubiKey SSH key first (Setup → Choose key)")
+                // The gate is the YubiKey touch inside the card sign during
+                // the handshake (PIN once per sync, touch per signature) —
+                // no pre-auth needed.
             } else {
                 if (!SshKeyManager().hasKeyPair())
                     return Result.Error("Enroll the screenlock SSH key first (Setup)")

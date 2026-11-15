@@ -492,17 +492,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
             withContext(kotlinx.coroutines.Dispatchers.Main) { firstPushConfirm() }
         }
         // The active SSH identity: screenlock keystore key, or the YubiKey
-        // auth subkey via OpenKeyChain (the interaction = the YubiKey touch).
+        // card path (YubiKit, the SIGNATURE slot — no OpenKeyChain).
         VaultSession.sshIdentityProvider = {
             when (VaultSession.sshSyncMode()) {
-                VaultSession.SSH_SYNC_YUBIKEY -> {
-                    val line = VaultSession.yubikeySshLine()
-                    val subkey = VaultSession.yubikeyAuthSubkeyId()
-                    if (line == null || subkey == null) null
-                    else VaultSession.buildSshIdentity(
-                        com.offlinepass.app.crypto.OpenPgpClient(applicationContext)
-                    )
-                }
+                VaultSession.SSH_SYNC_YUBIKEY -> VaultSession.buildSshIdentity()
                 else -> {
                     val manager = com.offlinepass.app.crypto.SshKeyManager()
                     val info = manager.ensureKeyPair()

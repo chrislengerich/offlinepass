@@ -68,7 +68,9 @@ object KeystoreSshSessionFactory {
             // YubiKey auth subkey (OpenKeyChain) — chosen by the enrolled
             // mode. VaultSession builds it; null → nothing enrolled.
             val identity = VaultSession.sshIdentityProvider()
-                ?: throw IOException("No SSH identity enrolled (Setup)")
+                ?: throw IOException(
+                    VaultSession.sshIdentityUnavailable
+                        ?: "No SSH identity enrolled (Setup)")
             val port = if (uri.port > 0) uri.port else 22
             val user = uri.user ?: "git"
             val host = uri.host
