@@ -108,6 +108,11 @@ dependencies {
     // S2 spike: standalone SSH client for the Keystore-identity auth test
     // (maintained jsch fork; supports ed25519 + rsa-sha2-256).
     implementation("com.github.mwiede:jsch:0.2.17")
+    // Direct OpenPGP-applet access (the card's AUTH slot) — the SSH auth
+    // backend for card-resident keys; OpenKeyChain's remote API returns
+    // UNSUPPORTED_ACTION for card signing. Re-enable when the network
+    // allows the dependency resolution:
+    // implementation("com.yubico.yubikit:openpgp:2.5.0")
 
     // Testing (offlinecam pattern)
     testImplementation("junit:junit:4.13.2")

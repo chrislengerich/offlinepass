@@ -228,11 +228,12 @@ class OpenPgpClient(private val context: Context) : OpenPgpOps {
     private suspend fun execute(
         data: Intent,
         input: InputStream?,
-        output: OutputStream?
+        output: OutputStream?,
+        apiVersion: Int = API_VERSION
     ): Intent = withContext(Dispatchers.IO) {
         val api = service ?: return@withContext errorResult()
         try {
-            data.putExtra(EXTRA_API_VERSION, API_VERSION)
+            data.putExtra(EXTRA_API_VERSION, apiVersion)
             var inputFd: ParcelFileDescriptor? = null
             var outputFd: ParcelFileDescriptor? = null
             var pump: TransferThread? = null
@@ -551,7 +552,8 @@ class OpenPgpClient(private val context: Context) : OpenPgpOps {
     override suspend fun trySignDetached(
         data: ByteArray,
         keyId: Long?,
-        requestData: Intent?
+        requestData: Intent?,
+        apiVersion: Int
     ): SignDetached {
         if (!connect()) return SignDetached.Error("OpenKeyChain service unavailable")
         val intent = requestData ?: Intent(ACTION_DETACHED_SIGN).apply {
@@ -562,7 +564,7 @@ class OpenPgpClient(private val context: Context) : OpenPgpOps {
             putExtra(EXTRA_REQUEST_ASCII_ARMOR, true)
         }
         val sink = ByteArrayOutputStream()
-        val result = execute(intent, data.inputStream(), sink)
+        val result = execute(intent, data.inputStream(), sink, apiVersion)
         return when (result.getIntExtra(RESULT_CODE, RESULT_CODE_ERROR)) {
             RESULT_CODE_SUCCESS -> {
                 val raw = result.extras?.get("detached_signature") as? ByteArray

@@ -71,6 +71,23 @@ object PgpSshBridge {
         return line.wireBlob.copyOfRange(line.wireBlob.size - 32, line.wireBlob.size)
     }
 
+    /** The KEY id of a key material's PRIMARY (first tag-6) packet — for
+     *  the sign-request diagnostics. */
+    fun primaryKeyIdOf(armoredKeyring: String): Long? {
+        val data = dearmor(armoredKeyring)
+        for ((tag, body) in packets(data)) {
+            if (tag == 6 && body.isNotEmpty() && (body[0].toInt() and 0xFF) == 4) {
+                val fpInput = byteArrayOf(0x99.toByte()) +
+                    byteArrayOf(((body.size ushr 8) and 0xFF).toByte(), (body.size and 0xFF).toByte()) + body
+                val sha1 = java.security.MessageDigest.getInstance("SHA-1").digest(fpInput)
+                return (0 until 8).fold(0L) { acc, k ->
+                    (acc shl 8) or (sha1[sha1.size - 8 + k].toLong() and 0xFF)
+                }
+            }
+        }
+        return null
+    }
+
     /** Modulus byte-size for ssh-rsa blobs (for RSA signature padding). */
     // -- OpenPGP key material → SSH public line -------------------------------
 

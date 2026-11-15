@@ -82,7 +82,7 @@ class SshSelfTestLogicTest {
         ): com.offlinepass.app.crypto.OpenPgpClient.PublicKey =
             com.offlinepass.app.crypto.OpenPgpClient.PublicKey.Error
         override suspend fun trySignDetached(
-            data: ByteArray, keyId: Long?, requestData: android.content.Intent?
+            data: ByteArray, keyId: Long?, requestData: android.content.Intent?, apiVersion: Int
         ): com.offlinepass.app.crypto.OpenPgpClient.SignDetached = result
         override suspend fun pickSignKey(
             requestData: android.content.Intent?

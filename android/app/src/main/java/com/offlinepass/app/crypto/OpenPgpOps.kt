@@ -20,7 +20,8 @@ interface OpenPgpOps {
     suspend fun trySignDetached(
         data: ByteArray,
         keyId: Long?,
-        requestData: android.content.Intent? = null
+        requestData: android.content.Intent? = null,
+        apiVersion: Int = OpenPgpClient.API_VERSION
     ): OpenPgpClient.SignDetached
 
     /** Convenience over [trySignDetached]: the armored signature, or null. */

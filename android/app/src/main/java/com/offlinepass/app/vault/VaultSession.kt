@@ -1005,118 +1005,88 @@ object VaultSession {
             .getOrElse { return SshSelfTest(false, "enrolled SSH line unparsable: ${it.message}") }
         val client = openPgpClientFactory(appContext)
         val data = "offlinepass ssh-auth self-test".toByteArray()
-        var reqData: Intent? = null
-        var guard = 0
-        while (guard++ < 3) {
-            // The IPC call and the interaction launch can both throw
-            // (SecurityException / DeadObject / ActivityNotFound) — the
-            // self-test REPORTS them instead of crashing the app.
-            val r = runCatching { client.trySignDetached(data, subkeyId, reqData) }
-                .getOrElse {
-                    return SshSelfTest(false, "OpenKeyChain call threw " +
-                        "${it.javaClass.simpleName}: ${it.message}")
-                }
-            when (r) {
-                is OpenPgpClient.SignDetached.Ok -> {
-                    val issuer = runCatching { PgpSshBridge.issuingKeyId(r.armored) }
-                        .getOrElse {
-                            return SshSelfTest(false, "signature parse: ${it.message}")
-                        }
-                    if (issuer != null && issuer != subkeyId) return SshSelfTest(false,
-                        "OKK signed with 0x%016X, not the enrolled 0x%016X".format(issuer, subkeyId))
-                    // Ed25519 path: OKK's sig framing for EdDSA is not settled
-                    // (RFC: one MPI of r||s; observed 70-byte bodies). Find
-                    // the verifying 64-byte window EMPIRICALLY — the correct
-                    // r||s is whichever authenticates the message.
-                    if (parsedLine.algorithm == "ssh-ed25519") {
-                        val sigBody = PgpSshBridge.sigBodyOf(r.armored)
-                        val point = PgpSshBridge.authKeyPoint(parsedLine)
-                        val prefixLen = 6 + ((sigBody[4].toInt() and 0xFF) shl 8 or (sigBody[5].toInt() and 0xFF))
-                        val sha = java.security.MessageDigest.getInstance("SHA-256")
-                        val digest = sha.digest(sigBody.copyOfRange(0, prefixLen) + data +
-                            byteArrayOf(4, 0xFF.toByte()) + ((prefixLen + data.size).toLong()
-                                .let { l -> byteArrayOf((l ushr 24).toByte(), (l ushr 16).toByte(), (l ushr 8).toByte(), l.toByte()) }))
-                        val inputs = listOf("message" to data, "digest" to digest)
-                        for ((name, input) in inputs) {
-                            for (o in 0..(sigBody.size - 64)) {
-                                val win = sigBody.copyOfRange(o, o + 64)
-                                val ok = runCatching {
-                                    val pub = java.security.KeyFactory.getInstance("Ed25519")
-                                        .generatePublic(java.security.spec.XECPublicKeySpec(
-                                            java.security.spec.NamedParameterSpec.ED25519,
-                                            java.math.BigInteger(1, point)))
-                                    val sig = java.security.Signature.getInstance("Ed25519")
-                                    sig.initVerify(pub); sig.update(input)
-                                    sig.verify(win)
-                                }.getOrDefault(false)
-                                if (ok) return SshSelfTest(true,
-                                    "Ed25519 verified: r||s at offset $o of the packet body (input: $name)")
-                            }
-                        }
-                        // Full offline analysis kit: the key material, the
-                        // sig packet hex, the digest and the enrolled line.
-                        runCatching {
-                            val fc = openPgpClientFactory(appContext)
-                            var fr2: Intent? = null
-                            var mat: String? = null
-                            var g = 0
-                            while (g++ < 3 && mat == null) {
-                                when (val fk = fc.fetchPublicKeyArmored(subkeyId, fr2)) {
-                                    is OpenPgpClient.PublicKey.Success -> mat = fk.armored
-                                    is OpenPgpClient.PublicKey.UserInteraction ->
-                                        fr2 = interactionHandler?.invoke(fk.pendingIntent) ?: break
-                                    else -> break
-                                }
-                            }
-                            File(appContext.filesDir, "last-selftest-sig.asc").writeText(
-                                "ENROLLED-LINE: $line\n\nSUBKEY-ID: 0x%016X\n".format(subkeyId) +
-                                    "\nDIGEST: " + digest.joinToString("") { "%02x".format(it) } +
-                                    "\n\nSIG-PACKET-HEX:\n" + sigBody.joinToString("") { "%02x".format(it) } +
-                                    "\n\nKEY-MATERIAL:\n" + (mat ?: "(unavailable)"))
-                        }
-                        return SshSelfTest(false,
-                            "Ed25519: NO 64-byte window verifies over any input (point=${point.size}B, " +
-                                "packet body=${sigBody.size}B) — the full analysis kit is saved to last-selftest-sig.asc")
-                    }
-                    val bridged = runCatching {
-                        val raw = PgpSshBridge.extractRawSignature(r.armored, parsedLine)
-                        Triple(PgpSshBridge.rsaSigNameForHash(raw.hashAlg), raw.hashAlg, raw.bytes.size)
-                    }.getOrElse { e ->
-                        // The failing signature's armor + the enrolled line
-                        // are saved for offline diagnosis (adb shell run-as
-                        // com.offlinepass.app cat files/last-selftest-sig.asc).
-                        runCatching {
-                            File(appContext.filesDir, "last-selftest-sig.asc").writeText(
-                                "ENROLLED-LINE: $line\n\narmored:\n$r.armored")
-                        }
-                        return SshSelfTest(false,
-                            "bridge failed: ${e.message} (armor + line saved to last-selftest-sig.asc, " +
-                                "len=${r.armored.length})")
-                    }
-                    return SshSelfTest(true,
-                        "signed by 0x%016X (hash %d → %s, %d raw bytes → SSH framing OK)"
-                            .format(subkeyId, bridged.second, bridged.first, bridged.third))
-                }
-                is OpenPgpClient.SignDetached.UserInteraction -> {
-                    reqData = runCatching { interactionHandler?.invoke(r.pendingIntent) }
-                        .getOrElse {
-                            return SshSelfTest(false, "interaction launch threw " +
-                                "${it.javaClass.simpleName}: ${it.message}")
-                        }
-                        ?: return SshSelfTest(false, "interaction needs the UI layer")
-                }
-                is OpenPgpClient.SignDetached.Error -> {
-                    // Persist the OKK error for offline diagnosis.
-                    runCatching {
-                        File(appContext.filesDir, "last-selftest-sig.asc").writeText(
-                            "OKK-ERROR: ${r.message}\nSUBKEY-ID: 0x%016X\n".format(subkeyId) +
-                                "\nENROLLED-LINE: $line")
-                    }
-                    return SshSelfTest(false, "OKK error: ${r.message}")
-                }
+
+        // The key material: to resolve the key's PRIMARY id (a matrix
+        // variant) — OpenKeyChain's API may accept/reject key ids in
+        // different forms for token-resident keys.
+        var primaryId: Long? = null
+        var reqDataM: Intent? = null
+        var guardM = 0
+        while (guardM++ < 3 && primaryId == null) {
+            when (val fk = client.fetchPublicKeyArmored(subkeyId, reqDataM)) {
+                is OpenPgpClient.PublicKey.Success -> primaryId = runCatching {
+                    PgpSshBridge.primaryKeyIdOf(fk.armored)
+                }.getOrNull()
+                is OpenPgpClient.PublicKey.UserInteraction ->
+                    reqDataM = interactionHandler?.invoke(fk.pendingIntent) ?: break
+                else -> break
             }
         }
-        return SshSelfTest(false, "aborted after interaction retries")
+
+        // The diagnostic matrix: the same sign request in the key-id and
+        // API-version variants that OpenKeyChain's service might gate.
+        // A failure is RECORDED and the next variant runs; the first
+        // success (the touch!) wins.
+        val subkeyHex = "%016X".format(subkeyId)
+        val attempts = buildList {
+            add("keyId=null, api 11" to Triple<Long, Long?, Int>(0L, null, 11))
+            add("keyId=null, api 12" to Triple<Long, Long?, Int>(0L, null, 12))
+            add("keyId=subkey 0x$subkeyHex, api 11" to Triple<Long, Long?, Int>(1L, subkeyId, 11))
+            add("keyId=subkey, api 12" to Triple<Long, Long?, Int>(1L, subkeyId, 12))
+            primaryId?.let { p ->
+                val hex = "%016X".format(p)
+                add("keyId=primary 0x$hex, api 11" to Triple<Long, Long?, Int>(2L, p, 11))
+                add("keyId=primary, api 12" to Triple<Long, Long?, Int>(2L, p, 12))
+            }
+        }
+        val outcomes = mutableListOf<String>()
+        for ((label, variant) in attempts) {
+            val (_, keyId, apiVersion) = variant
+            var reqData: Intent? = null
+            var guard = 0
+            var variantFailed = false
+            while (guard++ < 3) {
+                val r = runCatching { client.trySignDetached(data, keyId, reqData, apiVersion) }
+                    .getOrElse {
+                        return SshSelfTest(false, "$label: threw " +
+                            "${it.javaClass.simpleName}: ${it.message}")
+                    }
+                when (r) {
+                    is OpenPgpClient.SignDetached.Ok -> {
+                        val issuer = runCatching { PgpSshBridge.issuingKeyId(r.armored) }
+                            .getOrElse { return SshSelfTest(false, "$label: signature parse: ${it.message}") }
+                        if (issuer != null && issuer != subkeyId) return SshSelfTest(false,
+                            "$label: OKK signed with 0x%016X, not the enrolled 0x%016X"
+                                .format(issuer, subkeyId))
+                        val bridged = runCatching {
+                            val raw = PgpSshBridge.extractRawSignature(r.armored, parsedLine)
+                            Triple(PgpSshBridge.rsaSigNameForHash(raw.hashAlg), raw.hashAlg, raw.bytes.size)
+                        }.getOrElse { e ->
+                            runCatching {
+                                File(appContext.filesDir, "last-selftest-sig.asc").writeText(
+                                    "VARIANT: $label\n\narmored:\n${r.armored}\n\nENROLLED-LINE: $line")
+                            }
+                            return SshSelfTest(false, "$label: bridge failed: ${e.message} " +
+                                "(armor saved to last-selftest-sig.asc)")
+                        }
+                        return SshSelfTest(true,
+                            "$label → signed by 0x%016X (hash %d → %s, %d raw bytes → SSH framing OK)"
+                                .format(subkeyId, bridged.second, bridged.first, bridged.third))
+                    }
+                    is OpenPgpClient.SignDetached.UserInteraction -> {
+                        reqData = interactionHandler?.invoke(r.pendingIntent)
+                            ?: return SshSelfTest(false, "$label: interaction needs the UI layer")
+                    }
+                    is OpenPgpClient.SignDetached.Error -> {
+                        outcomes += "$label: OKK error ${r.message.take(80)}"
+                        variantFailed = true
+                        break
+                    }
+                }
+            }
+            if (variantFailed) continue
+        }
+        return SshSelfTest(false, "no variant succeeded — " + outcomes.joinToString("; "))
     }
 
     fun saveConnectDraft(ownerRepo: String, auth: String) {
