@@ -62,6 +62,9 @@ android {
             // Robolectric can only inflate resources if the merged resources
             // travel with the unit tests (offlinecam pattern).
             isIncludeAndroidResources = true
+            // android.util.Log calls inside the crypto classes (the
+            // YubiKeySsh diagnostics) are no-ops in plain unit tests.
+            isReturnDefaultValues = true
         }
     }
 

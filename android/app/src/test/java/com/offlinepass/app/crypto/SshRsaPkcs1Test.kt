@@ -80,4 +80,70 @@ class SshRsaPkcs1Test {
         verifier.initVerify(kp.public); verifier.update(message)
         assertTrue(verifier.verify(padded))
     }
+
+    // -- The card simulation (no hardware) ------------------------------------
+    //
+    // The OpenPGP card's PSO:CDS pads the DigestInfo ON CARD (Java Card's
+    // ALG_RSA_PKCS1). The tests below model exactly that: the client sends
+    // the BARE DigestInfo, the "card" pads and runs the raw private-key op,
+    // and the result must verify under the standard JCA/SSH verifier.
+
+    /** The card's on-device padding: 0x00 0x01 FF…00 || DigestInfo. */
+    private fun cardPad(di: ByteArray, modulusSize: Int): ByteArray {
+        val pad = modulusSize - di.size - 3
+        org.junit.Assert.assertTrue("DI does not fit", pad >= 8)
+        return byteArrayOf(0x00, 0x01) + ByteArray(pad) { 0xFF.toByte() } +
+            byteArrayOf(0x00) + di
+    }
+
+    /** The card's raw private-key op (no padding — the padding already
+     *  happened): RSA/ECB/NoPadding in DECRYPT_MODE with the private key. */
+    private fun cardRawRsa(block: ByteArray, privateKey: java.security.PrivateKey): ByteArray {
+        val c = javax.crypto.Cipher.getInstance("RSA/ECB/NoPadding")
+        c.init(javax.crypto.Cipher.DECRYPT_MODE, privateKey)
+        return c.doFinal(block)
+    }
+
+    private fun keypair(bits: Int) =
+        java.security.KeyPairGenerator.getInstance("RSA").apply { initialize(bits) }.generateKeyPair()
+
+    @Test
+    fun digestInfoIsTheTailOfThePaddedBlock() {
+        val message = "offlinepass ssh-auth self-test".toByteArray()
+        for (alg in listOf("SHA-256", "SHA-512")) {
+            val block = SshRsaPkcs1.pkcs1SignBlock(alg, message, 256)
+            val di = SshRsaPkcs1.digestInfo(alg, message)
+            assertArrayEquals(di, block.copyOfRange(block.size - di.size, block.size))
+        }
+    }
+
+    @Test
+    fun cardPaddingOverDigestInfoVerifiesUnderJca() {
+        val kp = keypair(2048)
+        val message = "offlinepass ssh-auth self-test".toByteArray()
+        for (pair in listOf("rsa-sha2-256" to "SHA256withRSA",
+                "rsa-sha2-512" to "SHA512withRSA")) {
+            val (sshAlg, jcaAlg) = pair
+            // The client side: the bare DigestInfo goes on the wire to the card.
+            val di = SshRsaPkcs1.digestInfo(sshAlg, message)
+            // The card side: pad on-device, raw RSA.
+            val raw = cardRawRsa(cardPad(di, 256), kp.private)
+            // The verifier side: the standard JCA/SSH check.
+            val v = java.security.Signature.getInstance(jcaAlg)
+            v.initVerify(kp.public); v.update(message)
+            org.junit.Assert.assertTrue("$sshAlg must verify", v.verify(raw))
+        }
+    }
+
+    @Test
+    fun corruptedDigestInfoFailsVerification() {
+        val kp = keypair(2048)
+        val message = "offlinepass ssh-auth self-test".toByteArray()
+        val di = SshRsaPkcs1.digestInfo("rsa-sha2-512", message)
+        di[di.size - 1] = (di[di.size - 1].toInt() xor 1).toByte()
+        val raw = cardRawRsa(cardPad(di, 256), kp.private)
+        val v = java.security.Signature.getInstance("SHA512withRSA")
+        v.initVerify(kp.public); v.update(message)
+        org.junit.Assert.assertFalse(v.verify(raw))
+    }
 }

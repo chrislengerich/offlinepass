@@ -14,13 +14,16 @@ import java.io.IOException
  * same one desktop gpg-agent pushes with) — provided at setup.
  */
 class YubiKeySshIdentity(
-    private val client: OpenPgpClient,
+    // Nullable: the YubiKit backend never touches OpenKeyChain, so tests
+    // can exercise the card path without a client (or the app without OKK).
+    private val client: OpenPgpClient?,
     private val authSubkeyId: Long,
     private val publicKeyLine: String,
     private val interaction: suspend (android.app.PendingIntent) -> android.content.Intent?,
     /** When non-null: the YubiKit backend (the card's SIGNATURE slot) —
-     *  bypasses OpenKeyChain entirely. */
-    private val yubiKitSigner: (suspend (payload: ByteArray) -> ByteArray)? = null
+     *  bypasses OpenKeyChain entirely. Returns null when the user cancelled
+     *  the PIN (or fails fast by throwing). */
+    private val yubiKitSigner: (suspend (payload: ByteArray) -> ByteArray?)? = null
 ) : Identity {
 
     companion object {
@@ -107,6 +110,10 @@ class YubiKeySshIdentity(
      *  interaction loop) and returns the RAW signature bytes extracted
      *  from the OpenPGP packet. */
     private fun openKeyChainRawSignature(data: ByteArray): PgpSshBridge.RawSig? {
+        val client = client ?: run {
+            lastAuthError = "no OpenKeyChain client (software-key path requires OKK)"
+            return null
+        }
         var reqData: android.content.Intent? = null
         var guard = 0
         lastAuthError = null

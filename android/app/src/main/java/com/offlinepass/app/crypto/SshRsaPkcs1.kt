@@ -27,10 +27,12 @@ object SshRsaPkcs1 {
 
     /** The bare `DigestInfo` (ASN.1 SEQUENCE of the hash
      *  AlgorithmIdentifier and the digest) — the input the OpenPGP card's
-     *  PSO:CDS expects; the card pads it to the modulus size. */
+     *  PSO:CDS expects; the card pads it to the modulus size. Accepts the
+     *  SSH algorithm names (JSch's "rsa-sha2-512") and the JCA names. */
     fun digestInfo(hashAlg: String, message: ByteArray): ByteArray {
         val prefix = prefixFor(hashAlg)
-        return prefix + java.security.MessageDigest.getInstance(hashAlg).digest(message)
+        return prefix + java.security.MessageDigest
+            .getInstance(jcaHashName(hashAlg)).digest(message)
     }
 
     /** The PKCS#1 v1.5 encoded block: 0x00 0x01 PS 0x00 DigestInfo, where PS
@@ -39,7 +41,8 @@ object SshRsaPkcs1 {
      *  modulus). */
     fun pkcs1SignBlock(hashAlg: String, message: ByteArray, modulusSize: Int): ByteArray {
         val prefix = prefixFor(hashAlg)
-        val digest = java.security.MessageDigest.getInstance(hashAlg).digest(message)
+        val digest = java.security.MessageDigest
+            .getInstance(jcaHashName(hashAlg)).digest(message)
         val digestInfo = prefix + digest
         val padLen = modulusSize - digestInfo.size - 3
         require(padLen >= 8) {
@@ -53,6 +56,14 @@ object SshRsaPkcs1 {
         "rsa-sha2-512", "SHA-512" -> SHA512_PREFIX
         "rsa-sha2-256", "SHA-256" -> SHA256_PREFIX
         "ssh-rsa", "SHA-1" -> SHA1_PREFIX
+        else -> throw IllegalArgumentException("unsupported hash: $hashAlg")
+    }
+
+    /** The (SSH or JCA) name → the JCA MessageDigest name. */
+    private fun jcaHashName(hashAlg: String): String = when (hashAlg) {
+        "rsa-sha2-512", "SHA-512" -> "SHA-512"
+        "rsa-sha2-256", "SHA-256" -> "SHA-256"
+        "ssh-rsa", "SHA-1" -> "SHA-1"
         else -> throw IllegalArgumentException("unsupported hash: $hashAlg")
     }
 }
