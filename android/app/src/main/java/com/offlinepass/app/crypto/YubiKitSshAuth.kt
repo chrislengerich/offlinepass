@@ -24,6 +24,20 @@ import com.yubico.yubikit.openpgp.OpenPgpSession
  */
 object YubiKitSshAuth {
 
+    init {
+        // The connection handlers (SmartCard/OTP/FIDO) are registered into
+        // ConnectionManager's static registry by UsbYubiKeyManager's class
+        // initializer. Constructing UsbYubiKeyDevice DIRECTLY (as this
+        // object does, without the manager's attach listener) skips that
+        // class entirely — and openConnection then fails with
+        // "Unsupported connection type". Touch the manager class once so
+        // the registry is populated.
+        runCatching {
+            Class.forName(
+                "com.yubico.yubikit.android.transport.usb.UsbYubiKeyManager")
+        }
+    }
+
     private const val YUBICO_VENDOR_ID = 0x1050
 
     /** The connected YubiKey (the Yubico vendor id), or null. */
