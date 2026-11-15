@@ -56,6 +56,21 @@ object PgpSshBridge {
         return SshPublicKeyLine(parts[0], blob, parts.drop(2).joinToString(" "))
     }
 
+    /** The de-armored SIGNATURE packet's body (for the self-test's
+     *  diagnostics). */
+    fun sigBodyOf(armored: String): ByteArray =
+        parsePacketBody(dearmorFirstSignaturePacket(armored))
+
+    /** For an ssh-ed25519 line: the 32-byte Ed25519 public point (the blob
+     *  is string("ssh-ed25519") + string(32B point)). */
+    fun authKeyPoint(line: SshPublicKeyLine): ByteArray {
+        if (line.algorithm != "ssh-ed25519")
+            throw PgpSshBridgeException("authKeyPoint: not an ssh-ed25519 line")
+        if (line.wireBlob.size < 36)
+            throw PgpSshBridgeException("ssh-ed25519 blob too short")
+        return line.wireBlob.copyOfRange(line.wireBlob.size - 32, line.wireBlob.size)
+    }
+
     /** Modulus byte-size for ssh-rsa blobs (for RSA signature padding). */
     // -- OpenPGP key material → SSH public line -------------------------------
 

@@ -1024,6 +1024,39 @@ object VaultSession {
                         }
                     if (issuer != null && issuer != subkeyId) return SshSelfTest(false,
                         "OKK signed with 0x%016X, not the enrolled 0x%016X".format(issuer, subkeyId))
+                    // Ed25519 path: OKK's sig framing for EdDSA is not settled
+                    // (RFC: one MPI of r||s; observed 70-byte bodies). Find
+                    // the verifying 64-byte window EMPIRICALLY — the correct
+                    // r||s is whichever authenticates the message.
+                    if (parsedLine.algorithm == "ssh-ed25519") {
+                        val sigBody = PgpSshBridge.sigBodyOf(r.armored)
+                        val point = PgpSshBridge.authKeyPoint(parsedLine)
+                        val prefixLen = 6 + ((sigBody[4].toInt() and 0xFF) shl 8 or (sigBody[5].toInt() and 0xFF))
+                        val sha = java.security.MessageDigest.getInstance("SHA-256")
+                        val digest = sha.digest(sigBody.copyOfRange(0, prefixLen) + data +
+                            byteArrayOf(4, 0xFF.toByte()) + ((prefixLen + data.size).toLong()
+                                .let { l -> byteArrayOf((l ushr 24).toByte(), (l ushr 16).toByte(), (l ushr 8).toByte(), l.toByte()) }))
+                        val inputs = listOf("message" to data, "digest" to digest)
+                        for ((name, input) in inputs) {
+                            for (o in 0..(sigBody.size - 64)) {
+                                val win = sigBody.copyOfRange(o, o + 64)
+                                val ok = runCatching {
+                                    val pub = java.security.KeyFactory.getInstance("Ed25519")
+                                        .generatePublic(java.security.spec.XECPublicKeySpec(
+                                            java.security.spec.NamedParameterSpec.ED25519,
+                                            java.math.BigInteger(1, point)))
+                                    val sig = java.security.Signature.getInstance("Ed25519")
+                                    sig.initVerify(pub); sig.update(input)
+                                    sig.verify(win)
+                                }.getOrDefault(false)
+                                if (ok) return SshSelfTest(true,
+                                    "Ed25519 verified: r||s at offset $o of the packet body (input: $name)")
+                            }
+                        }
+                        return SshSelfTest(false,
+                            "Ed25519: NO 64-byte window verifies over any input (point=${point.size}B, " +
+                                "packet body=${sigBody.size}B) — the sig armor + line are saved for offline analysis")
+                    }
                     val bridged = runCatching {
                         val raw = PgpSshBridge.extractRawSignature(r.armored, parsedLine)
                         Triple(PgpSshBridge.rsaSigNameForHash(raw.hashAlg), raw.hashAlg, raw.bytes.size)
