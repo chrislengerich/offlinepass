@@ -1008,7 +1008,15 @@ object VaultSession {
         var reqData: Intent? = null
         var guard = 0
         while (guard++ < 3) {
-            when (val r = client.trySignDetached(data, subkeyId, reqData)) {
+            // The IPC call and the interaction launch can both throw
+            // (SecurityException / DeadObject / ActivityNotFound) — the
+            // self-test REPORTS them instead of crashing the app.
+            val r = runCatching { client.trySignDetached(data, subkeyId, reqData) }
+                .getOrElse {
+                    return SshSelfTest(false, "OpenKeyChain call threw " +
+                        "${it.javaClass.simpleName}: ${it.message}")
+                }
+            when (r) {
                 is OpenPgpClient.SignDetached.Ok -> {
                     val issuer = PgpSshBridge.issuingKeyId(r.armored)
                     if (issuer != null && issuer != subkeyId) return SshSelfTest(false,
@@ -1022,7 +1030,11 @@ object VaultSession {
                             .format(subkeyId, bridged.second, bridged.first, bridged.third))
                 }
                 is OpenPgpClient.SignDetached.UserInteraction -> {
-                    reqData = interactionHandler?.invoke(r.pendingIntent)
+                    reqData = runCatching { interactionHandler?.invoke(r.pendingIntent) }
+                        .getOrElse {
+                            return SshSelfTest(false, "interaction launch threw " +
+                                "${it.javaClass.simpleName}: ${it.message}")
+                        }
                         ?: return SshSelfTest(false, "interaction needs the UI layer")
                 }
                 is OpenPgpClient.SignDetached.Error ->
