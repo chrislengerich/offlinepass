@@ -30,7 +30,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ANDROID_DIR="$REPO_ROOT/android"
 DIST_ROOT="$REPO_ROOT/dist"
-VERSION="${2:-${OFFLINEPASS_VERSION:-0.10.1}}"
+VERSION="${2:-${OFFLINEPASS_VERSION:-0.10.2}}"
 TAG="v$VERSION"
 STAGE="$DIST_ROOT/$TAG"
 
