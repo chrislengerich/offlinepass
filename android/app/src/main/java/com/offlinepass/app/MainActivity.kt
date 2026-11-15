@@ -894,6 +894,27 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     if (pat.isNotBlank()) VaultSession.savePat(pat)
                     status = ""
                     lifecycleScope.launch {
+                        // Persist the load screen's chosen sync-auth BEFORE
+                        // the transport: the chip choice lived only in the
+                        // drafts — the YubiKey identity reads the ENROLLED
+                        // prefs (subkey id + line), which this flow never
+                        // wrote (a picked subkey evaporated at the load:
+                        // "Auth cancelled", no OpenKeyChain prompt, and the
+                        // self-test saw nothing).
+                        when (VaultSession.loadAuthState.value) {
+                            VaultSession.SSH_SYNC_YUBIKEY -> {
+                                val line = VaultSession.loadSshLineState.value
+                                val sub = VaultSession.loadSubkeyIdState.value
+                                if (line.contains(" ") && sub.length == 16) {
+                                    VaultSession.setYubikeySsh(line, sub)
+                                } else {
+                                    status = "YubiKey SSH enrollment incomplete — " +
+                                        "choose the key in OpenKeyChain first."
+                                    return@launch
+                                }
+                            }
+                            else -> VaultSession.setSshSyncMode(VaultSession.SSH_SYNC_SCREENLOCK)
+                        }
                         // An SSH load's clone handshake signs with the
                         // screenlock key — open its 60s validity window with
                         // the screen-lock interaction first. (The YubiKey
