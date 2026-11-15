@@ -387,11 +387,13 @@ object PgpSshBridge {
     // -- packet-level helpers -------------------------------------------------
 
     /** De-arms an ASCII-detached signature and returns the FIRST packet's
-     *  raw bytes (tag + length + body). */
+     *  raw bytes (tag + length + body). Strips the headers, the CRC24
+     *  ("=XXXX") line and empties — a strict base64 decoder rejects the
+     *  CRC line mid-stream. */
     private fun dearmorFirstSignaturePacket(armored: String): ByteArray {
         val b64 = armored.lines()
             .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("-") && !it.contains(":") }
+            .filter { it.isNotEmpty() && !it.startsWith("-") && !it.contains(":") && !it.startsWith("=") }
             .joinToString("")
         val data = runCatching { Base64.getDecoder().decode(b64) }
             .getOrElse { throw PgpSshBridgeException("signature armor is not valid base64") }

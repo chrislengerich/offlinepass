@@ -1018,7 +1018,10 @@ object VaultSession {
                 }
             when (r) {
                 is OpenPgpClient.SignDetached.Ok -> {
-                    val issuer = PgpSshBridge.issuingKeyId(r.armored)
+                    val issuer = runCatching { PgpSshBridge.issuingKeyId(r.armored) }
+                        .getOrElse {
+                            return SshSelfTest(false, "signature parse: ${it.message}")
+                        }
                     if (issuer != null && issuer != subkeyId) return SshSelfTest(false,
                         "OKK signed with 0x%016X, not the enrolled 0x%016X".format(issuer, subkeyId))
                     val bridged = runCatching {
