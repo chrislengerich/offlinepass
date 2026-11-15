@@ -795,6 +795,17 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
     @androidx.compose.runtime.Composable
     private fun AppRouter() {
+        // The QRFT payload screen has no session dependency (the payload is
+        // passed in memory) — route it in EVERY state: the pre-unlock "Create
+        // & show public key" flow needs it while the vault is still
+        // NoConfig/Locked, and the Unlocked branch's copy is redundant.
+        if (screen is Screen.QrftPayload) {
+            QrftScreen(
+                payload = (screen as Screen.QrftPayload).payload,
+                onBack = { screen = sshKeyBackScreen }
+            )
+            return
+        }
         when (VaultSession.state) {
             VaultSession.State.NoConfig -> SetupChoiceScreen(
                 defaultRemote = "https://github.com/planetaltitude/offlinepass-storage-test.git",
@@ -1071,6 +1082,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 )
             }
             is VaultSession.State.Unlocked -> when (val s = screen) {
+                // QrftPayload is handled at the top of AppRouter (every state)
+                // and never reaches this branch; the explicit branch keeps the
+                // when exhaustive.
+                is Screen.QrftPayload -> {}
                 Screen.SetupChoice, Screen.Search -> SearchScreen(
                     items = unlockedItems(),
                     busy = VaultSession.busy,
@@ -1158,10 +1173,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         onBack = { screen = Screen.Detail(item.itemUuid) }
                     )
                 }
-                is Screen.QrftPayload -> QrftScreen(
-                    payload = s.payload,
-                    onBack = { screen = sshKeyBackScreen }
-                )
+                // QrftPayload is routed at the top of AppRouter (every state).
                 Screen.ExportPick -> ExportPickScreen(
                     items = unlockedItems(),
                     onBack = { screen = Screen.Setup },
