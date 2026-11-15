@@ -1038,6 +1038,10 @@ object VaultSession {
         if (com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(appContext)) {
             val pin = openPgpPinPrompt?.invoke()
                 ?: return SshSelfTest(false, "OpenPGP PIN cancelled")
+            // The card's slot touch policy may require a PHYSICAL touch on
+            // the YubiKey itself — there is no phone-side prompt for that;
+            // tell the user the key is waiting for a finger.
+            status = "Waiting for the YubiKey touch… (the key's LED blinks)"
             val sigBlock = runCatching {
                 val block = com.offlinepass.app.crypto.SshRsaPkcs1.pkcs1SignBlock(
                     "SHA-512", data,
