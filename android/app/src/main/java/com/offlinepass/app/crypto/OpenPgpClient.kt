@@ -586,8 +586,12 @@ class OpenPgpClient(private val context: Context) : OpenPgpOps {
                             (keyId?.let { "%016X".format(it) } ?: "none"))
                         SignDetached.Ok(piped)
                     } else {
-                        Log.w(TAG, "DETACHED_SIGN: no signature in the extra or the output pipe")
-                        SignDetached.Error("no detached signature returned")
+                        // Diagnostic: what did the service actually return?
+                        val extraKeys = result.extras?.keySet()?.joinToString(",") ?: "none"
+                        Log.w(TAG, "DETACHED_SIGN: no signature — extraKeys=[$extraKeys], " +
+                            "pipe=${sink.size()}B head=[${piped.take(60).replace('\n', '|')}]")
+                        SignDetached.Error("no detached signature returned " +
+                            "(extras=[$extraKeys], pipe=${sink.size()}B)")
                     }
                 }
             }
