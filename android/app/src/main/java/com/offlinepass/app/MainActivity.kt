@@ -106,6 +106,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
     private fun rescheduleAutoLock() {
         autoLockJob?.cancel()
         autoLockJob = null
+        // The idle clock restarts at every SCHEDULE — a long OpenKeyChain
+        // interaction (or a clone) between the last touch and a successful
+        // unlock/promotion must not insta-lock the fresh session.
+        lastInteractionMs = android.os.SystemClock.elapsedRealtime()
         if (!VaultSession.screenLockRequired()) return
         val minutes = VaultSession.autoLockMinutes()
         if (minutes <= 0) return
@@ -912,8 +916,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         // (keys/<keyid>.public.asc) — seed the save targets.
                         VaultSession.seedRecipientsFromRepo()
                         unlockLoop()
-                        android.widget.Toast.makeText(this@MainActivity, "Vault loaded",
-                            android.widget.Toast.LENGTH_SHORT).show()
+                        // The toast must not lie: unlockLoop reports its own
+                        // failure via status (and a failed load leaves the
+                        // session Locked).
+                        if (VaultSession.state is VaultSession.State.Unlocked) {
+                            android.widget.Toast.makeText(this@MainActivity, "Vault loaded",
+                                android.widget.Toast.LENGTH_SHORT).show()
+                        }
                     }
                 },
                 onLoadUsb = { usbRestoreLauncher.launch(arrayOf("application/octet-stream")) },

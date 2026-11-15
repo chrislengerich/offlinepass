@@ -71,7 +71,10 @@ class VaultGitClient {
                     Log.i(TAG, "connected local repo to origin")
                 }
                 // A remote with no refs yet (first device in an empty repo)
-                // is the normal first-use state, not a failure.
+                // is the normal first-use state, not a failure. ONLY that
+                // case is tolerated: an auth/transport failure must
+                // propagate — swallowing it here returned Success with an
+                // empty worktree and the load "succeeded" without a vault.
                 runCatching {
                     git.fetch()
                         .setRemote(remote)
@@ -80,11 +83,8 @@ class VaultGitClient {
                         .setTimeout(30)
                         .call()
                 }.onFailure { error ->
-                    // Offline is fine: local commits must still work; the
-                    // push retries when connectivity returns.
-                    if (error.message != "Nothing to fetch.") {
-                        Log.w(TAG, "fetch failed (continuing offline): ${error.message}")
-                    }
+                    if (error.message != "Nothing to fetch.") throw error
+                    Log.i(TAG, "empty remote — nothing to fetch")
                 }
             }
         } else {

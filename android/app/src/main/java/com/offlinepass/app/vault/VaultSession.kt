@@ -1005,8 +1005,11 @@ object VaultSession {
             Log.w(TAG, "git open failed: ${e.message}")
             // The YubiKey identity records the OpenKeyChain-side failure
             // (JSch only says "Auth cancelled") — surface it so a wrong-
-            // subkey enrollment or an OKK rejection is diagnosable.
+            // subkey enrollment or an OKK rejection is diagnosable. Cleared
+            // first so a SCREENLOCK failure never inherits a stale
+            // YubiKey-mode error from an earlier attempt.
             val extra = com.offlinepass.app.crypto.YubiKeySshIdentity.lastAuthError
+            com.offlinepass.app.crypto.YubiKeySshIdentity.lastAuthError = null
             return Result.Error("Repo open failed: ${e.message?.take(60)}" +
                 (extra?.let { " — $it" } ?: ""))
         } finally {
