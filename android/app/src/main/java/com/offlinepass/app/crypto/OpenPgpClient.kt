@@ -567,15 +567,28 @@ class OpenPgpClient(private val context: Context) : OpenPgpOps {
         val result = execute(intent, data.inputStream(), sink, apiVersion)
         return when (result.getIntExtra(RESULT_CODE, RESULT_CODE_ERROR)) {
             RESULT_CODE_SUCCESS -> {
+                // OpenKeyChain delivers the signature on ONE of two
+                // channels depending on the call shape: the
+                // "detached_signature" extra (explicit key id) or the
+                // OUTPUT PIPE (keyless/selected-key sign — the armored
+                // signature lands in the sink). Read both.
                 val raw = result.extras?.get("detached_signature") as? ByteArray
                 if (raw != null && raw.isNotEmpty()) {
                     val resolved = result.getLongExtra(EXTRA_SIGN_KEY_ID, -1L)
-                    Log.i(TAG, "DETACHED_SIGN ok: requested=" +
+                    Log.i(TAG, "DETACHED_SIGN ok (extra): requested=" +
                         (keyId?.let { "%016X".format(it) } ?: "none") +
                         ", resolved=" + (if (resolved != -1L) "%016X".format(resolved) else "none"))
                     SignDetached.Ok(String(raw, Charsets.UTF_8))
                 } else {
-                    SignDetached.Error("no detached signature returned")
+                    val piped = sink.toString(Charsets.UTF_8.name())
+                    if (piped.contains("BEGIN PGP SIGNATURE")) {
+                        Log.i(TAG, "DETACHED_SIGN ok (output pipe): requested=" +
+                            (keyId?.let { "%016X".format(it) } ?: "none"))
+                        SignDetached.Ok(piped)
+                    } else {
+                        Log.w(TAG, "DETACHED_SIGN: no signature in the extra or the output pipe")
+                        SignDetached.Error("no detached signature returned")
+                    }
                 }
             }
             RESULT_CODE_USER_INTERACTION_REQUIRED -> {
