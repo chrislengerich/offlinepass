@@ -939,8 +939,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         if (open is VaultSession.Result.Error) {
                             // A failed load must NOT adopt a phantom empty
                             // vault or leave an unlinked repo behind: undo
-                            // the config attempt and stay on Setup to retry.
-                            VaultSession.forgetConfig()
+                            // the REMOTE config attempt and stay on Setup to
+                            // retry. The YubiKey enrollment, the SSH sync
+                            // mode, and the other durable settings SURVIVE —
+                            // forgetConfig() here used to wipe those too,
+                            // silently destroying the enrollment.
+                            VaultSession.forgetRemoteConfig()
                             File(VaultSession.gitRootPath()).deleteRecursively()
                             status = "Load failed: ${open.message} — fix the remote/PAT and retry."
                             android.widget.Toast.makeText(this@MainActivity,

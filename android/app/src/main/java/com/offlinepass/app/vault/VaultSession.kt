@@ -416,6 +416,21 @@ object VaultSession {
         state = State.NoConfig
     }
 
+    /** Reverts a FAILED remote-config attempt WITHOUT destroying the
+     *  durable setup: the SSH sync mode + YubiKey enrollment, the commit
+     *  signer, the screenlock settings all survive (the explicit "forget
+     *  this vault" action is [forgetConfig]). The remote/recipient keys
+     *  are removed so no phantom remote stays configured; the connect
+     *  drafts stay so the user can fix the remote and retry. */
+    fun forgetRemoteConfig() {
+        prefs().edit()
+            .remove("remoteUrl")
+            .remove("recipientEmails")
+            .remove("recipientKeyIds")
+            .apply()
+        state = State.NoConfig
+    }
+
     // -- paths ----------------------------------------------------------------
 
     /** The repo dir — used in BOTH modes: remote mode has origin configured,

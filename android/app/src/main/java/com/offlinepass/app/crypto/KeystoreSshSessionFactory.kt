@@ -33,6 +33,26 @@ object KeystoreSshSessionFactory {
 
     fun register() {
         if (SshSessionFactory.getInstance() !is Factory) SshSessionFactory.setInstance(Factory())
+        installJschLogger()
+    }
+
+    /** Routes JSch's own logs into the app's log channel (the tag "JSch").
+     *  The default logger suppresses the DEBUG-level userauth details —
+     *  exactly the lines that say WHERE a disconnect happened (the offer,
+     *  the preauth probe, the signature). The fork's levels: 0=DEBUG,
+     *  1=INFO, 2=WARN, 3=ERROR. */
+    private fun installJschLogger() {
+        JSch.setLogger(object : com.jcraft.jsch.Logger {
+            override fun isEnabled(level: Int): Boolean = true
+            override fun log(level: Int, message: String) {
+                when (level) {
+                    com.jcraft.jsch.Logger.DEBUG -> android.util.Log.d("JSch", message)
+                    com.jcraft.jsch.Logger.INFO -> android.util.Log.i("JSch", message)
+                    com.jcraft.jsch.Logger.WARN -> android.util.Log.w("JSch", message)
+                    else -> android.util.Log.e("JSch", message)
+                }
+            }
+        })
     }
 
     class Factory : SshSessionFactory() {
@@ -69,6 +89,12 @@ object KeystoreSshSessionFactory {
                 // Handshake failures (auth refused, network) die BEFORE the
                 // exec channel exists — record them here.
                 lastSessionDiagnostics = "SSH handshake failed: ${e.message}"
+                android.util.Log.w("SshSync",
+                    "handshake failed: ${e.javaClass.simpleName}: ${e.message} " +
+                        "(offered fp=SHA256:" + java.util.Base64.getEncoder()
+                            .withoutPadding()
+                            .encodeToString(java.security.MessageDigest.getInstance("SHA-256")
+                                .digest(identity.publicKeyBlob)) + ")")
                 throw e
             }
             return JschRemoteSession(session)
