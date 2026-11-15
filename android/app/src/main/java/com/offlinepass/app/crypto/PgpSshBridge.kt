@@ -529,6 +529,34 @@ object PgpSshBridge {
         }
     }
 
+    /** The java.security PublicKey from an OpenSSH public-key line:
+     *  ssh-rsa → RSA(n, e); ssh-ed25519 → the Ed25519 point. Used for the
+     *  LOCAL signature verification (the self-test verifies the card's
+     *  signature in-app — no server needed). */
+    fun publicKeyFromLine(line: SshPublicKeyLine): java.security.PublicKey {
+        val data = line.wireBlob
+        return when (line.algorithm) {
+            "ssh-rsa" -> {
+                var p = readU32String(data, 0).second      // skip "ssh-rsa"
+                val (e, p2) = readU32String(data, p)       // e FIRST in ssh-rsa
+                val (n, _) = readU32String(data, p2)
+                java.security.KeyFactory.getInstance("RSA").generatePublic(
+                    java.security.spec.RSAPublicKeySpec(
+                        java.math.BigInteger(1, n), java.math.BigInteger(1, e)))
+            }
+            "ssh-ed25519" -> {
+                val (_, p2) = readU32String(data, 0)
+                val (point, _) = readU32String(data, p2)
+                java.security.KeyFactory.getInstance("Ed25519").generatePublic(
+                    java.security.spec.XECPublicKeySpec(
+                        java.security.spec.NamedParameterSpec.ED25519,
+                        java.math.BigInteger(1, point)))
+            }
+            else -> throw PgpSshBridgeException(
+                "publicKeyFromLine: unsupported algorithm ${line.algorithm}")
+        }
+    }
+
     private fun u16(b: ByteArray, p: Int): Int = ((b[p].toInt() and 0xFF) shl 8) or (b[p + 1].toInt() and 0xFF)
 
     /** OpenPGP MPI: 2-byte BIT LENGTH + big-endian value. Returns (bytes, nextPos). */

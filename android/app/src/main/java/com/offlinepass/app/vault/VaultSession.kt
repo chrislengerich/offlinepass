@@ -1025,17 +1025,45 @@ object VaultSession {
             ?: return SshSelfTest(false, "no YubiKey SSH line enrolled")
         val parsedLine = runCatching { PgpSshBridge.parsePublicKeyLine(line) }
             .getOrElse { return SshSelfTest(false, "enrolled SSH line unparsable: ${it.message}") }
-        val client = openPgpClientFactory(appContext)
         val data = "offlinepass ssh-auth self-test".toByteArray()
 
-        // The YubiKit backend needs the USB permission for the YubiKey —
-        // request it (the system's allow-access dialog) when the card is
-        // attached but not yet granted.
+        // The YubiKit path FIRST: a YubiKey attached = the card signs on
+        // its SIGNATURE slot (the enrolled S subkey) — PIN + touch, and
+        // the signature is VERIFIED LOCALLY against the enrolled line's
+        // public key. No OpenKeyChain, no network: the whole sign chain
+        // is tested offline.
+        if (com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(appContext)) {
+            val pin = openPgpPinPrompt?.invoke()
+                ?: return SshSelfTest(false, "OpenPGP PIN cancelled")
+            val sigBlock = runCatching {
+                val block = com.offlinepass.app.crypto.SshRsaPkcs1.pkcs1SignBlock(
+                    "SHA-512", data,
+                    com.offlinepass.app.crypto.PgpSshBridge
+                        .rsaModulusSize(parsedLine.wireBlob))
+                com.offlinepass.app.crypto.YubiKitSshAuth.sign(appContext, pin, block)
+            }.getOrElse { return SshSelfTest(false, "YubiKit sign: ${it.message}") }
+            val verified = runCatching {
+                val pub = PgpSshBridge.publicKeyFromLine(parsedLine)
+                val verifier = java.security.Signature.getInstance("SHA512withRSA")
+                verifier.initVerify(pub); verifier.update(data)
+                verifier.verify(sigBlock)
+            }.getOrElse { false }
+            return if (verified) SshSelfTest(true,
+                "YubiKit: the card signed on the SIGNATURE slot + verified locally — the full chain works")
+            else SshSelfTest(false,
+                "the card's signature did NOT verify locally against the enrolled line " +
+                    "(the sig armor is saved to last-selftest-sig.asc)")
+        }
+
+        // The USB permission for the YubiKey is not yet granted — request
+        // it (the system's allow-access dialog) before the OKK fallback.
         if (com.offlinepass.app.crypto.YubiKitSshAuth.findDevice(appContext) != null &&
             !com.offlinepass.app.crypto.YubiKitSshAuth.requestPermission(appContext)
         ) {
             return SshSelfTest(false, "USB permission denied for the YubiKey")
         }
+
+        val client = openPgpClientFactory(appContext)
 
         // The key material: to resolve the key's PRIMARY id (a matrix
         // variant) — OpenKeyChain's API may accept/reject key ids in
