@@ -386,10 +386,11 @@ object PgpSshBridge {
 
     // -- packet-level helpers -------------------------------------------------
 
-    /** De-arms an ASCII-detached signature and returns the FIRST packet's
-     *  raw bytes (tag + length + body). Strips the headers, the CRC24
-     *  ("=XXXX") line and empties — a strict base64 decoder rejects the
-     *  CRC line mid-stream. */
+    /** De-arms an ASCII-detached signature and returns the packet bytes
+     *  (tag + length + body). Strips the headers, the CRC24 ("=XXXX") line
+     *  and empties — a strict base64 decoder rejects the CRC line
+     *  mid-stream. Accepts OLD- and NEW-format packet headers (gpg/OKK
+     *  emit old-format: 0x88..). */
     private fun dearmorFirstSignaturePacket(armored: String): ByteArray {
         val b64 = armored.lines()
             .map { it.trim() }
@@ -399,34 +400,44 @@ object PgpSshBridge {
             .getOrElse { throw PgpSshBridgeException("signature armor is not valid base64") }
         if (data.isEmpty()) throw PgpSshBridgeException("empty signature packet")
         val b0 = data[0].toInt() and 0xFF
-        val tagOk = (b0 and 0xC0) == 0xC0 && (b0 and 0x3F) == 2
-        if (!tagOk) throw PgpSshBridgeException("first packet is not an OpenPGP signature packet (byte $b0)")
-        // New-format length: 1/2/5 octets
-        val lenByte = data[1].toInt() and 0xFF
-        val (len, hdrLen) = when {
-            lenByte < 192 -> lenByte to 2
-            lenByte in 192..223 -> (((lenByte - 192) shl 8) or (data[2].toInt() and 0xFF)) + 192 to 3
-            lenByte == 255 -> {
-                val l = ((data[2].toInt() and 0xFF) shl 24) or ((data[3].toInt() and 0xFF) shl 16) or
-                    ((data[4].toInt() and 0xFF) shl 8) or (data[5].toInt() and 0xFF)
-                l to 6
-            }
-            else -> throw PgpSshBridgeException("malformed packet length")
-        }
-        if (data.size < hdrLen + len) throw PgpSshBridgeException("truncated signature packet")
+        if ((b0 and 0x80) == 0) throw PgpSshBridgeException("not a packet (byte $b0)")
+        val tag = if ((b0 and 0x40) != 0) b0 and 0x3F else (b0 shr 2) and 0x0F
+        if (tag != 2) throw PgpSshBridgeException(
+            "first packet is not an OpenPGP signature packet (tag $tag, byte $b0)")
+        if (parseHeader(data).let { (h, l) -> data.size < h + l })
+            throw PgpSshBridgeException("truncated signature packet")
         return data  // full packet: tag + length-encoding + body (parsed next)
+    }
+
+    /** Packet header: (headerLength, bodyLength) for OLD- and NEW-format
+     *  packet headers. */
+    private fun parseHeader(data: ByteArray): Pair<Int, Int> {
+        val b0 = data[0].toInt() and 0xFF
+        if ((b0 and 0x40) != 0) { // new format
+            val lb = data[1].toInt() and 0xFF
+            return when {
+                lb < 192 -> 2 to lb
+                lb in 192..223 -> 3 to ((((lb - 192) shl 8) or (data[2].toInt() and 0xFF)) + 192)
+                lb == 255 -> 6 to (((data[2].toInt() and 0xFF) shl 24) or ((data[3].toInt() and 0xFF) shl 16) or
+                    ((data[4].toInt() and 0xFF) shl 8) or (data[5].toInt() and 0xFF))
+                else -> throw PgpSshBridgeException("malformed packet length")
+            }
+        }
+        // old format
+        val lt = b0 and 0x03
+        return when (lt) {
+            0 -> 2 to (data[1].toInt() and 0xFF)
+            1 -> 3 to (((data[1].toInt() and 0xFF) shl 8) or (data[2].toInt() and 0xFF))
+            2 -> 5 to (((data[1].toInt() and 0xFF) shl 24) or ((data[2].toInt() and 0xFF) shl 16) or
+                ((data[3].toInt() and 0xFF) shl 8) or (data[4].toInt() and 0xFF))
+            else -> throw PgpSshBridgeException("indeterminate-length packets are unsupported")
+        }
     }
 
     /** Strips the packet header (tag + length), returning the body. */
     private fun parsePacketBody(packet: ByteArray): ByteArray {
-        val lenByte = packet[1].toInt() and 0xFF
-        val hdrLen = when {
-            lenByte < 192 -> 2
-            lenByte in 192..223 -> 3
-            lenByte == 255 -> 6
-            else -> throw PgpSshBridgeException("malformed packet length")
-        }
-        return packet.copyOfRange(hdrLen, packet.size)
+        val (hdrLen, bodyLen) = parseHeader(packet)
+        return packet.copyOfRange(hdrLen, hdrLen + bodyLen)
     }
 
     /** The signing key id from an OpenPGP detached signature, taken from

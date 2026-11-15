@@ -140,6 +140,12 @@ class PgpSshBridgeTest {
         assertEquals(sub1Id, PgpSshBridge.signingSubkeyKeyId(data, null))
     }
 
+    private fun newFormatPacket(tag: Int, body: ByteArray): ByteArray {
+        val n = body.size - 192
+        val lenEnc = byteArrayOf(((n ushr 8) + 192).toByte(), (n and 0xFF).toByte())
+        return byteArrayOf((0xC0 or tag).toByte()) + lenEnc + body
+    }
+
     /** Wraps a body into a new-format signature packet (tag 2), with the
      *  proper new-format length encoding (same as real signers emit). */
     private fun packet(body: ByteArray): ByteArray {
@@ -189,6 +195,44 @@ class PgpSshBridgeTest {
         // string("rsa-sha2-256") + string(64-byte padded sig)
         val expected = sshString("rsa-sha2-256".toByteArray()) +
             sshString(ByteArray(60) + raw)
+        assertArrayEquals(expected, out)
+    }
+
+    @Test
+    fun oldFormatSignatureHeaderParses() {
+        // gpg/OKK emit OLD-format packet headers (0x88-style) — the parser
+        // must accept them alongside new-format ones.
+        val raw = ByteArray(8) { (it + 1).toByte() }
+        val body = byteArrayOf(4, 0, 1, 8) + u16(0) + u16(0) + mpi(raw)
+        val packet = byteArrayOf(0x88.toByte()) + byteArrayOf(body.size.toByte()) + body
+        val line = PgpSshBridge.parsePublicKeyLine(
+            "ssh-rsa " + java.util.Base64.getEncoder().encodeToString(
+                sshString("ssh-rsa".toByteArray()) + sshString(byteArrayOf(1, 0, 1)) +
+                    sshString(ByteArray(64))) + " c")
+        val out = PgpSshBridge.openPgpToSshSignature(armor(packet), line)
+        val expected = sshString("rsa-sha2-256".toByteArray()) +
+            sshString(ByteArray(56) + raw)
+        assertArrayEquals(expected, out)
+    }
+
+    @Test
+    fun newFormatTwoOctetLengthParses() {
+        // BouncyCastle emits TWO-OCTET new-format lengths for big packets —
+        // a precedence bug mis-parsed them (the +192 was applied to the
+        // wrong operand) and the RSA MPI read ran off the body.
+        val raw = ByteArray(64) { (it * 3).toByte() }
+        val body = byteArrayOf(4, 0, 1, 8) + u16(0) + u16(0) + mpi(raw)
+        // force the 2-octet encoding: pad the length region with a large
+        // enough body
+        val padded = body + ByteArray(300)  // body.size now > 191
+        val packet = newFormatPacket(2, padded)
+        val line = PgpSshBridge.parsePublicKeyLine(
+            "ssh-rsa " + java.util.Base64.getEncoder().encodeToString(
+                sshString("ssh-rsa".toByteArray()) + sshString(byteArrayOf(1, 0, 1)) +
+                    sshString(ByteArray(64))) + " c")
+        val out = PgpSshBridge.openPgpToSshSignature(armor(packet), line)
+        // raw is exactly modulus-sized: no padding added
+        val expected = sshString("rsa-sha2-256".toByteArray()) + sshString(raw)
         assertArrayEquals(expected, out)
     }
 
