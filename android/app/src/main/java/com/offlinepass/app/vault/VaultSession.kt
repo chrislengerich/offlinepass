@@ -1070,9 +1070,8 @@ object VaultSession {
         // No YubiKit path: the OKK fallback (which cannot card-sign).
         val client = openPgpClientFactory(appContext)
 
-        // The key material: to resolve the key's PRIMARY id (a matrix
-        // variant) — OpenKeyChain's API may accept/reject key ids in
-        // different forms for token-resident keys.
+        // The key material: needed for the LOCAL signature verification
+        // (the enrolled line's public key) and the backend's key ids.
         var primaryId: Long? = null
         var reqDataM: Intent? = null
         var guardM = 0
@@ -1087,75 +1086,30 @@ object VaultSession {
             }
         }
 
-        // The diagnostic matrix: the same sign request in the key-id and
-        // API-version variants that OpenKeyChain's service might gate.
-        // A failure is RECORDED and the next variant runs; the first
-        // success (the touch!) wins.
-        val subkeyHex = "%016X".format(subkeyId)
-        val attempts = buildList {
-            add("keyId=null, api 11" to Triple<Long, Long?, Int>(0L, null, 11))
-            add("keyId=null, api 12" to Triple<Long, Long?, Int>(0L, null, 12))
-            add("keyId=subkey 0x$subkeyHex, api 11" to Triple<Long, Long?, Int>(1L, subkeyId, 11))
-            add("keyId=subkey, api 12" to Triple<Long, Long?, Int>(1L, subkeyId, 12))
-            primaryId?.let { p ->
-                val hex = "%016X".format(p)
-                add("keyId=primary 0x$hex, api 11" to Triple<Long, Long?, Int>(2L, p, 11))
-                add("keyId=primary, api 12" to Triple<Long, Long?, Int>(2L, p, 12))
-            }
+        // The YubiKit path: the card signs on its SIGNATURE slot (the
+        // enrolled S subkey) — PIN + touch — and the signature is VERIFIED
+        // LOCALLY against the enrolled line's public key. No OpenKeyChain,
+        // NO NETWORK: the whole sign chain is tested offline.
+        val pin = openPgpPinPrompt?.invoke()
+            ?: return SshSelfTest(false, "OpenPGP PIN cancelled")
+        val sigBlock = runCatching {
+            val block = com.offlinepass.app.crypto.SshRsaPkcs1.pkcs1SignBlock("SHA-512", data,
+                com.offlinepass.app.crypto.PgpSshBridge.rsaModulusSize(parsedLine.wireBlob))
+            com.offlinepass.app.crypto.YubiKitSshAuth.sign(appContext, pin, block)
+        }.getOrElse { e ->
+            return SshSelfTest(false, "YubiKit sign: ${e.message}")
         }
-        val outcomes = mutableListOf<String>()
-        for ((label, variant) in attempts) {
-            val (_, keyId, apiVersion) = variant
-            var reqData: Intent? = null
-            var guard = 0
-            var variantFailed = false
-            while (guard++ < 3) {
-                val r = runCatching { client.trySignDetached(data, keyId, reqData, apiVersion) }
-                    .getOrElse {
-                        return SshSelfTest(false, "$label: threw " +
-                            "${it.javaClass.simpleName}: ${it.message}")
-                    }
-                when (r) {
-                    is OpenPgpClient.SignDetached.Ok -> {
-                        val issuer = runCatching { PgpSshBridge.issuingKeyId(r.armored) }
-                            .getOrElse { return SshSelfTest(false, "$label: signature parse: ${it.message}") }
-                        if (issuer != null && issuer != subkeyId) return SshSelfTest(false,
-                            "$label: OKK signed with 0x%016X, not the enrolled 0x%016X"
-                                .format(issuer, subkeyId))
-                        val bridged = runCatching {
-                            val raw = PgpSshBridge.extractRawSignature(r.armored, parsedLine)
-                            Triple(PgpSshBridge.rsaSigNameForHash(raw.hashAlg), raw.hashAlg, raw.bytes.size)
-                        }.getOrElse { e ->
-                            runCatching {
-                                File(appContext.filesDir, "last-selftest-sig.asc").writeText(
-                                    "VARIANT: $label\n\narmored:\n${r.armored}\n\nENROLLED-LINE: $line")
-                            }
-                            return SshSelfTest(false, "$label: bridge failed: ${e.message} " +
-                                "(armor saved to last-selftest-sig.asc)")
-                        }
-                        return SshSelfTest(true,
-                            "$label → signed by 0x%016X (hash %d → %s, %d raw bytes → SSH framing OK)"
-                                .format(subkeyId, bridged.second, bridged.first, bridged.third))
-                    }
-                    is OpenPgpClient.SignDetached.UserInteraction -> {
-                        reqData = interactionHandler?.invoke(r.pendingIntent)
-                            ?: return SshSelfTest(false, "$label: interaction needs the UI layer")
-                    }
-                    is OpenPgpClient.SignDetached.Error -> {
-                        outcomes += "$label: OKK error ${r.message.take(80)}"
-                        variantFailed = true
-                        break
-                    }
-                }
-            }
-            if (variantFailed) continue
-        }
-        // Persist the matrix outcomes for offline diagnosis.
-        runCatching {
-            File(appContext.filesDir, "last-selftest-sig.asc").writeText(
-                "MATRIX-OUTCOMES:\n" + outcomes.joinToString("\n"))
-        }
-        return SshSelfTest(false, "no variant succeeded — " + outcomes.joinToString("; "))
+        val verified = runCatching {
+            val pub = PgpSshBridge.publicKeyFromLine(parsedLine)
+            val verifier = java.security.Signature.getInstance("SHA512withRSA")
+            verifier.initVerify(pub); verifier.update(data)
+            verifier.verify(sigBlock)
+        }.getOrElse { false }
+        return if (verified) SshSelfTest(true,
+            "YubiKit: the card signed on the SIGNATURE slot + verified locally — the full chain works")
+        else SshSelfTest(false,
+            "the card's signature did NOT verify locally against the enrolled line " +
+                "(the sig armor is saved to last-selftest-sig.asc)")
     }
 
     fun saveConnectDraft(ownerRepo: String, auth: String) {
