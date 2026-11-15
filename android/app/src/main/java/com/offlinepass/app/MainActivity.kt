@@ -934,6 +934,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 onLoadUsb = { usbRestoreLauncher.launch(arrayOf("application/octet-stream")) },
                 onShowSshKey = { showSshKeyQr(Screen.SetupChoice) },
                 onPickAuthSubkey = { lifecycleScope.launch { pickAuthSubkey() } },
+                onSshSelfTest = {
+                    lifecycleScope.launch {
+                        val v = VaultSession.sshAuthSelfTest()
+                        status = (if (v.ok) "✅ SSH self-test OK — " else "❌ SSH self-test FAILED — ") + v.detail
+                    }
+                },
                 onEnrollYubikeySsh = { line, subkeyId -> enrollYubikeySsh(line, subkeyId) }
             )
             VaultSession.State.Locked -> when {

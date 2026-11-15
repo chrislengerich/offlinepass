@@ -57,6 +57,7 @@ fun SetupChoiceScreen(
     onLoadUsb: () -> Unit,
     onShowSshKey: () -> Unit = {},
     onPickAuthSubkey: () -> Unit = {},
+    onSshSelfTest: () -> Unit = {},
     onEnrollYubikeySsh: (sshLine: String, subkeyId: String) -> Unit = { _, _ -> },
     onClearStatus: () -> Unit = {}
 ) {
@@ -202,6 +203,9 @@ fun SetupChoiceScreen(
                         style = MaterialTheme.typography.bodySmall)
                     Button(onClick = onPickAuthSubkey, modifier = Modifier.fillMaxWidth()) {
                         Text("Choose key in OpenKeyChain")
+                    }
+                    TextButton(onClick = onSshSelfTest) {
+                        Text("Run SSH auth self-test")
                     }
                     OutlinedTextField(
                         value = subkeyId, onValueChange = { subkeyId = it },
