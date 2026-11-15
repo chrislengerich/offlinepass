@@ -64,6 +64,12 @@ gpg_key_args() {
 
 cmd_build() {
   ( cd "$ANDROID_DIR" && ./gradlew :app:assembleDebug :app:assembleProfileable :app:assembleRelease --console=plain )
+  # Keep the R8 mapping next to the build — a minified-build crash shows
+  # obfuscated class names in the log viewer; this de-obfuscates them
+  # (untracked: device-local only, not part of the release artifacts).
+  [ -f "$ANDROID_DIR/app/build/outputs/mapping/release/mapping.txt" ] && \
+    cp "$ANDROID_DIR/app/build/outputs/mapping/release/mapping.txt" \
+       "$ANDROID_DIR/app-release-mapping.txt"
   mkdir -p "$STAGE"
   cp "$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk" \
      "$STAGE/offlinepass-$VERSION-debug.apk"
