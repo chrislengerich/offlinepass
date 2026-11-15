@@ -1105,8 +1105,15 @@ object VaultSession {
                         }
                         ?: return SshSelfTest(false, "interaction needs the UI layer")
                 }
-                is OpenPgpClient.SignDetached.Error ->
+                is OpenPgpClient.SignDetached.Error -> {
+                    // Persist the OKK error for offline diagnosis.
+                    runCatching {
+                        File(appContext.filesDir, "last-selftest-sig.asc").writeText(
+                            "OKK-ERROR: ${r.message}\nSUBKEY-ID: 0x%016X\n".format(subkeyId) +
+                                "\nENROLLED-LINE: $line")
+                    }
                     return SshSelfTest(false, "OKK error: ${r.message}")
+                }
             }
         }
         return SshSelfTest(false, "aborted after interaction retries")
