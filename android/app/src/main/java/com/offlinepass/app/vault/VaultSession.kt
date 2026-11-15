@@ -1028,13 +1028,15 @@ object VaultSession {
                         val raw = PgpSshBridge.extractRawSignature(r.armored, parsedLine)
                         Triple(PgpSshBridge.rsaSigNameForHash(raw.hashAlg), raw.hashAlg, raw.bytes.size)
                     }.getOrElse { e ->
-                        // The failing signature's armor is saved for offline
-                        // diagnosis (adb shell run-as com.offlinepass.app).
+                        // The failing signature's armor + the enrolled line
+                        // are saved for offline diagnosis (adb shell run-as
+                        // com.offlinepass.app cat files/last-selftest-sig.asc).
                         runCatching {
-                            File(appContext.filesDir, "last-selftest-sig.asc").writeText(r.armored)
+                            File(appContext.filesDir, "last-selftest-sig.asc").writeText(
+                                "ENROLLED-LINE: $line\n\narmored:\n$r.armored")
                         }
                         return SshSelfTest(false,
-                            "bridge failed: ${e.message} (armor saved to last-selftest-sig.asc, " +
+                            "bridge failed: ${e.message} (armor + line saved to last-selftest-sig.asc, " +
                                 "len=${r.armored.length})")
                     }
                     return SshSelfTest(true,
