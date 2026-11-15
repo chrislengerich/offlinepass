@@ -111,7 +111,7 @@ dependencies {
     // Direct OpenPGP-applet access (the card's AUTH slot) — the SSH auth
     // backend for card-resident keys; OpenKeyChain's remote API returns
     // UNSUPPORTED_ACTION for card signing.
-    implementation("com.yubico.yubikit:openpgp:3.3.0")
+    implementation("com.yubico.yubikit:openpgp:3.0.0")
     implementation("com.yubico.yubikit:android:3.0.0")
 
     // Testing (offlinecam pattern)
