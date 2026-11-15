@@ -200,18 +200,14 @@ cmd_publish() {
       if gh release view "$TAG" >/dev/null 2>&1; then
         echo "release $TAG exists — (re-)uploading artifacts"
         gh release upload "$TAG" --clobber \
-          "$STAGE"/offlinepass-"$VERSION"-debug.apk \
-          "$STAGE"/offlinepass-"$VERSION"-debug.apk.asc \
-          "$STAGE"/offlinepass-"$VERSION"-profileable.apk \
-          "$STAGE"/offlinepass-"$VERSION"-profileable.apk.asc \
-          "$STAGE"/SHA256SUMS.txt
+          "$STAGE"/offlinepass-"$VERSION"-*.apk \
+          "$STAGE"/offlinepass-"$VERSION"-*.apk.asc \
+          "$STAGE"/SHA256SUMS.txt "$STAGE"/RELEASE_NOTES.md
       else
         gh release create "$TAG" \
-          "$STAGE"/offlinepass-"$VERSION"-debug.apk \
-          "$STAGE"/offlinepass-"$VERSION"-debug.apk.asc \
-          "$STAGE"/offlinepass-"$VERSION"-profileable.apk \
-          "$STAGE"/offlinepass-"$VERSION"-profileable.apk.asc \
-          "$STAGE"/SHA256SUMS.txt \
+          "$STAGE"/offlinepass-"$VERSION"-*.apk \
+          "$STAGE"/offlinepass-"$VERSION"-*.apk.asc \
+          "$STAGE"/SHA256SUMS.txt "$STAGE"/RELEASE_NOTES.md \
           --notes-file "$STAGE/RELEASE_NOTES.md" \
           --title "offlinepass $TAG"
       fi
