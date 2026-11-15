@@ -675,25 +675,42 @@ class MainActivity : androidx.activity.ComponentActivity() {
     /** Fetches the picked subkey's public key material from OpenKeyChain
      *  (looping the key-access interaction like every other API call) and
      *  converts it to the OpenSSH line draft — the sync signs with the key
-     *  the picker resolved, so the line must come from the same key id. */
+     *  the picker resolved, so the line must come from the same key id.
+     *  The picker can hand back the KEY's primary id even when the signing
+     *  secret lives in a subkey — the material resolves which subkey can
+     *  actually sign (key flags), and THAT id + line are stored. */
     private suspend fun fetchAndPopulateSshLine(keyId: Long) {
-        // The OpenSSH line: fetched from OpenKeyChain (the same proven call
-        // that materializes the recipients' keys) and converted by the
-        // bridge — no paste needed.
+        // The OpenSSH line: derived from the key material OpenKeyChain
+        // returns (the same proven fetch that materializes the recipients'
+        // keys) — no paste needed.
         val fetchClient = com.offlinepass.app.crypto.OpenPgpClient(applicationContext)
         var fetchReq: Intent? = null
         var fetchGuard = 0
         var line: String? = null
+        var signedWith = keyId
         while (fetchGuard++ < 3 && line == null) {
             when (val fr = fetchClient.fetchPublicKeyArmored(keyId, fetchReq)) {
-                is com.offlinepass.app.crypto.OpenPgpClient.PublicKey.Success ->
+                is com.offlinepass.app.crypto.OpenPgpClient.PublicKey.Success -> {
+                    val resolved = runCatching {
+                        com.offlinepass.app.crypto.PgpSshBridge.signingSubkeyKeyId(fr.armored, keyId)
+                    }.getOrElse {
+                        Log.w(TAG, "signing-subkey resolution: ${it.message}")
+                        keyId
+                    } ?: keyId
+                    signedWith = resolved
+                    if (resolved != keyId) {
+                        VaultSession.pickedAuthSubkeyId = resolved
+                        status = ("Picker returned 0x%016X — signing resolves to the " +
+                            "S subkey 0x%016X.").format(keyId, resolved)
+                    }
                     line = runCatching {
                         com.offlinepass.app.crypto.PgpSshBridge.sshLineForKeyMaterial(
-                            fr.armored, keyId, "offlinepass-yubikey")
+                            fr.armored, resolved, "offlinepass-yubikey")
                     }.getOrElse {
                         Log.w(TAG, "key material -> SSH line: ${it.message}")
                         null
                     }
+                }
                 is com.offlinepass.app.crypto.OpenPgpClient.PublicKey.UserInteraction -> {
                     launchInteraction(fr.pendingIntent)
                     fetchReq = awaitInteraction()
@@ -703,10 +720,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
         if (line != null) {
             VaultSession.yubikeySshLineDraft = line
-            status = ("Signing subkey selected (0x%016X) — OpenSSH line populated.")
-                .format(keyId)
+            status = ("Signing subkey 0x%016X — OpenSSH line populated.")
+                .format(signedWith)
         } else {
-            status = ("Signing subkey selected (0x%016X) — the OpenSSH line " +
+            status = ("Signing subkey 0x%016X — the OpenSSH line " +
                 "could not be fetched; paste it from the desktop " +
                 "(gpg --export-ssh-key).").format(keyId)
         }

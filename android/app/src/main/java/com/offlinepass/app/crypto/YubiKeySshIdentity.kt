@@ -20,6 +20,13 @@ class YubiKeySshIdentity(
     private val interaction: suspend (android.app.PendingIntent) -> android.content.Intent?
 ) : Identity {
 
+    companion object {
+        /** The LAST signing failure's OpenKeyChain-side message, surfaced
+         *  through the sync/load error string — JSch's bare "Auth
+         *  cancelled" hides exactly what this records. */
+        @Volatile var lastAuthError: String? = null
+    }
+
     private val parsed = PgpSshBridge.parsePublicKeyLine(publicKeyLine)
 
     override fun getAlgName(): String = parsed.algorithm
@@ -36,6 +43,7 @@ class YubiKeySshIdentity(
         if (sig.sigName != algorithm) {
             android.util.Log.i("YubiKeySsh",
                 "alg mismatch: jsch asked=$algorithm, ours=" + sig.sigName + " - retrying")
+            lastAuthError = "OpenKeyChain signed with ${sig.sigName} but the SSH handshake asked $algorithm"
             return null
         }
         android.util.Log.i("YubiKeySsh", "ssh sig offered: alg=" + sig.sigName)
@@ -76,6 +84,7 @@ class YubiKeySshIdentity(
     private fun openKeyChainRawSignature(data: ByteArray): PgpSshBridge.RawSig? {
         var reqData: android.content.Intent? = null
         var guard = 0
+        lastAuthError = null
         while (guard++ < 3) {
             val r = kotlinx.coroutines.runBlocking {
                 client.trySignDetached(data, authSubkeyId, reqData)
@@ -86,18 +95,28 @@ class YubiKeySshIdentity(
                         PgpSshBridge.extractRawSignature(r.armored, parsed.algorithm)
                     } catch (e: PgpSshBridge.PgpSshBridgeException) {
                         android.util.Log.w("YubiKeySsh", "pgp→ssh bridge: ${e.message}")
+                        lastAuthError = "signature bridge: ${e.message}"
                         null
                     }
                 is OpenPgpClient.SignDetached.UserInteraction -> {
                     reqData = kotlinx.coroutines.runBlocking { interaction(r.pendingIntent) }
-                        ?: return null
+                    if (reqData == null) {
+                        lastAuthError = "OpenKeyChain interaction cancelled"
+                        return null
+                    }
                 }
                 is OpenPgpClient.SignDetached.Error -> {
                     android.util.Log.w("YubiKeySsh", "OKK sign failed: ${r.message}")
+                    // Name the subkey so a wrong-id enrollment is obvious in
+                    // the surfaced error (the picker can hand back the
+                    // primary, which carries no signing capability).
+                    lastAuthError = "OpenKeyChain: ${r.message} (key 0x" +
+                        "%016X".format(authSubkeyId) + ")"
                     return null
                 }
             }
         }
+        lastAuthError = "OpenKeyChain signing retries exhausted"
         return null
     }
 

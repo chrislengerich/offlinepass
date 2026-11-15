@@ -30,12 +30,114 @@ class PgpSshBridgeTest {
 
     private fun u16(v: Int) = byteArrayOf(((v ushr 8) and 0xFF).toByte(), (v and 0xFF).toByte())
 
-    /** A v4 signature packet body: version, type, pubkeyAlg, hashAlg, empty
-     *  hashed/unhashed subpackets, then the given MPIs. */
+    /** A v4 signature packet body: version, type, pubkeyAlg, hashAlg, hashed
+     *  subpackets, empty unhashed area, then the given MPIs. */
     private fun sigBody(pubkeyAlg: Int, hashAlg: Int, vararg mpis: ByteArray): ByteArray {
+        return sigBodySubpackets(pubkeyAlg, hashAlg, hashed = ByteArray(0), mpis = mpis)
+    }
+
+    /** Same, with a KEY FLAGS subpacket in the hashed area. */
+    private fun sigBodyWithFlags(pubkeyAlg: Int, hashAlg: Int, keyFlags: Int, vararg mpis: ByteArray): ByteArray {
+        val hashed = byteArrayOf(2, 27, keyFlags.toByte())
+        return sigBodySubpackets(pubkeyAlg, hashAlg, hashed, mpis)
+    }
+
+    private fun sigBodySubpackets(
+        pubkeyAlg: Int, hashAlg: Int, hashed: ByteArray, mpis: Array<out ByteArray>
+    ): ByteArray {
         val mpiBytes = mpis.flatMap { m -> mpi(m).toList() }.toByteArray()
         return byteArrayOf(4, 0, pubkeyAlg.toByte(), hashAlg.toByte()) +
-            u16(0) + u16(0) + mpiBytes
+            u16(hashed.size) + hashed + u16(0) + mpiBytes
+    }
+
+    /** A v4 public-key/subkey packet body: version, creation time, alg,
+     *  RSA MPIs (n, e). */
+    private fun pubkeyBody(n: ByteArray, e: ByteArray): ByteArray =
+        byteArrayOf(4, 0, 0, 0, 1) + mpi(n) + mpi(e)
+
+    private fun keyIdOf(pubBody: ByteArray): Long {
+        val fpInput = byteArrayOf(0x99.toByte()) + u16(pubBody.size) + pubBody
+        val sha1 = java.security.MessageDigest.getInstance("SHA-1").digest(fpInput)
+        return (0 until 8).fold(0L) { acc, k ->
+            (acc shl 8) or (sha1[sha1.size - 8 + k].toLong() and 0xFF)
+        }
+    }
+
+    /** Generic packet wrapper (tag + new-format length). */
+    private fun pkt(tag: Int, body: ByteArray): ByteArray {
+        val lenEnc = when {
+            body.size < 192 -> byteArrayOf(body.size.toByte())
+            body.size <= 8383 -> {
+                val n = body.size - 192
+                byteArrayOf(((n ushr 8) + 192).toByte(), (n and 0xFF).toByte())
+            }
+            else -> byteArrayOf(255.toByte()) + u16(body.size ushr 16) + u16(body.size and 0xFFFF)
+        }
+        val tagByte = (0xC0 or tag).toByte()
+        return byteArrayOf(tagByte) + lenEnc + body
+    }
+
+    /** A keyring: primary [CE] + a signing subkey + a non-signing subkey,
+     *  each with its self-signature carrying key flags. */
+    private fun keyring(sub1Flags: Int?, sub2Flags: Int?, primaryFlags: Int? = 0x01): ByteArray {
+        val sub1 = pubkeyBody(byteArrayOf(1, 2, 3), byteArrayOf(1, 0, 1))
+        val sub2 = pubkeyBody(byteArrayOf(4, 5, 6), byteArrayOf(1, 0, 1))
+        val primary = pubkeyBody(byteArrayOf(9, 9, 9), byteArrayOf(1, 0, 1))
+        fun sig(flags: Int?) = if (flags == null) pkt(2, sigBody(1, 8))
+            else pkt(2, sigBodyWithFlags(1, 8, flags))
+        val sig1 = sig(sub1Flags)
+        val sig2 = sig(sub2Flags)
+        val sigP = sig(primaryFlags)
+        return pkt(6, primary) + sigP + pkt(14, sub1) + sig1 + pkt(14, sub2) + sig2
+    }
+
+    @Test
+    fun signingSubkeyPrefersPreferredWhenSignCapable() {
+        val keyring = keyring(sub1Flags = 0x02, sub2Flags = 0x04)
+        val data = java.util.Base64.getEncoder().encodeToString(keyring)
+        val sub1Id = keyIdOf(pubkeyBody(byteArrayOf(1, 2, 3), byteArrayOf(1, 0, 1)))
+        assertEquals(sub1Id, PgpSshBridge.signingSubkeyKeyId(data, sub1Id))
+    }
+
+    @Test
+    fun signingSubkeyResolvesWhenPreferredCantSign() {
+        val keyring = keyring(sub1Flags = 0x02, sub2Flags = 0x04)
+        val data = java.util.Base64.getEncoder().encodeToString(keyring)
+        val sub1Id = keyIdOf(pubkeyBody(byteArrayOf(1, 2, 3), byteArrayOf(1, 0, 1)))
+        // The "preferred" (what the picker handed back) can't sign → resolve.
+        assertEquals(sub1Id, PgpSshBridge.signingSubkeyKeyId(data, 12345L))
+    }
+
+    @Test
+    fun signingSubkeyReturnsNullWhenNothingCanSign() {
+        val keyring = keyring(sub1Flags = 0x04, sub2Flags = 0x20)
+        val data = java.util.Base64.getEncoder().encodeToString(keyring)
+        assertEquals(null, PgpSshBridge.signingSubkeyKeyId(data, null))
+    }
+
+    @Test
+    fun signingSubkeyWithoutFlagsAssumesCapable() {
+        // RFC 4880: an absent KEY FLAGS subpacket means all capabilities.
+        val keyring = keyring(sub1Flags = null, sub2Flags = null)
+        val data = java.util.Base64.getEncoder().encodeToString(keyring)
+        val sub2Id = keyIdOf(pubkeyBody(byteArrayOf(4, 5, 6), byteArrayOf(1, 0, 1)))
+        assertEquals(sub2Id, PgpSshBridge.signingSubkeyKeyId(data, sub2Id))
+    }
+
+    @Test
+    fun signingSubkeyUnionsMultipleSelfSignatures() {
+        // First self-sig without flags, later one grants sign.
+        val sub1 = pubkeyBody(byteArrayOf(1, 2, 3), byteArrayOf(1, 0, 1))
+        val sub1Id = keyIdOf(sub1)
+        val primary = pubkeyBody(byteArrayOf(9, 9, 9), byteArrayOf(1, 0, 1))
+        val data = java.util.Base64.getEncoder().encodeToString(
+            pkt(6, primary) +
+            pkt(2, sigBodyWithFlags(1, 8, 0x01)) +  // primary: certify only
+            pkt(14, sub1) +
+            pkt(2, sigBody(1, 8)) +
+            pkt(2, sigBodyWithFlags(1, 8, 0x02))    // sub1: sign granted later
+        )
+        assertEquals(sub1Id, PgpSshBridge.signingSubkeyKeyId(data, null))
     }
 
     /** Wraps a body into a new-format signature packet (tag 2), with the

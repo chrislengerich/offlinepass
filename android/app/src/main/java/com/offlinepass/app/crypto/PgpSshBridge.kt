@@ -66,14 +66,121 @@ object PgpSshBridge {
      *  wire blob. Supports RSA (ssh-rsa), ECDSA nistp256, Ed25519. */
     fun sshLineForKeyMaterial(armoredKeyring: String, keyId: Long, comment: String): String {
         val data = dearmor(armoredKeyring)
+        for ((tag, body) in packets(data)) {
+            if ((tag == 6 || tag == 14) && body.isNotEmpty() && (body[0].toInt() and 0xFF) == 4) {
+                // v4 public key/subkey: version(1) + creation(4) + alg(1) + MPIs
+                val alg = body[5].toInt() and 0xFF
+                // v4 fingerprint: SHA-1 over 0x99 || u16(len) || body
+                val fpInput = byteArrayOf(0x99.toByte()) +
+                    byteArrayOf(((body.size ushr 8) and 0xFF).toByte(), (body.size and 0xFF).toByte()) + body
+                val sha1 = java.security.MessageDigest.getInstance("SHA-1").digest(fpInput)
+                val pktId = (0 until 8).fold(0L) { acc, k ->
+                    (acc shl 8) or (sha1[sha1.size - 8 + k].toLong() and 0xFF)
+                }
+                if (pktId == keyId) {
+                    // Parse the alg-specific MPIs starting after creation time.
+                    val mpis = parsePubkeyMpis(alg, body.copyOfRange(6, body.size))
+                    val (sshAlg, blob) = sshBlobFor(alg, mpis)
+                    return "$sshAlg ${java.util.Base64.getEncoder().encodeToString(blob)} $comment"
+                }
+            }
+        }
+        throw PgpSshBridgeException("key ${"%016X".format(keyId)} not found in the key material")
+    }
+
+    /**
+     * Resolves the SUBKEY that can actually sign, from an OpenPGP key's
+     * material: OpenKeyChain's key picker can hand back the key's PRIMARY
+     * id even when the signing secret lives in a dedicated subkey — and
+     * detached-signing with a non-signing id fails silently (no touch, no
+     * prompt: OKK rejects the request before any card operation).
+     *
+     * Walks the key's self-signatures reading the KEY FLAGS subpacket
+     * (type 27; bit 0x02 = sign) and returns:
+     *  - [preferredKeyId] when that key/subkey carries the sign flag,
+     *  - else the FIRST sign-capable subkey id,
+     *  - else null (nothing can sign).
+     * RFC 4880: an absent KEY FLAGS subpacket means "all capabilities" —
+     * treated as sign-capable.
+     */
+    fun signingSubkeyKeyId(armoredKeyring: String, preferredKeyId: Long?): Long? {
+        val data = dearmor(armoredKeyring)
+        val grantsSign = linkedMapOf<Long, Boolean>()
+        val sawFlags = linkedMapOf<Long, Boolean>()
+        val isSubkey = linkedMapOf<Long, Boolean>()
+        var currentKeyId: Long? = null
+        for ((tag, body) in packets(data)) {
+            when (tag) {
+                6, 14 -> if (body.isNotEmpty() && (body[0].toInt() and 0xFF) == 4) {
+                    val fpInput = byteArrayOf(0x99.toByte()) +
+                        byteArrayOf(((body.size ushr 8) and 0xFF).toByte(), (body.size and 0xFF).toByte()) + body
+                    val sha1 = java.security.MessageDigest.getInstance("SHA-1").digest(fpInput)
+                    val pktId = (0 until 8).fold(0L) { acc, k ->
+                        (acc shl 8) or (sha1[sha1.size - 8 + k].toLong() and 0xFF)
+                    }
+                    currentKeyId = pktId
+                    grantsSign.putIfAbsent(pktId, false)
+                    sawFlags.putIfAbsent(pktId, false)
+                    isSubkey.putIfAbsent(pktId, tag == 14)
+                }
+                2 -> if (currentKeyId != null) {
+                    val flags = keyFlagsInSignature(body) ?: continue
+                    sawFlags[currentKeyId] = true
+                    if (flags and 0x02 != 0) grantsSign[currentKeyId] = true
+                }
+            }
+        }
+        // A key only counts when it exists in the material; capable = granted
+        // by a self-sig, or no flags information at all (RFC 4880 default).
+        fun capable(id: Long): Boolean =
+            grantsSign.containsKey(id) &&
+                (grantsSign[id] == true || sawFlags[id] != true)
+        if (preferredKeyId != null && capable(preferredKeyId)) return preferredKeyId
+        // Prefer a sign-capable SUBKEY; a capable primary is the fallback.
+        return grantsSign.keys.firstOrNull { capable(it) && isSubkey[it] == true }
+            ?: grantsSign.keys.firstOrNull { capable(it) }
+    }
+
+    /** The KEY FLAGS bits of a signature's HASHED subpacket area (null when
+     *  the signature carries no flags — "all capabilities" per RFC 4880). */
+    private fun keyFlagsInSignature(sigBody: ByteArray): Int? {
+        if (sigBody.isEmpty() || (sigBody[0].toInt() and 0xFF) != 4) return null
+        var p = 4
+        val hashedLen = u16(sigBody, p)
+        val hashedEnd = p + 2 + hashedLen
+        p += 2
+        while (p + 2 <= hashedEnd && p + 2 <= sigBody.size) {
+            val b0 = sigBody[p].toInt() and 0xFF
+            val len: Int
+            val hdrLen: Int
+            when {
+                b0 < 192 -> { len = b0; hdrLen = 1 }
+                b0 < 255 -> { len = ((b0 - 192) shl 8) or (sigBody[p + 1].toInt() and 0xFF); hdrLen = 2 }
+                else -> { len = ((sigBody[p + 1].toInt() and 0xFF) shl 24) or
+                    ((sigBody[p + 2].toInt() and 0xFF) shl 16) or
+                    ((sigBody[p + 3].toInt() and 0xFF) shl 8) or
+                    (sigBody[p + 4].toInt() and 0xFF); hdrLen = 5 }
+            }
+            val type = sigBody[p + hdrLen].toInt() and 0xFF
+            if (type == 27) { // KEY FLAGS: the first octet's bit 0x02 = sign
+                val flags = sigBody[p + hdrLen + 1].toInt() and 0xFF
+                return flags
+            }
+            p += hdrLen + len
+        }
+        return null
+    }
+
+    /** Generic OpenPGP packet walk over binary keyring data: (tag, body). */
+    private fun packets(data: ByteArray): List<Pair<Int, ByteArray>> {
+        val out = mutableListOf<Pair<Int, ByteArray>>()
         var p = 0
         while (p < data.size) {
             val b0 = data[p].toInt() and 0xFF
-            println("WALKDBG: p=$p b0=0x" + "%02X".format(b0) + " size=" + data.size)
+            if ((b0 and 0x80) == 0) throw PgpSshBridgeException("bad packet tag at $p")
             val tag: Int
             var bodyStart: Int
             var bodyLen: Int
-            if ((b0 and 0x80) == 0) throw PgpSshBridgeException("bad packet tag at $p")
             if ((b0 and 0x40) != 0) { // new format
                 tag = b0 and 0x3F
                 val lb = data[p + 1].toInt() and 0xFF
@@ -104,28 +211,10 @@ object PgpSshBridge {
                 }
                 bodyStart = p + 1 + lenSize
             }
-            val body = data.copyOfRange(bodyStart, bodyStart + bodyLen)
-            if ((tag == 6 || tag == 14) && body.isNotEmpty() && (body[0].toInt() and 0xFF) == 4) {
-                // v4 public key/subkey: version(1) + creation(4) + alg(1) + MPIs
-                val alg = body[5].toInt() and 0xFF
-                // v4 fingerprint: SHA-1 over 0x99 || u16(len) || body
-                val fpInput = byteArrayOf(0x99.toByte()) +
-                    byteArrayOf(((body.size ushr 8) and 0xFF).toByte(), (body.size and 0xFF).toByte()) + body
-                val sha1 = java.security.MessageDigest.getInstance("SHA-1").digest(fpInput)
-                val pktId = (0 until 8).fold(0L) { acc, k ->
-                    (acc shl 8) or (sha1[sha1.size - 8 + k].toLong() and 0xFF)
-                }
-                println("WALK: pkt tag=$tag fp=${"%016X".format(pktId)} requested=${"%016X".format(keyId)} bodyLen=$bodyLen")
-                if (pktId == keyId) {
-                    // Parse the alg-specific MPIs starting after creation time.
-                    val mpis = parsePubkeyMpis(alg, body.copyOfRange(6, body.size))
-                    val (sshAlg, blob) = sshBlobFor(alg, mpis)
-                    return "$sshAlg ${java.util.Base64.getEncoder().encodeToString(blob)} $comment"
-                }
-            }
+            out += tag to data.copyOfRange(bodyStart, bodyStart + bodyLen)
             p = bodyStart + bodyLen
         }
-        throw PgpSshBridgeException("key ${"%016X".format(keyId)} not found in the key material")
+        return out
     }
 
     /** The alg-specific MPIs of a v4 public key/subkey body (after the
