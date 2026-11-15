@@ -41,6 +41,39 @@ object YubiKitSshAuth {
         return usbManager.hasPermission(device)
     }
 
+    private const val PERMISSION_ACTION = "com.offlinepass.app.USB_PERMISSION"
+
+    /**
+     * Asks the user to grant USB access to the YubiKey (the system's
+     * "allow access to USB device" dialog) and suspends until the grant
+     * or denial. Returns true when granted.
+     */
+    suspend fun requestPermission(context: Context): Boolean {
+        val device = findDevice(context) ?: return false
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: return false
+        if (usbManager.hasPermission(device)) return true
+        return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+            val receiver = object : android.content.BroadcastReceiver() {
+                override fun onReceive(ctx: Context, intent: android.content.Intent) {
+                    context.unregisterReceiver(this)
+                    val granted = intent.getBooleanExtra(
+                        android.hardware.usb.UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                    if (cont.isActive) cont.resume(granted, onCancellation = null)
+                }
+            }
+            context.registerReceiver(receiver, android.content.IntentFilter(PERMISSION_ACTION),
+                if (android.os.Build.VERSION.SDK_INT >= 33)
+                    android.content.Context.RECEIVER_EXPORTED else 0)
+            val pi = android.app.PendingIntent.getBroadcast(
+                context, 0,
+                android.content.Intent(PERMISSION_ACTION).setPackage(context.packageName),
+                if (android.os.Build.VERSION.SDK_INT >= 31)
+                    android.app.PendingIntent.FLAG_MUTABLE else 0)
+            usbManager.requestPermission(device, pi)
+        }
+    }
+
     /**
      * Verifies the OpenPGP user PIN on the applet, then signs [payload]
      * (the pre-built PKCS#1 v1.5 block) with the card's SIGNATURE slot.

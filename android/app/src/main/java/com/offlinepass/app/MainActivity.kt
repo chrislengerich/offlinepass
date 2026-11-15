@@ -910,6 +910,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             }
                             else -> VaultSession.setSshSyncMode(VaultSession.SSH_SYNC_SCREENLOCK)
                         }
+                        // The YubiKit backend needs the USB permission for
+                        // the YubiKey — request it when the card is attached
+                        // but not yet granted.
+                        if (VaultSession.sshSyncMode() == VaultSession.SSH_SYNC_YUBIKEY &&
+                            com.offlinepass.app.crypto.YubiKitSshAuth.findDevice(applicationContext) != null
+                        ) {
+                            com.offlinepass.app.crypto.YubiKitSshAuth.requestPermission(applicationContext)
+                        }
                         // An SSH load's clone handshake signs with the
                         // screenlock key — open its 60s validity window with
                         // the screen-lock interaction first. (The YubiKey

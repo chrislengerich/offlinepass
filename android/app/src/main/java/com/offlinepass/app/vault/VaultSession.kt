@@ -1028,6 +1028,15 @@ object VaultSession {
         val client = openPgpClientFactory(appContext)
         val data = "offlinepass ssh-auth self-test".toByteArray()
 
+        // The YubiKit backend needs the USB permission for the YubiKey —
+        // request it (the system's allow-access dialog) when the card is
+        // attached but not yet granted.
+        if (com.offlinepass.app.crypto.YubiKitSshAuth.findDevice(appContext) != null &&
+            !com.offlinepass.app.crypto.YubiKitSshAuth.requestPermission(appContext)
+        ) {
+            return SshSelfTest(false, "USB permission denied for the YubiKey")
+        }
+
         // The key material: to resolve the key's PRIMARY id (a matrix
         // variant) — OpenKeyChain's API may accept/reject key ids in
         // different forms for token-resident keys.
