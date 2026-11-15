@@ -121,7 +121,11 @@ object YubiKitSshAuth {
         try {
             val session = OpenPgpSession(connection as SmartCardConnection)
             try {
-                session.verifyUserPin(pin, true)
+                // extended=false = verify FOR SIGNATURE (the Javadoc:
+                // "false to verify for signature use, true for other
+                // uses; with extended=true sign operations are NOT
+                // allowed"). True → P2=0x82 and PSO:CDS fails 0x6982.
+                session.verifyUserPin(pin, false)
                 android.util.Log.i("YubiKeySsh",
                     "yubikit: PIN verified — PSO:CDS on the SIGNATURE slot " +
                         "(touch the key if its LED blinks)")
