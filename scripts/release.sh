@@ -11,10 +11,11 @@
 # Signing: each APK gets a detached ASCII-armored GPG signature (.asc
 # sidecar) from the security key. Set OFFLINEPASS_GPG_KEY=<keyid/email> to
 # pick a non-default key (the key's secret half lives on the hardware
-# token — expect the touch prompt). APK-side Android-keystore signing is
-# DEFERRED (app-store mechanics): the profileable APK ships as built
-# (unsigned APK) plus its GPG signature — not installable until APK-signed;
-# device installs use the debug APK (debug-signed by AGP).
+# token — expect the touch prompt). APK-side Android signing is DONE
+# LOCALLY by android/sign.sh (hardware-key PKCS11 via apksigner — same key
+# as offlinecam); this pipeline ships the UNSIGNED APK + its GPG
+# signature; device installs use android/app-release-signed.apk (or the
+# debug APK).
 #
 # The `publish` step requires: a CLEAN git tree (commit the release first),
 # and the `gh` CLI logged in with write access to the origin repo (push is
