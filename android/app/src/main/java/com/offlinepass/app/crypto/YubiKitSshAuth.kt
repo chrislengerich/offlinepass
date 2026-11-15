@@ -124,6 +124,14 @@ object YubiKitSshAuth {
         try {
             val session = OpenPgpSession(connection as SmartCardConnection)
             try {
+                // Card facts for the log channel: the applet version, the
+                // touch requirement per slot, and the command size — the
+                // 0x6581s so far all involved 512-byte 4096-bit payloads.
+                android.util.Log.i("YubiKeySsh",
+                    "yubikit: applet=${session.getVersion()} " +
+                        "uifSIG=${session.getUif(com.yubico.yubikit.openpgp.KeyRef.SIG)} " +
+                        "uifAUT=${session.getUif(com.yubico.yubikit.openpgp.KeyRef.AUT)} " +
+                        "payload=${payload.size}B")
                 // INTERNAL AUTHENTICATE (the AUT slot) requires the PW1
                 // verified "for other" — extended=TRUE here (P2=0x82; for
                 // the SIG slot this exact flag was the 0x6982 bug).
