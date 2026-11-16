@@ -55,7 +55,6 @@ fun SetupChoiceScreen(
     onImportProton: (remote: String?, pat: String, uri: android.net.Uri) -> Unit,
     onLoadGitHub: (remote: String, emails: List<String>, pat: String) -> Unit,
     onLoadUsb: () -> Unit,
-    onShowSshKey: () -> Unit = {},
     onPickAuthSubkey: () -> Unit = {},
     onSshSelfTest: () -> Unit = {},
     onEnrollYubikeySsh: (sshLine: String, subkeyId: String) -> Unit = { _, _ -> },
@@ -81,7 +80,10 @@ fun SetupChoiceScreen(
         remote = default
     }
     if (pat.isBlank()) pat = prefillPat
-    if (loadAuth.isBlank()) loadAuth = VaultSession.sshSyncMode()
+    // Bootstrap pulls authenticate with the SECURITY KEY only — the
+    // screenlock is never the bootstrap key (it is enrolled later, as a
+    // first-class local signer, after the repo exists).
+    if (loadAuth.isBlank()) loadAuth = VaultSession.SSH_SYNC_YUBIKEY
 
     val importPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -130,7 +132,7 @@ fun SetupChoiceScreen(
             Text("Load vault from", style = MaterialTheme.typography.titleSmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
-                    onClick = { onLoadGitHub(remote.trim(), emptyList(), if (loadAuth == "pat") pat.trim() else "") },
+                    onClick = { onLoadGitHub(remote.trim(), emptyList(), "") },
                     modifier = Modifier.weight(1f)
                 ) { Text("GitHub") }
                 OutlinedButton(
@@ -143,109 +145,42 @@ fun SetupChoiceScreen(
                 ) { Text("Proton export") }
             }
 
-            // 2. Sync-auth type for the GitHub transport.
+            // 2. Sync-auth: the security key only (the card signs the SSH
+            // handshake via YubiKit - no PAT, no screenlock key at
+            // bootstrap).
             Text("GitHub sync auth", style = MaterialTheme.typography.titleSmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    modifier = Modifier.weight(1f),
-                    selected = loadAuth == VaultSession.SSH_SYNC_SCREENLOCK,
-                    onClick = {
-                        onClearStatus()
-                        loadAuth = VaultSession.SSH_SYNC_SCREENLOCK
-                        remote = VaultSession.convertRemote(remote, "ssh")
-                    },
-                    label = { Text("Screenlock SSH", maxLines = 1) }
-                )
-                FilterChip(
-                    modifier = Modifier.weight(1f),
-                    selected = loadAuth == VaultSession.SSH_SYNC_YUBIKEY,
-                    onClick = {
-                        onClearStatus()
-                        loadAuth = VaultSession.SSH_SYNC_YUBIKEY
-                        remote = VaultSession.convertRemote(remote, "ssh")
-                    },
-                    label = { Text("GPG (Yubikey)", maxLines = 1) }
-                )
-                FilterChip(
-                    modifier = Modifier.weight(1f),
-                    selected = loadAuth == "pat",
-                    onClick = {
-                        onClearStatus()
-                        loadAuth = "pat"
-                        remote = VaultSession.convertRemote(remote, "pat")
-                    },
-                    label = { Text("PAT (HTTPS)", maxLines = 1) }
-                )
-            }
+            Text("The clone authenticates with the security key (YubiKey): " +
+                "the card signs the SSH handshake directly - PIN + touch. " +
+                "GitHub must have the enrolled OpenSSH line (deploy key or " +
+                "account key).", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(
                 value = remote, onValueChange = { remote = it },
                 label = { Text("GitHub remote (HTTPS, or git@ for SSH)") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
-            when (loadAuth) {
-                VaultSession.SSH_SYNC_SCREENLOCK -> {
-                    // The clone handshake signs with the SSH key: it must be
-                    // enrolled BEFORE loading (screenlock-gated).
-                    Text("The clone authenticates with this device's screenlock " +
-                        "SSH key — enroll it first, then add it on GitHub as a " +
-                        "deploy key (write access).", style = MaterialTheme.typography.bodySmall)
-                    Button(onClick = onShowSshKey, modifier = Modifier.fillMaxWidth()) {
-                        Text("Create & show public key")
-                    }
-                }
-                VaultSession.SSH_SYNC_YUBIKEY -> {
-                    Text("The clone authenticates with a GPG key via OpenKeychain — " +
-                        "any signing-capable subkey of a key OpenKeychain holds: " +
-                        "a software key on this phone, or a hardware key (e.g., " +
-                        "YubiKey; each sync asks for the touch). GitHub must have " +
-                        "the same OpenSSH line enrolled (deploy key with write " +
-                        "access, or the account SSH key).",
-                        style = MaterialTheme.typography.bodySmall)
-                    Button(onClick = onPickAuthSubkey, modifier = Modifier.fillMaxWidth()) {
-                        Text("Choose key in OpenKeyChain")
-                    }
-                    TextButton(onClick = onSshSelfTest) {
-                        Text("Run SSH auth self-test")
-                    }
-                    OutlinedTextField(
-                        value = subkeyId, onValueChange = { subkeyId = it },
-                        label = { Text("Subkey key id (auto-filled by the picker)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                "pat" -> OutlinedTextField(
-                    value = pat, onValueChange = { pat = it },
-                    label = { Text("Fine-grained PAT (deprecated; stored encrypted)") },
-                    singleLine = true,
-                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth()
-                )
+            Button(onClick = onPickAuthSubkey, modifier = Modifier.fillMaxWidth()) {
+                Text("Choose key in OpenKeyChain")
             }
+            TextButton(onClick = onSshSelfTest) {
+                Text("Run SSH auth self-test")
+            }
+            OutlinedTextField(
+                value = subkeyId, onValueChange = { subkeyId = it },
+                label = { Text("Subkey key id (auto-filled by the picker)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
 
             // 3. The final action: completes the load with the chosen auth
             // (enabled once the auth's inputs are filled). Recipients are
             // NOT configured here: the loaded repo carries its recipients
             // (keys/*.public.asc, seeded into Setup on load).
-            val loadReady = when (loadAuth) {
-                VaultSession.SSH_SYNC_SCREENLOCK -> true // the key self-generates via the QR flow
-                VaultSession.SSH_SYNC_YUBIKEY -> sshLine.contains(" ") && subkeyId.trim().length == 16
-                else -> pat.isNotBlank()
-            }
+            val loadReady = sshLine.contains(" ") && subkeyId.trim().length == 16
             Button(
-                onClick = {
-                    onLoadGitHub(remote.trim(), emptyList(), if (loadAuth == "pat") pat.trim() else "")
-                },
+                onClick = { onLoadGitHub(remote.trim(), emptyList(), "") },
                 enabled = loadReady,
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Load from GitHub") }
-            // TEMPORARY diagnostic: the load button's gate inputs, on screen.
-            Text(
-                "auth=$loadAuth, keyIdLen=${subkeyId.trim().length}, " +
-                    "lineLen=${sshLine.length}, idPicked=${VaultSession.pickedAuthSubkeyId != null}, " +
-                    "lineDraft=${VaultSession.yubikeySshLineDraft != null}",
-                style = MaterialTheme.typography.bodySmall
-            )
             Text(
                 "Recipients are NOT configured here: the loaded repo carries its " +
                     "recipients (keys/*.public.asc, seeded into Setup on load).",
@@ -321,17 +256,15 @@ fun LockGateScreen(
     }
 }
 
-/** Locked state: one button, one key touch — plus a PAT field when the
- * remote needs a token that isn't stored yet. */
+/** Locked state: one button, one security-key touch. (The PAT flow is
+ *  backend-only now: HTTPS remotes keep working where configured, but the
+ *  UI never asks for a token.) */
 @Composable
 fun UnlockScreen(
     status: String,
     busy: String?,
-    patMissing: Boolean,
-    onPatSave: (String) -> Unit,
     onUnlock: () -> Unit
 ) {
-    var patInput by remember { mutableStateOf("") }
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -340,22 +273,9 @@ fun UnlockScreen(
         Spacer(Modifier.height(48.dp))
         Text("Vault locked", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "Unlocking requires your hardware key (touch + PIN via OpenKeyChain).",
+            "Unlocking requires your hardware key (touch + PIN).",
             style = MaterialTheme.typography.bodyMedium
         )
-        if (patMissing) {
-            OutlinedTextField(
-                value = patInput, onValueChange = { patInput = it },
-                label = { Text("Fine-grained PAT (not stored yet)") },
-                singleLine = true,
-                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Button(onClick = { if (patInput.isNotBlank()) onPatSave(patInput.trim()); patInput = "" },
-                enabled = patInput.isNotBlank()) {
-                Text("Save PAT (encrypted)")
-            }
-        }
         Button(onClick = onUnlock, enabled = busy == null) {
             Text(busy ?: "Unlock")
         }

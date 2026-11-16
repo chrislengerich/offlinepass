@@ -175,6 +175,51 @@ object VaultSession {
         cachedYubikeyPinAt = System.currentTimeMillis()
     }
 
+    /** Post-load signing-role resolution: the screenlock stays the local
+     *  signer when its key is enrolled (first-class); otherwise the
+     *  security key (the YubiKey enrollment); otherwise whatever is
+     *  configured (the OpenKeyChain default). NEVER enrolls the
+     *  screenlock here — bootstrap pulls are security-key-only. */
+    fun resolveCommitSigningModeAfterLoad() {
+        if (com.offlinepass.app.crypto.KeystoreSigner.hasKey()) return
+        if (yubikeyAuthSubkeyId() != null && yubikeySshLine() != null) {
+            setCommitSigningMode(SIGNING_YUBIKEY)
+        }
+    }
+
+    /** Removes the screenlock key from every role: the commit signing and
+     *  the SSH sync mode move to the security key (the YubiKey
+     *  enrollment); with no YubiKey enrolled, signing falls back to
+     *  OpenKeyChain and the SSH mode stays (with an explanation). The
+     *  keystore key itself is DELETED. The envelope's OpenPGP recipients
+     *  are unaffected (the screenlock key was never one). Returns a
+     *  user-facing summary. */
+    fun migrateOffScreenlock(): String {
+        val yubiEnrolled = yubikeyAuthSubkeyId() != null && yubikeySshLine() != null
+        val parts = mutableListOf<String>()
+        if (sshSyncMode() == SSH_SYNC_SCREENLOCK) {
+            if (yubiEnrolled) {
+                setSshSyncMode(SSH_SYNC_YUBIKEY)
+                parts += "SSH auth now uses the YubiKey."
+            } else {
+                parts += "SSH auth stays on the screenlock key " +
+                    "(enroll the YubiKey first to move it)."
+            }
+        }
+        if (commitSigningMode() == SIGNING_SCREENLOCK) {
+            if (yubiEnrolled) {
+                setCommitSigningMode(SIGNING_YUBIKEY)
+                parts += "Commit signing now uses the YubiKey."
+            } else {
+                setCommitSigningMode(SIGNING_OPENKEYCHAIN)
+                parts += "Commit signing now uses OpenKeyChain."
+            }
+        }
+        com.offlinepass.app.crypto.KeystoreSigner.removeKey()
+        parts += "The screenlock key was deleted."
+        return parts.joinToString(" ")
+    }
+
     /** The YubiKey commit signer per the YUBIKEY signing mode: the
      *  enrolled S subkey (the SSH enrollment's subkey id — the SIGNATURE
      *  slot) signs each commit, PIN + touch. Null = not usable; the

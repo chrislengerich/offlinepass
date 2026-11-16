@@ -916,18 +916,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         ) {
                             com.offlinepass.app.crypto.YubiKitSshAuth.requestPermission(applicationContext)
                         }
-                        // An SSH load's clone handshake signs with the
-                        // screenlock key — open its 60s validity window with
-                        // the screen-lock interaction first. (The YubiKey
-                        // mode's gate is the touch inside OpenKeyChain.)
-                        if (com.offlinepass.app.vault.VaultGitClient().isSshRemote(remote) &&
-                            VaultSession.sshSyncMode() == VaultSession.SSH_SYNC_SCREENLOCK
-                        ) {
-                            if (!biometricGate()) {
-                                status = "Screen lock declined — load aborted."
-                                return@launch
-                            }
-                        }
+                        // Bootstrap pulls authenticate with the security
+                        // key only (the card signs the SSH handshake — the
+                        // PIN + the touch ARE the gate; no screenlock key at
+                        // bootstrap).
                         val open = VaultSession.gitOpenOnly()  // explicit network step
                         if (open is VaultSession.Result.Error) {
                             // A failed load must NOT adopt a phantom empty
@@ -947,6 +939,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         // The loaded repo carries its recipients
                         // (keys/<keyid>.public.asc) — seed the save targets.
                         VaultSession.seedRecipientsFromRepo()
+                        // The local signing role: the screenlock stays the
+                        // signer when enrolled; otherwise the security key.
+                        VaultSession.resolveCommitSigningModeAfterLoad()
                         unlockLoop()
                         // The toast must not lie: unlockLoop reports its own
                         // failure via status (and a failed load leaves the
@@ -958,7 +953,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     }
                 },
                 onLoadUsb = { usbRestoreLauncher.launch(arrayOf("application/octet-stream")) },
-                onShowSshKey = { showSshKeyQr(Screen.SetupChoice) },
                 onPickAuthSubkey = { lifecycleScope.launch { pickAuthSubkey() } },
                 onSshSelfTest = {
                     lifecycleScope.launch {
@@ -1123,8 +1117,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 else -> UnlockScreen(
                     status = status,
                     busy = VaultSession.busy,
-                    patMissing = VaultSession.config()?.remoteUrl != null && !VaultSession.hasPat(),
-                    onPatSave = { VaultSession.savePat(it); status = "PAT stored (encrypted)." },
                     onUnlock = { lifecycleScope.launch { unlockLoop() } }
                 )
             }
@@ -1402,6 +1394,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         }
                     },
                     onClearSigner = { VaultSession.clearSigningKey(); status = "Signer reset to default." },
+                    onRemoveScreenlock = {
+                        lifecycleScope.launch { status = VaultSession.migrateOffScreenlock() }
+                    },
                     onUseYubikeySigner = {
                         if (VaultSession.yubikeyAuthSubkeyId() == null) {
                             status = "Enroll the YubiKey SSH key first (Setup → Choose key)."

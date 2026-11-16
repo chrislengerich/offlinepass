@@ -31,6 +31,15 @@ object KeystoreSigner {
             .containsAlias(ALIAS)
     }.getOrDefault(false)
 
+    /** Deletes the signing key — the un-enroll migration's last step
+     *  (auth and signing must not rely on it afterwards). */
+    fun removeKey() {
+        runCatching {
+            val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            if (ks.containsAlias(ALIAS)) ks.deleteEntry(ALIAS)
+        }
+    }
+
     /** Generates the signing key (idempotent). Per-operation auth: every
      *  signature needs a fresh screen-lock interaction. */
     fun ensureKey() {

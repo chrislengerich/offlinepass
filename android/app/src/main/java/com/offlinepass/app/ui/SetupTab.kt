@@ -34,6 +34,7 @@ fun SetupTabScreen(
     onPickSigner: () -> Unit,
     onClearSigner: () -> Unit,
     onUseYubikeySigner: () -> Unit,
+    onRemoveScreenlock: () -> Unit,
     deviceCredentialReady: Boolean = true,
     onEnrollScreenlock: () -> Unit = {},
     onUseOpenKeyChain: () -> Unit = {},
@@ -318,6 +319,11 @@ fun SetupTabScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Use the YubiKey (touch to sign)") }
             }
+            TextButton(
+                onClick = onRemoveScreenlock,
+                enabled = busy == null,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Remove screenlock signing (migrate to the security key)") }
         } else if (VaultSession.commitSigningMode() == VaultSession.SIGNING_YUBIKEY) {
             Text(
                 "YubiKey (SIG slot subkey 0x" +
