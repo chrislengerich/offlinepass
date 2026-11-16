@@ -74,13 +74,16 @@ is append-only and device-tagged (§6); a second device appends.
 `keys/` carries (committed with the vault, per-revision accountability):
 
 ```
-keys/<recipient-keyid>.public.asc   # the envelope recipients (existing)
-keys/keystore-signer.pub            # legacy single-file name (existing)
-keys/screenlock-signers.pub         # NEW: multi-line, append-only, per-device:
-                                    #   ssh-<alg> <b64> # offlinepass screenlock device=<deviceId> name=<Name>
-keys/signer-<subkeyid>.asc          # NEW: the card's full GPG cert (primary+subkeys)
-keys/authorized-keys                # NEW (optional): the transport registry —
-                                    #   the SSH lines that may pull/push, per device
+meta/devices.json                   # the device name → public-key mapping (the registry)
+                                    #   [{name, authKey, cert?}] — the device identity
+                                    #   rides in the key line's own comment
+keys/auth/authorized-keys           # the transport lines (authorized_keys format)
+keys/sign/<keyid>.pub.asc           # the commit-signing certs (the card's full cert)
+keys/encrypt/<keyid>.pub.asc        # the envelope recipients (+ recipients.txt)
+
+LEGACY (migrated once on the first save — the files MOVE, git history
+keeps the originals): keys/<keyid>.public.asc, keys/keystore-signer.pub,
+keys/signer-<id>.asc, keys/recipients.txt.
 ```
 
 The device identity: the stable `deviceId` (the envelope already carries
