@@ -100,6 +100,7 @@ fun SetupChoiceScreen(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = mode == "load", onClick = { mode = "load" }, label = { Text("Load existing") })
             FilterChip(selected = mode == "new", onClick = { mode = "new" }, label = { Text("New vault") })
+            FilterChip(selected = mode == "import", onClick = { mode = "import" }, label = { Text("Import") })
         }
 
         if (mode == "new") {
@@ -107,26 +108,24 @@ fun SetupChoiceScreen(
                  " Recipients are picked from OpenKeyChain before creating. A remote can be" +
                  " attached later from Setup.",
                 style = MaterialTheme.typography.bodySmall)
-            // Recipients — same UI as the Setup tab, BEFORE create/import.
-            Text("Recipients (from OpenKeyChain picker)", style = MaterialTheme.typography.titleSmall)
-            if (recipientIds.isEmpty()) {
-                Text("(none — pick at least one before creating/importing)",
-                    style = MaterialTheme.typography.bodySmall)
-            }
-            recipientIds.forEach { id ->
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    Text("0x%016X".format(id), modifier = Modifier.weight(1f))
-                    TextButton(onClick = { onRemoveRecipient(id) }) { Text("Remove") }
-                }
-            }
-            Button(onClick = onPickRecipients, enabled = true, modifier = Modifier.fillMaxWidth()) {
-                Text("Add recipient (pick in OpenKeyChain)")
-            }
+            RecipientsEditor(recipientIds, onPickRecipients, onRemoveRecipient)
             Button(
                 onClick = { onNewVault() },
                 enabled = recipientIds.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Create local-only vault") }
+        } else if (mode == "import") {
+            // Import = a FOREIGN format (a Proton export); the vault material
+            // from this app's own format travels via Load existing.
+            Text("Import a Proton export — pick the recipients (who can open " +
+                "the imported entries) first, then the export file.",
+                style = MaterialTheme.typography.bodySmall)
+            RecipientsEditor(recipientIds, onPickRecipients, onRemoveRecipient)
+            Button(
+                onClick = { importPicker.launch(arrayOf("*/*")) },
+                enabled = recipientIds.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("From Proton export") }
         } else {
             // 1. Load sources first.
             Text("Load vault from", style = MaterialTheme.typography.titleSmall)
@@ -139,10 +138,6 @@ fun SetupChoiceScreen(
                     onClick = { onLoadUsb() },
                     modifier = Modifier.weight(1f)
                 ) { Text("USB file") }
-                OutlinedButton(
-                    onClick = { importPicker.launch(arrayOf("*/*")) },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Proton export") }
             }
 
             // 2. Sync-auth: the security key only (the card signs the SSH
@@ -193,6 +188,31 @@ fun SetupChoiceScreen(
 
 /** The OpenPGP applet's user PIN (YubiKit card signing): shown when a
  *  signature needs it, once per identity session; never stored. */
+/** The recipient picking shared by New vault and Import: the entries are
+ *  encrypted to these keys, so they must be chosen before create/import. */
+@Composable
+private fun RecipientsEditor(
+    recipientIds: List<Long>,
+    onPickRecipients: () -> Unit,
+    onRemoveRecipient: (Long) -> Unit
+) {
+    Text("Recipients (from OpenKeyChain picker)", style = MaterialTheme.typography.titleSmall)
+    if (recipientIds.isEmpty()) {
+        Text("(none — pick at least one before creating/importing)",
+            style = MaterialTheme.typography.bodySmall)
+    }
+    recipientIds.forEach { id ->
+        Row(modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("0x%016X".format(id), modifier = Modifier.weight(1f))
+            TextButton(onClick = { onRemoveRecipient(id) }) { Text("Remove") }
+        }
+    }
+    Button(onClick = onPickRecipients, enabled = true, modifier = Modifier.fillMaxWidth()) {
+        Text("Add recipient (pick in OpenKeyChain)")
+    }
+}
+
 @Composable
 fun PinPromptDialog(onPin: (String?) -> Unit) {
     var pinInput by remember { mutableStateOf("") }
