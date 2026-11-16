@@ -37,6 +37,7 @@ fun SetupTabScreen(
     onRemoveScreenlock: () -> Unit,
     onSetDeviceName: (String) -> Unit,
     onInitOkkFromRepo: () -> Unit,
+    onGetStarted: () -> Unit,
     deviceCredentialReady: Boolean = true,
     onEnrollScreenlock: () -> Unit = {},
     onUseOpenKeyChain: () -> Unit = {},
@@ -117,6 +118,9 @@ fun SetupTabScreen(
             }
             Button(onClick = { showYubikey = true }, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
                 Text("Sync via YubiKey SSH (OpenKeyChain)")
+            }
+            Button(onClick = onGetStarted, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+                Text("Get started (the setup checklist)")
             }
             if (VaultSession.sshSyncMode() == VaultSession.SSH_SYNC_YUBIKEY) {
                 Text("YubiKey SSH enrolled — every sync asks for the YubiKey touch.",

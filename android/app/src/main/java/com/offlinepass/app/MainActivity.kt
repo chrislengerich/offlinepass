@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import com.offlinepass.app.ui.Screen
 import com.offlinepass.app.ui.SetupChoiceScreen
+import com.offlinepass.app.ui.GetStartedScreen
 import com.offlinepass.app.ui.UnlockScreen
 import com.offlinepass.app.ui.LockGateScreen
 import com.offlinepass.app.ui.SearchScreen
@@ -1310,6 +1311,38 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     },
                     onBack = { screen = Screen.Setup }
                 )
+                Screen.GetStarted -> GetStartedScreen(
+                    status = status,
+                    busy = VaultSession.busy,
+                    remoteAttached = VaultSession.config()?.remoteUrl != null,
+                    yubikeyEnrolled = VaultSession.yubikeySshLine() != null,
+                    screenlockEnrolled = VaultSession.commitSigningMode() ==
+                        VaultSession.SIGNING_SCREENLOCK,
+                    onEnrollFromGithubKeys = { enrollFromGithubKeys() },
+                    onConnectAndSync = { remote ->
+                        lifecycleScope.launch {
+                            status = when (val r = VaultSession.connectRemote(remote, "")) {
+                                VaultSession.Result.Success -> "Remote connected — synced."
+                                else -> r.toString()
+                            }
+                        }
+                    },
+                    onEnrollScreenlock = {
+                        lifecycleScope.launch {
+                            status = runCatching {
+                                com.offlinepass.app.crypto.KeystoreSigner.ensureKey()
+                            }.fold(
+                                onSuccess = {
+                                    VaultSession.setCommitSigningMode(
+                                        VaultSession.SIGNING_SCREENLOCK)
+                                    "Screenlock signing enrolled — pair the public " +
+                                        "key on GitHub (the QR), then sync."
+                                },
+                                onFailure = { "Keystore signer unavailable: ${it.message}" })
+                        }
+                    },
+                    onShowSshKey = { showSshKeyQr(Screen.GetStarted) },
+                    onDone = { screen = Screen.Search })
                 Screen.Setup -> SetupTabScreen(
                     status = status,
                     busy = VaultSession.busy,
@@ -1445,6 +1478,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onInitOkkFromRepo = {
                         status = VaultSession.openOkkImportFromRepo(this)
                     },
+                    onGetStarted = { screen = Screen.GetStarted },
                     onUseYubikeySigner = {
                         if (VaultSession.yubikeyAuthSubkeyId() == null) {
                             status = "Enroll the YubiKey SSH key first (Setup → Choose key)."

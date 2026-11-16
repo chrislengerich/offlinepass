@@ -35,6 +35,10 @@ sealed class Screen {
     /** Single-QR scanner for pairing a paste device (extension). */
     object PairScan : Screen()
     object Setup : Screen()
+    /** Post-create onboarding: the security key, the remote (+ the first
+     *  sync publishing the key material), the screenlock — all skippable,
+     *  re-openable from Setup while the remote is unattached. */
+    object GetStarted : Screen()
 }
 
 /**
@@ -99,8 +103,8 @@ fun SetupChoiceScreen(
         Text("offlinepass", style = MaterialTheme.typography.headlineSmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = mode == "load", onClick = { mode = "load" }, label = { Text("Load existing") })
-            FilterChip(selected = mode == "new", onClick = { mode = "new" }, label = { Text("New vault") })
             FilterChip(selected = mode == "import", onClick = { mode = "import" }, label = { Text("Import") })
+            FilterChip(selected = mode == "new", onClick = { mode = "new" }, label = { Text("New vault") })
         }
 
         if (mode == "new") {
@@ -217,6 +221,94 @@ private fun RecipientsEditor(
     }
     Button(onClick = onPickRecipients, enabled = true, modifier = Modifier.fillMaxWidth()) {
         Text("Add recipient (pick in OpenKeyChain)")
+    }
+}
+
+/** Post-create onboarding: three skippable steps, each backed by the
+ *  existing Setup machinery; the remote step's first sync publishes the
+ *  repo's key material (meta/devices.json + keys/). */
+@Composable
+fun GetStartedScreen(
+    status: String,
+    busy: String?,
+    remoteAttached: Boolean,
+    yubikeyEnrolled: Boolean,
+    screenlockEnrolled: Boolean,
+    onEnrollFromGithubKeys: () -> Unit,
+    onConnectAndSync: (String) -> Unit,
+    onEnrollScreenlock: () -> Unit,
+    onShowSshKey: () -> Unit,
+    onDone: () -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text("Get started", style = MaterialTheme.typography.headlineSmall)
+        Text("Every step is skippable and stays available in Settings.",
+            style = MaterialTheme.typography.bodySmall)
+
+        Text("1. Security key (SSH auth)", style = MaterialTheme.typography.titleSmall)
+        if (yubikeyEnrolled) {
+            Text("✅ Enrolled — every sync authenticates with the card (PIN + touch).",
+                style = MaterialTheme.typography.bodySmall)
+        } else {
+            Text("The card's SSH line must be on GitHub (an account key), then " +
+                "the app matches it against the card with one touch.",
+                style = MaterialTheme.typography.bodySmall)
+            Button(onClick = onEnrollFromGithubKeys, enabled = busy == null,
+                modifier = Modifier.fillMaxWidth()) {
+                Text("Enroll from GitHub keys (one touch)")
+            }
+        }
+        HorizontalDivider()
+
+        Text("2. Attach a GitHub remote", style = MaterialTheme.typography.titleSmall)
+        if (remoteAttached) {
+            Text("✅ Remote attached — the key material is published in the repo.",
+                style = MaterialTheme.typography.bodySmall)
+        } else {
+            Text("The first sync commits meta/devices.json + keys/ — the repo " +
+                "becomes the offline keyring for new devices.",
+                style = MaterialTheme.typography.bodySmall)
+            var ownerRepo by remember { mutableStateOf(VaultSession.connectDraftOwnerRepo() ?: "") }
+            androidx.compose.material3.OutlinedTextField(
+                value = ownerRepo, onValueChange = { ownerRepo = it },
+                label = { Text("owner/repo") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth())
+            Button(
+                onClick = {
+                    VaultSession.saveConnectDraft(ownerRepo.trim(), "ssh")
+                    onConnectAndSync("git@github.com:$ownerRepo")
+                },
+                enabled = busy == null && ownerRepo.contains("/") &&
+                    !ownerRepo.startsWith("/") && !ownerRepo.endsWith("/"),
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Connect & sync") }
+        }
+        HorizontalDivider()
+
+        Text("3. Screenlock signing (optional)", style = MaterialTheme.typography.titleSmall)
+        if (screenlockEnrolled) {
+            Text("✅ Enrolled — commits sign with this device's screenlock key.",
+                style = MaterialTheme.typography.bodySmall)
+        } else {
+            Text("Commits sign with this device's key (every save prompts the " +
+                "screen lock). The public key pairs on GitHub out-of-band.",
+                style = MaterialTheme.typography.bodySmall)
+            Button(onClick = onEnrollScreenlock, enabled = busy == null,
+                modifier = Modifier.fillMaxWidth()) {
+                Text("Enroll screenlock signing")
+            }
+            TextButton(onClick = onShowSshKey, enabled = busy == null) {
+                Text("Show the public key (to add on GitHub)")
+            }
+        }
+        HorizontalDivider()
+        Button(onClick = onDone, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Done for now")
+        }
+        if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
