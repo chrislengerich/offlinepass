@@ -288,13 +288,17 @@ fun GetStartedScreen(
         }
         HorizontalDivider()
 
-        Text("3. Screenlock signing (optional)", style = MaterialTheme.typography.titleSmall)
+        Text("3. Screenlock protection (signing + at-rest encryption)",
+            style = MaterialTheme.typography.titleSmall)
         if (screenlockEnrolled) {
             Text("✅ Enrolled — commits sign with this device's screenlock key.",
                 style = MaterialTheme.typography.bodySmall)
         } else {
             Text("Commits sign with this device's key (every save prompts the " +
-                "screen lock). The public key pairs on GitHub out-of-band.",
+                "screen lock), and the item secrets are encrypted at rest " +
+                "behind the screen lock (the sealed cache — on by default, " +
+                "togglable in Settings). The public key pairs on GitHub " +
+                "out-of-band.",
                 style = MaterialTheme.typography.bodySmall)
             Button(onClick = onEnrollScreenlock, enabled = busy == null,
                 modifier = Modifier.fillMaxWidth()) {

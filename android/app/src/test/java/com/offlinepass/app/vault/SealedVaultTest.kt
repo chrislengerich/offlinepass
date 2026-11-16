@@ -170,4 +170,22 @@ class SealedVaultTest {
         while (!SealedVault.hasCache() && System.currentTimeMillis() < deadline) Thread.sleep(20)
         assertTrue(SealedVault.hasCache())
     }
+    // -- The encryption-at-rest DEFAULT --------------------------------------
+
+    @Test
+    fun atRestEncryptionIsOnByDefault() {
+        // A fresh state (no explicit pref) → the sealed cache is ON.
+        assertTrue(VaultSession.screenlockUnlockEnabled())
+    }
+
+    @Test
+    fun explicitOffStaysOff() {
+        VaultSession.setScreenlockUnlockEnabled(false)
+        assertFalse(VaultSession.screenlockUnlockEnabled())
+        // Turning it off wipes the sealed cache (the existing contract).
+        // Back on re-enables without resurrecting anything.
+        VaultSession.setScreenlockUnlockEnabled(true)
+        assertTrue(VaultSession.screenlockUnlockEnabled())
+    }
+
 }

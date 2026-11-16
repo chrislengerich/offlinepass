@@ -1217,8 +1217,12 @@ object VaultSession {
     // OFF = exact legacy behavior (GPG unlock for everything); turning it
     // off wipes the cache.
 
+    /** The screenlock-based encryption at rest (the sealed cache) is ON by
+     *  default: the item secrets are AES-256-GCM'd behind the device
+     *  credential; the toggle turning it off wipes the cache. An EXPLICIT
+     *  off stays off. */
     fun screenlockUnlockEnabled(): Boolean =
-        prefs().getBoolean("screenlockUnlock", false)
+        prefs().getBoolean("screenlockUnlock", true)
 
     fun setScreenlockUnlockEnabled(on: Boolean) {
         prefs().edit().putBoolean("screenlockUnlock", on).apply()
