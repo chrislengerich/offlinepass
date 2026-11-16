@@ -189,13 +189,20 @@ fun SetupChoiceScreen(
 /** The OpenPGP applet's user PIN (YubiKit card signing): shown when a
  *  signature needs it, once per identity session; never stored. */
 /** The recipient picking shared by New vault and Import: the entries are
- *  encrypted to these keys, so they must be chosen before create/import. */
+ *  encrypted to these keys, so they must be chosen before create/import —
+ *  and the security key must be set up in OpenKeyChain first, since the
+ *  picker lists OpenKeyChain's keys. */
 @Composable
 private fun RecipientsEditor(
     recipientIds: List<Long>,
     onPickRecipients: () -> Unit,
     onRemoveRecipient: (Long) -> Unit
 ) {
+    Text("Before adding a recipient: set up the security key in " +
+        "OpenKeyChain — import the key (the public key at minimum) and " +
+        "pair the security key (OpenKeyChain menu → Manage Smart Card), " +
+        "so the picker lists the encryption subkey to encrypt to.",
+        style = MaterialTheme.typography.bodySmall)
     Text("Recipients (from OpenKeyChain picker)", style = MaterialTheme.typography.titleSmall)
     if (recipientIds.isEmpty()) {
         Text("(none — pick at least one before creating/importing)",
