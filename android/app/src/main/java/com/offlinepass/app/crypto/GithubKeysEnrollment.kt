@@ -52,4 +52,77 @@ object GithubKeysEnrollment {
         }
         return null
     }
+
+    // -- The live fetch + the full orchestration ------------------------------
+
+    /** The live fetch: github.com/<user>.keys, filtered to key lines. */
+    fun fetchKeyLines(username: String): List<String> =
+        filterKeyLines(fetchKeysBody(username))
+
+    fun filterKeyLines(body: String): List<String> =
+        body.lines()
+            .map { it.trim() }
+            .filter {
+                (it.startsWith("ssh-") || it.startsWith("ecdsa-") ||
+                    it.startsWith("sk-")) &&
+                    // A bare algorithm token ("ssh-rsa") is not a key line.
+                    it.split(" ").size >= 2
+            }
+
+    private fun fetchKeysBody(username: String): String {
+        val url = java.net.URL("https://github.com/$username.keys")
+        val c = (url.openConnection() as java.net.HttpURLConnection).apply {
+            connectTimeout = 10_000
+            readTimeout = 10_000
+            instanceFollowRedirects = true
+        }
+        try {
+            if (c.responseCode != 200) {
+                throw java.io.IOException(
+                    "github.com/$username.keys returned HTTP ${c.responseCode}")
+            }
+            return c.inputStream.bufferedReader().readText()
+        } finally {
+            c.disconnect()
+        }
+    }
+
+    /** The full enrollment orchestration with injected dependencies — the
+     *  same flow the UI drives, fully stub-able in tests:
+     *  fetch → card identity (no touch) → the card signs (ONE touch) →
+     *  the match → enroll. Returns the user-facing status. */
+    suspend fun enroll(
+        remote: String,
+        fetchLines: suspend (String) -> List<String>,
+        cardIdentity: suspend () -> Pair<Long, ByteArray>,
+        cardSign: suspend (ByteArray) -> ByteArray,
+        enroll: (String, Long) -> Unit,
+    ): String {
+        val user = parseUsername(remote.trim())
+            ?: return "The remote does not name a GitHub user — " +
+                "enter git@github.com:<user>/<repo> first."
+        val lines = try {
+            fetchLines(user)
+        } catch (e: Exception) {
+            return "Fetching github.com/$user.keys failed: ${e.message}"
+        }
+        if (lines.isEmpty()) return "No SSH keys registered on GitHub for $user."
+        val (keyId, fingerprint) = try {
+            cardIdentity()
+        } catch (e: Exception) {
+            return "Reading the card identity failed: ${e.message}"
+        }
+        val nonce = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        val rawSig = try {
+            cardSign(nonce)
+        } catch (e: Exception) {
+            return "The card could not prove the key: ${e.message}"
+        }
+        val matched = match(lines, nonce, rawSig)
+            ?: return "No GitHub key of $user matches this card — add the line " +
+                "with: gpg --export-ssh-key %016X!".format(keyId) + " (once, on a desktop)."
+        enroll(matched, keyId)
+        return "Enrolled the card's key 0x%016X (verified against $user's GitHub " +
+            "keys). Ready to load.".format(keyId)
+    }
 }

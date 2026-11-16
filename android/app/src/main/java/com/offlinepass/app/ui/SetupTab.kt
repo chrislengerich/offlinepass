@@ -35,6 +35,8 @@ fun SetupTabScreen(
     onClearSigner: () -> Unit,
     onUseYubikeySigner: () -> Unit,
     onRemoveScreenlock: () -> Unit,
+    onSetDeviceName: (String) -> Unit,
+    onInitOkkFromRepo: () -> Unit,
     deviceCredentialReady: Boolean = true,
     onEnrollScreenlock: () -> Unit = {},
     onUseOpenKeyChain: () -> Unit = {},
@@ -297,6 +299,26 @@ fun SetupTabScreen(
         Button(onClick = onAddRecipient, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Add recipient (pick in OpenKeyChain)")
         }
+        HorizontalDivider()
+        Text("This device", style = MaterialTheme.typography.titleSmall)
+        var deviceNameInput by androidx.compose.runtime.remember {
+            androidx.compose.runtime.mutableStateOf(VaultSession.deviceName())
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            androidx.compose.material3.OutlinedTextField(
+                value = deviceNameInput, onValueChange = { deviceNameInput = it },
+                label = { Text("Device name") }, singleLine = true,
+                modifier = Modifier.weight(1f))
+            Button(onClick = { onSetDeviceName(deviceNameInput) }, enabled = busy == null) {
+                Text("Set")
+            }
+        }
+        Button(
+            onClick = onInitOkkFromRepo,
+            enabled = busy == null,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Initialize OpenKeyChain from this repo's keys") }
         HorizontalDivider()
         Text("Commit signer", style = MaterialTheme.typography.titleSmall)
         if (VaultSession.commitSigningMode() == VaultSession.SIGNING_SCREENLOCK) {
