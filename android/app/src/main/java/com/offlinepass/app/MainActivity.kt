@@ -725,6 +725,90 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
     }
 
+    /** Enrolls the card's SSH key from github.com/<user>.keys: the
+     *  username derives from the remote field; the card identifies itself
+     *  via its SIGNATURE-slot fingerprint (no touch), signs a nonce
+     *  (ONE touch), and the line whose public key verifies that signature
+     *  is enrolled — a positive proof the line is the card's key.
+     *  No OpenKeyChain anywhere. */
+    private fun enrollFromGithubKeys() {
+        val remote = VaultSession.loadRemoteState.value.trim()
+        val user = com.offlinepass.app.crypto.GithubKeysEnrollment.parseUsername(remote)
+        if (user == null) {
+            status = "The remote does not name a GitHub user — " +
+                "enter git@github.com:<user>/<repo> first."
+            return
+        }
+        if (!com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(applicationContext)) {
+            status = "Attach the YubiKey (and grant USB access) first."
+            return
+        }
+        lifecycleScope.launch {
+            try {
+                status = "Reading the card identity…"
+                val (keyId, fingerprint) = kotlinx.coroutines.withContext(
+                    kotlinx.coroutines.Dispatchers.IO) {
+                    com.offlinepass.app.crypto.YubiKitSshAuth
+                        .signingKeyIdentity(applicationContext)
+                }
+                status = "Fetching GitHub keys for $user…"
+                val body = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val url = java.net.URL("https://github.com/$user.keys")
+                    (url.openConnection() as java.net.HttpURLConnection).apply {
+                        connectTimeout = 10_000; readTimeout = 10_000
+                        instanceFollowRedirects = true
+                    }.let { c ->
+                        if (c.responseCode != 200) {
+                            throw java.io.IOException(
+                                "github.com/$user.keys returned HTTP ${c.responseCode}")
+                        }
+                        c.inputStream.bufferedReader().readText()
+                    }
+                }
+                val lines = body.lines()
+                    .map { it.trim() }
+                    .filter { it.startsWith("ssh-") || it.startsWith("ecdsa-") ||
+                        it.startsWith("sk-") }
+                if (lines.isEmpty()) {
+                    status = "No SSH keys registered on GitHub for $user."
+                    return@launch
+                }
+                val nonce = java.security.SecureRandom().run {
+                    val b = ByteArray(32); nextBytes(b); b
+                }
+                status = "Touch the YubiKey to prove the key (PIN if asked)…"
+                val rawSig = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val pin = VaultSession.yubikeyPin()
+                        ?: throw java.io.IOException("OpenPGP PIN cancelled")
+                    val digestInfo = com.offlinepass.app.crypto.SshRsaPkcs1
+                        .digestInfo("SHA-256", nonce)
+                    val sig = com.offlinepass.app.crypto.YubiKitSshAuth.sign(
+                        applicationContext, pin, digestInfo)
+                    VaultSession.yubikeyPinRemember(pin)  // cache-on-success
+                    sig
+                }
+                // The real PIN arrives through the prompt hook — the sign
+                // call above needs it; route it through the prompt:
+                val matched = com.offlinepass.app.crypto.GithubKeysEnrollment
+                    .match(lines, nonce, rawSig)
+                if (matched == null) {
+                    status = "No GitHub key of $user matches this card — add the " +
+                        "line with: gpg --export-ssh-key " +
+                        "%016X!".format(keyId) + " (on a desktop, once)."
+                    return@launch
+                }
+                val idHex = "%016X".format(keyId)
+                VaultSession.setYubikeySsh(matched, idHex)
+                VaultSession.loadSshLineState.value = matched
+                VaultSession.loadSubkeyIdState.value = idHex
+                status = "Enrolled the card's key 0x$idHex (verified against " +
+                    "$user's GitHub keys). Ready to load."
+            } catch (e: Exception) {
+                status = "Enrollment failed: ${e.message}"
+            }
+        }
+    }
+
     /** Persists the YubiKey SSH enrollment (works pre-load: prefs only). */
     private fun enrollYubikeySsh(sshLine: String, subkeyId: String) {
         // Unsigned 64-bit hex: ids with the high bit set are legal (see the
@@ -953,7 +1037,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     }
                 },
                 onLoadUsb = { usbRestoreLauncher.launch(arrayOf("application/octet-stream")) },
-                onPickAuthSubkey = { lifecycleScope.launch { pickAuthSubkey() } },
+                onEnrollFromGithubKeys = { enrollFromGithubKeys() },
                 onSshSelfTest = {
                     lifecycleScope.launch {
                         val v = VaultSession.sshAuthSelfTest { status = it }

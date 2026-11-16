@@ -55,7 +55,7 @@ fun SetupChoiceScreen(
     onImportProton: (remote: String?, pat: String, uri: android.net.Uri) -> Unit,
     onLoadGitHub: (remote: String, emails: List<String>, pat: String) -> Unit,
     onLoadUsb: () -> Unit,
-    onPickAuthSubkey: () -> Unit = {},
+    onEnrollFromGithubKeys: () -> Unit = {},
     onSshSelfTest: () -> Unit = {},
     onEnrollYubikeySsh: (sshLine: String, subkeyId: String) -> Unit = { _, _ -> },
     onClearStatus: () -> Unit = {}
@@ -158,8 +158,8 @@ fun SetupChoiceScreen(
                 label = { Text("GitHub remote (HTTPS, or git@ for SSH)") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
-            Button(onClick = onPickAuthSubkey, modifier = Modifier.fillMaxWidth()) {
-                Text("Choose key in OpenKeyChain")
+            Button(onClick = onEnrollFromGithubKeys, modifier = Modifier.fillMaxWidth()) {
+                Text("Enroll from GitHub keys (one touch)")
             }
             TextButton(onClick = onSshSelfTest) {
                 Text("Run SSH auth self-test")

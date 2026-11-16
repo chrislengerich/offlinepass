@@ -111,6 +111,40 @@ object YubiKitSshAuth {
         }
     }
 
+    /** The SIGNATURE slot's (keyId, fingerprint) — an unauthenticated
+     *  GET DATA: no PIN, no touch. The key id = the fingerprint's last
+     *  8 bytes (the v4 fingerprint's low half). */
+    fun signingKeyIdentity(context: Context): Pair<Long, ByteArray> {
+        val device = findDevice(context)
+            ?: throw java.io.IOException("no YubiKey connected")
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: throw java.io.IOException("USB service unavailable")
+        if (!usbManager.hasPermission(device)) {
+            throw java.io.IOException("USB permission not granted for the YubiKey")
+        }
+        val ykDevice = UsbYubiKeyDevice(usbManager, device)
+        val connection = ykDevice.openConnection(SmartCardConnection::class.java)
+        try {
+            val session = OpenPgpSession(connection as SmartCardConnection)
+            try {
+                val fp = session.applicationRelatedData.discretionary
+                    .getFingerprint(com.yubico.yubikit.openpgp.KeyRef.SIG)
+                if (fp == null || fp.size < 20) {
+                    throw java.io.IOException("the card reports no SIGNATURE fingerprint " +
+                        "(an empty slot?)")
+                }
+                val keyId = (12 until 20).fold(0L) { acc, k ->
+                    (acc shl 8) or (fp[k].toLong() and 0xFF)
+                }
+                return keyId to fp
+            } finally {
+                session.close()
+            }
+        } finally {
+            runCatching { connection.close() }
+        }
+    }
+
     /**
      * Verifies the OpenPGP user PIN on the applet, then signs [payload]
      * (the pre-built PKCS#1 v1.5 block) with the card's SIGNATURE slot.

@@ -175,6 +175,125 @@ object VaultSession {
         cachedYubikeyPinAt = System.currentTimeMillis()
     }
 
+    // -- The device identity + the repo's key-material registry --------------
+
+    /** The user-editable device name (defaults to the model); stamped into
+     *  the repo's key-material registry entries. */
+    fun deviceName(): String =
+        prefs().getString("deviceName", null) ?: android.os.Build.MODEL
+    fun setDeviceName(n: String) {
+        prefs().edit().putString("deviceName", n.trim()).apply()
+    }
+
+    data class ScreenlockRegistryEntry(val deviceId: String, val name: String, val line: String)
+
+    private fun keysDir(): File = File(gitRoot(), "keys")
+    private fun screenlockRegistryFile(): File = File(keysDir(), "screenlock-signers.pub")
+    private fun authorizedKeysFile(): File = File(keysDir(), "authorized-keys")
+
+    fun screenlockRegistryEntries(): List<ScreenlockRegistryEntry> {
+        val f = screenlockRegistryFile()
+        if (!f.exists()) return emptyList()
+        return f.readLines().mapNotNull { raw ->
+            val l = raw.trim(); if (l.isEmpty() || !l.contains(" # ")) return@mapNotNull null
+            val (key, comment) = l.split(" # ", limit = 2)
+            val device = Regex("device=([^ ]+)").find(comment)?.groupValues?.get(1)
+                ?: return@mapNotNull null
+            val name = Regex("name=(.*)$").find(comment)?.groupValues?.get(1) ?: ""
+            ScreenlockRegistryEntry(device, name, key)
+        }
+    }
+
+    /** This device's screenlock enrollment per the REGISTRY (what other
+     *  devices see). The local capability check is KeystoreSigner.hasKey(). */
+    fun screenlockRegisteredForThisDevice(): Boolean =
+        screenlockRegistryEntries().any { it.deviceId == deviceId() }
+
+    /** Append-only: adds THIS device's screenlock entry when absent (a
+     *  second device appends — never overwrites another device's entry). */
+    private fun appendScreenlockRegistryEntry() {
+        val line = com.offlinepass.app.crypto.KeystoreSigner
+            .publicKeySshLine("offlinepass-screenlock " +
+                "device=${deviceId()} name=${deviceName().replace(' ', '_')}") ?: return
+        val f = screenlockRegistryFile()
+        f.parentFile?.mkdirs()
+        val keyPart = line.substringBefore(" # ")
+        val existing = if (f.exists()) f.readLines() else emptyList()
+        if (existing.none { it.substringBefore(" # ") == keyPart }) {
+            f.appendText(line + "\n")
+        }
+        // The same line joins the transport registry (the authorized keys).
+        appendAuthorizedKey(line, "screenlock")
+    }
+
+    /** The authorized-keys registry: the SSH lines that may pull/push.
+     *  Tagged by kind: card entries survive a screenlock un-enroll (the
+     *  card is a physical key, not a device); screenlock entries are
+     *  device-tagged and surgically removable. */
+    private fun appendAuthorizedKey(line: String, kind: String) {
+        val f = authorizedKeysFile()
+        f.parentFile?.mkdirs()
+        val keyPart = line.substringBefore(" # ")
+        val existing = if (f.exists()) f.readLines() else emptyList()
+        if (existing.none { it.substringBefore(" # ") == keyPart }) {
+            f.appendText(line + " # kind=$kind\n")
+        }
+    }
+
+    /** Best-effort repo materialization, called pre-commit in syncNow:
+     *  the card's cert (keys/signer-<id>.asc via OKK) + this device's
+     *  key lines. Failures are non-fatal (the next save retries). */
+    suspend fun updateRepoKeyMaterial(client: OpenPgpOps) {
+        runCatching {
+            val subkeyId = yubikeyAuthSubkeyId()
+            if (subkeyId != null) {
+                // The card's full GPG cert — what a fresh device's OKK needs.
+                when (val fk = client.fetchPublicKeyArmored(subkeyId, null)) {
+                    is OpenPgpClient.PublicKey.Success -> {
+                        val f = File(keysDir(), "signer-%016X.asc".format(subkeyId))
+                        if (!f.exists() || f.readText() != fk.armored) {
+                            f.parentFile?.mkdirs()
+                            f.writeText(fk.armored + (if (fk.armored.endsWith("\n")) "" else "\n"))
+                        }
+                    }
+                    else -> {} // OKK interaction/failure: the next save retries
+                }
+                yubikeySshLine()?.let { line ->
+                    val tagged = line.substringBefore(" # ") +
+                        " # offlinepass-card device=${deviceId()} name=${deviceName().replace(' ', '_')}"
+                    appendAuthorizedKey(tagged, "card")
+                }
+            }
+            if ((commitSigningMode() == SIGNING_SCREENLOCK ||
+                        sshSyncMode() == SSH_SYNC_SCREENLOCK) &&
+                com.offlinepass.app.crypto.KeystoreSigner.hasKey()
+            ) {
+                appendScreenlockRegistryEntry()
+            }
+        }
+    }
+
+    /** The migration's surgical step: remove THIS device's screenlock
+     *  entry from the registry; the card's entries survive (the card is
+     *  a physical key, not a device). */
+    private fun removeThisDeviceFromRegistry() {
+        val f = screenlockRegistryFile()
+        if (f.exists()) {
+            val kept = f.readLines().filter { l ->
+                l.isBlank() || !l.contains("device=${deviceId()}")
+            }
+            f.writeText(kept.joinToString("", postfix = ""))
+        }
+        val ak = authorizedKeysFile()
+        if (ak.exists()) {
+            val kept = ak.readLines().filter { l ->
+                l.isBlank() || l.contains("kind=card") ||
+                    !l.contains("device=${deviceId()}")
+            }
+            ak.writeText(kept.joinToString("", postfix = ""))
+        }
+    }
+
     /** Post-load signing-role resolution: the screenlock stays the local
      *  signer when its key is enrolled (first-class); otherwise the
      *  security key (the YubiKey enrollment); otherwise whatever is
@@ -215,6 +334,7 @@ object VaultSession {
                 parts += "Commit signing now uses OpenKeyChain."
             }
         }
+        removeThisDeviceFromRegistry()
         com.offlinepass.app.crypto.KeystoreSigner.removeKey()
         parts += "The screenlock key was deleted."
         return parts.joinToString(" ")
@@ -1490,6 +1610,9 @@ object VaultSession {
                 val git = VaultGitClient()
                 val root = gitRoot()
                 git.open(remote, pat, root)
+                // Track the signer/authorized-key material in the repo (the
+                // offline keyring); best-effort, committed with the vault.
+                updateRepoKeyMaterial(openPgpClientFactory(appContext))
                 val vaultRelPath = "state/10.gpg"
                 // Commit a stranded/dirty vault file FIRST so it participates
                 // in the divergence check + push (a failed push leaves it

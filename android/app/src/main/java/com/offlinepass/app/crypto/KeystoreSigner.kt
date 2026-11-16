@@ -78,6 +78,35 @@ object KeystoreSigner {
         return "-----BEGIN PUBLIC KEY-----\n$b64\n-----END PUBLIC KEY-----\n"
     }
 
+    /** The public key as an OpenSSH line (ecdsa-sha2-nistp256) — the form
+     *  GitHub takes; used for the repo's authorized-keys registry. */
+    fun publicKeySshLine(comment: String): String? = runCatching {
+        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val pub = ks.getCertificate(ALIAS).publicKey
+            as java.security.interfaces.ECPublicKey
+        fun sshString(b: ByteArray): ByteArray {
+            val out = ByteArray(4 + b.size)
+            out[0] = ((b.size ushr 24) and 0xFF).toByte()
+            out[1] = ((b.size ushr 16) and 0xFF).toByte()
+            out[2] = ((b.size ushr 8) and 0xFF).toByte()
+            out[3] = (b.size and 0xFF).toByte()
+            b.copyInto(out, 4)
+            return out
+        }
+        // The uncompressed point: 0x04 || X || Y (fixed 32-byte halves).
+        fun fixed32(v: java.math.BigInteger): ByteArray {
+            val raw = v.toByteArray()
+            val stripped = if (raw.size > 1 && raw[0] == 0.toByte()) raw.copyOfRange(1, raw.size) else raw
+            return ByteArray(32 - stripped.size) + stripped
+        }
+        val point = byteArrayOf(4) + fixed32(pub.w.affineX) + fixed32(pub.w.affineY)
+        val curve = "nistp256".toByteArray()
+        val blob = sshString("ecdsa-sha2-nistp256".toByteArray()) +
+            sshString(curve) + sshString(point)
+        "ecdsa-sha2-nistp256 " + java.util.Base64.getEncoder().encodeToString(blob) +
+            " " + comment
+    }.getOrNull()
+
     /** Short identifier for UI display (first 16 hex of the SPKI hash). */
     fun publicKeyFingerprint(): String = runCatching {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
