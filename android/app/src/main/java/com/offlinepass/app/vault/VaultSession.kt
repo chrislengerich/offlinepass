@@ -147,6 +147,23 @@ object VaultSession {
      *  error when set. */
     @Volatile var sshIdentityUnavailable: String? = null
 
+    /** The PIN-caching signer wrapper: prompts once per session and caches
+     *  the PIN ONLY after a successful sign — a wrong PIN must re-prompt
+     *  (with the card's attempts-remaining message), never poison the
+     *  cache and fail every retry in silence. */
+    internal fun pinCachingSigner(
+        prompt: suspend () -> CharArray?,
+        sign: suspend (CharArray, ByteArray) -> ByteArray,
+    ): suspend (ByteArray) -> ByteArray {
+        var cached: CharArray? = null
+        return { payload ->
+            val pin = cached ?: prompt() ?: throw java.io.IOException("OpenPGP PIN cancelled")
+            val sig = sign(pin, payload)
+            cached = pin
+            sig
+        }
+    }
+
     /** Builds the active SSH identity for a sync/load, or null when the
      *  chosen mode isn't fully usable. YubiKey mode = the YubiKit card
      *  path ONLY (the SIGNATURE slot, no OpenKeyChain): when the key is
@@ -165,15 +182,13 @@ object VaultSession {
                         "not granted) — plug it in and retry."
                     return null
                 }
-                val pinPrompt = openPgpPinPrompt
-                var cachedPin: CharArray? = null
-                val yubiKitSigner: (suspend (payload: ByteArray) -> ByteArray) = { payload: ByteArray ->
-                    val pin = cachedPin
-                        ?: pinPrompt?.invoke()
-                        ?: throw java.io.IOException("OpenPGP PIN cancelled")
-                    cachedPin = pin
-                    com.offlinepass.app.crypto.YubiKitSshAuth.sign(context, pin, payload)
-                }
+                val yubiKitSigner: (suspend (payload: ByteArray) -> ByteArray) =
+                    pinCachingSigner(
+                        prompt = { openPgpPinPrompt?.invoke() },
+                        sign = { pin, payload ->
+                            com.offlinepass.app.crypto.YubiKitSshAuth
+                                .sign(context, pin, payload)
+                        })
                 com.offlinepass.app.crypto.YubiKeySshIdentity(
                     client = null, authSubkeyId = subkeyId, publicKeyLine = line,
                     interaction = { null }, yubiKitSigner = yubiKitSigner)

@@ -142,7 +142,25 @@ object YubiKitSshAuth {
                 // extended=false = verify FOR SIGNATURE (the Javadoc:
                 // "false to verify for signature use, true for other
                 // uses"). True → P2=0x82 and PSO:CDS fails 0x6982.
-                session.verifyUserPin(pin, false)
+                // A WRONG PIN surfaces as a readable message (attempts
+                // remaining) instead of a raw "APDU error: 0x63CX".
+                try {
+                    session.verifyUserPin(pin, false)
+                } catch (e: com.yubico.yubikit.core.application.InvalidPinException) {
+                    throw java.io.IOException(
+                        "Wrong PIN — ${e.attemptsRemaining} attempt(s) remaining " +
+                            "(the 3rd failure blocks the PIN)", e)
+                } catch (e: com.yubico.yubikit.core.smartcard.ApduException) {
+                    val sw = e.sw.toInt()
+                    if (sw and 0xFFF0 == 0x63C0) {
+                        // OpenPGP spec: a wrong PW1 answers 63 CX, X = the
+                        // attempts left.
+                        throw java.io.IOException(
+                            "Wrong PIN — ${sw and 0x0F} attempt(s) remaining " +
+                                "(the 3rd failure blocks the PIN)", e)
+                    }
+                    throw e
+                }
                 android.util.Log.i("YubiKeySsh",
                     "yubikit: PIN verified — PSO:CDS on the SIGNATURE slot " +
                         "(touch the key if its LED blinks)")
