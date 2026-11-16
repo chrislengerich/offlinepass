@@ -3,19 +3,21 @@ package com.offlinepass.app.vault
 import android.content.Context
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import java.io.File
 
 /**
- * The repo's key-material registry without hardware: device-tagged,
- * append-only screenlock entries; a second device appends (never
- * overwrites); the un-enroll migration is surgical (only the local
- * device's entry is removed); the lookups filter by deviceId.
+ * The repo's key-material registry (meta/devices.json + the keys/{auth,
+ * sign,encrypt} folders) without hardware: the LEGACY flat layout
+ * migrates once (the files move, meta is created); device-tagged entries
+ * are append-only (a second device appends, never overwrites); the
+ * un-enroll migration is surgical (only the local device's entry is
+ * removed).
  */
 @RunWith(RobolectricTestRunner::class)
 class KeyMaterialRegistryTest {
@@ -25,55 +27,91 @@ class KeyMaterialRegistryTest {
         VaultSession.resetForTest(RuntimeEnvironment.getApplication() as Context)
     }
 
-    private fun thisDeviceId(): String = VaultSession.deviceId()
+    private fun repoRoot(): File = File(VaultSession.gitRootPath())
 
-    @Test
-    fun registryParsesDeviceTaggedEntries() {
-        val f = java.io.File(VaultSession.gitRootPath(), "keys/screenlock-signers.pub")
-        f.parentFile.mkdirs()
-        f.writeText(
-            "ecdsa-sha2-nistp256 AAAAdummy1 # offlinepass-screenlock device=d1 name=Pixel_8\n" +
-            "ecdsa-sha2-nistp256 AAAAdummy2 # offlinepass-screenlock device=d2 name=Laptop\n")
-        val entries = VaultSession.screenlockRegistryEntries()
-        assertEquals(2, entries.size)
-        assertEquals("d1", entries[0].deviceId)
-        assertEquals("Pixel_8", entries[0].name)
-        assertTrue(entries[0].line.startsWith("ecdsa-sha2-nistp256 AAAAdummy1"))
-        assertTrue(VaultSession.screenlockRegisteredForThisDevice().let {
-            it == entries.any { e -> e.deviceId == thisDeviceId() }
-        })
+    private fun legacyMaterial() {
+        val keys = File(repoRoot(), "keys").apply { mkdirs() }
+        File(keys, "63EBEE3E00698013.public.asc").writeText("-----BEGIN PGP PUBLIC KEY BLOCK-----\nrec\n")
+        File(keys, "signer-63EBEE3E00698013.asc").writeText("-----BEGIN PGP PUBLIC KEY BLOCK-----\ncard\n")
+        File(keys, "keystore-signer.pub").writeText("-----BEGIN PUBLIC KEY-----\nlegacy-pem\n")
+        File(keys, "recipients.txt").writeText("ledger\n")
     }
 
     @Test
-    fun migrationRemovesOnlyThisDevicesEntry() {
-        val f = java.io.File(VaultSession.gitRootPath(), "keys/screenlock-signers.pub")
-        f.parentFile.mkdirs()
-        f.writeText(
-            "ecdsa-sha2-nistp256 AAAAother # offlinepass-screenlock device=other-device name=Other\n")
-        VaultSession.setSshSyncMode(VaultSession.SSH_SYNC_SCREENLOCK)
-        VaultSession.setCommitSigningMode(VaultSession.SIGNING_SCREENLOCK)
+    fun legacyLayoutMigratesOnceIntoSubfoldersAndMeta() {
+        legacyMaterial()
 
-        VaultSession.migrateOffScreenlock()
+        VaultSession.migrateLegacyKeyLayoutForTest()
 
-        // The other device's entry survives; this device has none.
-        val entries = VaultSession.screenlockRegistryEntries()
-        assertEquals(1, entries.size)
-        assertEquals("other-device", entries[0].deviceId)
+        // The files MOVED into their role folders.
+        assertTrue(File(repoRoot(), "keys/encrypt/63EBEE3E00698013.pub.asc").exists())
+        assertTrue(File(repoRoot(), "keys/sign/63EBEE3E00698013.pub.asc").exists())
+        assertTrue(File(repoRoot(), "keys/sign/keystore-signer.pub").exists())
+        assertTrue(File(repoRoot(), "keys/encrypt/recipients.txt").exists())
+        // The legacy originals are gone (git history preserves them).
+        assertFalse(File(repoRoot(), "keys/63EBEE3E00698013.public.asc").exists())
+        assertFalse(File(repoRoot(), "keys/keystore-signer.pub").exists())
+
+        // The second run is a no-op (no duplication, no crash).
+        VaultSession.migrateLegacyKeyLayoutForTest()
+        assertTrue(File(repoRoot(), "keys/encrypt/63EBEE3E00698013.pub.asc").exists())
+    }
+
+    @Test
+    fun metaRoundTripAndLookup() {
+        VaultSession.setDeviceName("Pixel 8")
+        VaultSession.writeDeviceRegistryForTest(listOf(
+            VaultSession.DeviceRegistryEntry(
+                "Pixel 8",
+                "ecdsa-sha2-nistp256 AAAA1 offlinepass-screenlock device=d1", null),
+            VaultSession.DeviceRegistryEntry(
+                "Pixel 8 (card)",
+                "ssh-rsa AAAA2 offlinepass-yubikey",
+                "keys/sign/63EBEE3E00698013.pub.asc")))
+
+        val entries = VaultSession.readDeviceRegistry()
+        assertEquals(2, entries.size)
+        assertEquals("Pixel 8", entries[0].name)
+        assertEquals("keys/sign/63EBEE3E00698013.pub.asc", entries[1].cert)
+
+        // The lookup rides on the key line's own device comment.
+        VaultSession.setDeviceName("Pixel 8") // does not affect the match
         assertFalse(VaultSession.screenlockRegisteredForThisDevice())
     }
 
     @Test
-    fun migrationDeletesThisDevicesKeystoreKeyOnly() {
-        // No keystore key exists under Robolectric; removeKey() is a no-op
-        // that must not throw — the surgical part is the REGISTRY above.
-        enrollLikeThisDevice()
-        VaultSession.setCommitSigningMode(VaultSession.SIGNING_SCREENLOCK)
-        VaultSession.migrateOffScreenlock()
-        assertEquals(VaultSession.SIGNING_YUBIKEY, VaultSession.commitSigningMode())
-    }
+    fun migrationRemovesOnlyThisDevicesMetaEntryAndAuthLine() {
+        val f = File(repoRoot(), "keys/auth/authorized-keys")
+        f.parentFile.mkdirs()
+        f.writeText(
+            "ecdsa-sha2-nistp256 AAAAother offlinepass-screenlock device=other-device\n" +
+            "ssh-rsa AAAAcard offlinepass-yubikey\n")
 
-    private fun enrollLikeThisDevice() {
-        VaultSession.setYubikeySsh(
-            "ssh-rsa AAAAB3test offlinepass-test", "63EBEE3E00698013")
+        VaultSession.writeDeviceRegistryForTest(listOf(
+            VaultSession.DeviceRegistryEntry(
+                "Other",
+                "ecdsa-sha2-nistp256 AAAAother offlinepass-screenlock device=other-device", null),
+            VaultSession.DeviceRegistryEntry(
+                "This",
+                "ecdsa-sha2-nistp256 AAAAmine offlinepass-screenlock " +
+                    "device=" + VaultSession.deviceId(), null),
+            VaultSession.DeviceRegistryEntry(
+                "This (card)", "ssh-rsa AAAAcard offlinepass-yubikey", null)))
+
+        VaultSession.migrateOffScreenlock()
+
+        // meta: this device's screenlock entry GONE; the other device's AND
+        // the card's survive.
+        val entries = VaultSession.readDeviceRegistry()
+        assertEquals(2, entries.size)
+        assertTrue(entries.any { it.name == "Other" })
+        assertTrue(entries.any { it.name == "This (card)" })
+
+        // The transport registry: this device's screenlock line gone; the
+        // card's line survives.
+        val auth = File(repoRoot(), "keys/auth/authorized-keys").readText()
+        assertFalse(auth.contains("device=" + VaultSession.deviceId()))
+        assertTrue(auth.contains("offlinepass-yubikey"))
+        assertTrue(auth.contains("other-device"))
     }
 }

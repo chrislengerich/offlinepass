@@ -176,121 +176,204 @@ object VaultSession {
     }
 
     // -- The device identity + the repo's key-material registry --------------
+    //
+    // Layout (the repo = the offline keyring):
+    //   meta/devices.json               — the device name → public-key mapping
+    //     [{name, authKey, cert?}]  (the identity rides in the key line's comment)
+    //   keys/auth/authorized-keys       — the transport lines (authorized_keys format)
+    //   keys/sign/<keyid>.pub.asc       — the commit-signing certs (the card's full cert)
+    //   keys/encrypt/<keyid>.pub.asc    — the envelope recipients
+    //
+    // The LEGACY layout (the flat keys/<keyid>.public.asc,
+    // keys/keystore-signer.pub, keys/signer-<id>.asc) is migrated once,
+    // on the first save after this feature lands: the files MOVE to the
+    // new locations (git history preserves the originals) and
+    // meta/devices.json is created.
 
     /** The user-editable device name (defaults to the model); stamped into
-     *  the repo's key-material registry entries. */
+     *  the registry. */
     fun deviceName(): String =
         prefs().getString("deviceName", null) ?: android.os.Build.MODEL
     fun setDeviceName(n: String) {
         prefs().edit().putString("deviceName", n.trim()).apply()
     }
 
-    data class ScreenlockRegistryEntry(val deviceId: String, val name: String, val line: String)
+    /** The minimal registry entry: the device NAME mapped to its public
+     *  key. The device identity rides in the key line's own comment
+     *  ("… offlinepass-screenlock device=<id>"), so there is exactly one
+     *  place the identity lives. */
+    data class DeviceRegistryEntry(
+        val name: String,
+        val authKey: String?,      // the OpenSSH line (inline)
+        val cert: String?          // the cert path (relative to the repo root)
+    )
 
-    private fun keysDir(): File = File(gitRoot(), "keys")
-    private fun screenlockRegistryFile(): File = File(keysDir(), "screenlock-signers.pub")
-    private fun authorizedKeysFile(): File = File(keysDir(), "authorized-keys")
+    private fun metaDevicesFile(): File = File(gitRoot(), "meta/devices.json")
+    private fun keysAuthDir(): File = File(gitRoot(), "keys/auth")
+    private fun keysSignDir(): File = File(gitRoot(), "keys/sign")
+    private fun keysEncryptDir(): File = File(gitRoot(), "keys/encrypt")
+    private fun authorizedKeysFile(): File = File(keysAuthDir(), "authorized-keys")
 
-    fun screenlockRegistryEntries(): List<ScreenlockRegistryEntry> {
-        val f = screenlockRegistryFile()
+    fun readDeviceRegistry(): List<DeviceRegistryEntry> {
+        val f = metaDevicesFile()
         if (!f.exists()) return emptyList()
-        return f.readLines().mapNotNull { raw ->
-            val l = raw.trim(); if (l.isEmpty() || !l.contains(" # ")) return@mapNotNull null
-            val (key, comment) = l.split(" # ", limit = 2)
-            val device = Regex("device=([^ ]+)").find(comment)?.groupValues?.get(1)
-                ?: return@mapNotNull null
-            val name = Regex("name=(.*)$").find(comment)?.groupValues?.get(1) ?: ""
-            ScreenlockRegistryEntry(device, name, key)
+        return runCatching {
+            val arr = org.json.JSONObject(f.readText()).getJSONArray("devices")
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.getJSONObject(i)
+                DeviceRegistryEntry(
+                    o.optString("name", ""),
+                    o.optString("authKey", "").ifEmpty { null },
+                    o.optString("cert", "").ifEmpty { null })
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun writeDeviceRegistry(entries: List<DeviceRegistryEntry>) {
+        val f = metaDevicesFile()
+        f.parentFile?.mkdirs()
+        val root = org.json.JSONObject()
+        val arr = org.json.JSONArray()
+        for (e in entries) {
+            val o = org.json.JSONObject()
+            o.put("name", e.name)
+            if (e.authKey != null) o.put("authKey", e.authKey)
+            if (e.cert != null) o.put("cert", e.cert)
+            arr.put(o)
         }
+        root.put("devices", arr)
+        f.writeText(root.toString(2) + "\n")
     }
 
     /** This device's screenlock enrollment per the REGISTRY (what other
      *  devices see). The local capability check is KeystoreSigner.hasKey(). */
     fun screenlockRegisteredForThisDevice(): Boolean =
-        screenlockRegistryEntries().any { it.deviceId == deviceId() }
+        readDeviceRegistry().any {
+            it.authKey?.contains("offlinepass-screenlock device=${deviceId()}") == true
+        }
 
     /** Append-only: adds THIS device's screenlock entry when absent (a
      *  second device appends — never overwrites another device's entry). */
-    private fun appendScreenlockRegistryEntry() {
+    private fun appendScreenlockRegistryEntry(includeAuth: Boolean) {
         val line = com.offlinepass.app.crypto.KeystoreSigner
-            .publicKeySshLine("offlinepass-screenlock " +
-                "device=${deviceId()} name=${deviceName().replace(' ', '_')}") ?: return
-        val f = screenlockRegistryFile()
-        f.parentFile?.mkdirs()
-        val keyPart = line.substringBefore(" # ")
-        val existing = if (f.exists()) f.readLines() else emptyList()
-        if (existing.none { it.substringBefore(" # ") == keyPart }) {
-            f.appendText(line + "\n")
+            .publicKeySshLine("offlinepass-screenlock device=${deviceId()}") ?: return
+        val entries = readDeviceRegistry().toMutableList()
+        if (entries.none {
+                it.authKey?.contains("offlinepass-screenlock device=${deviceId()}") == true
+            }) {
+            entries += DeviceRegistryEntry(deviceName(), line, null)
+            writeDeviceRegistry(entries)
         }
-        // The same line joins the transport registry (the authorized keys).
-        appendAuthorizedKey(line, "screenlock")
-    }
-
-    /** The authorized-keys registry: the SSH lines that may pull/push.
-     *  Tagged by kind: card entries survive a screenlock un-enroll (the
-     *  card is a physical key, not a device); screenlock entries are
-     *  device-tagged and surgically removable. */
-    private fun appendAuthorizedKey(line: String, kind: String) {
         val f = authorizedKeysFile()
         f.parentFile?.mkdirs()
-        val keyPart = line.substringBefore(" # ")
+        if (!f.exists() || f.readLines().none { it.substringBefore(" ") == line.substringBefore(" ") && it.substringAfter(" ", "").substringBefore(" ") == line.substringAfter(" ", "") }) {
+            f.appendText(line + "\n")
+        }
+    }
+
+    /** Ensures a transport line is present in keys/auth/authorized-keys. */
+    private fun appendAuthorizedKey(line: String) {
+        val f = authorizedKeysFile()
+        f.parentFile?.mkdirs()
         val existing = if (f.exists()) f.readLines() else emptyList()
-        if (existing.none { it.substringBefore(" # ") == keyPart }) {
-            f.appendText(line + " # kind=$kind\n")
+        if (existing.none { it.substringBefore(" ").substringBefore(" ") == line.substringBefore(" ") }) {
+            f.appendText(line + "\n")
         }
     }
 
     /** Best-effort repo materialization, called pre-commit in syncNow:
-     *  the card's cert (keys/signer-<id>.asc via OKK) + this device's
-     *  key lines. Failures are non-fatal (the next save retries). */
+     *  the legacy layout migrates once, the card's cert lands in
+     *  keys/sign/, this device's lines join keys/auth/. Failures are
+     *  non-fatal (the next save retries). */
     suspend fun updateRepoKeyMaterial(client: OpenPgpOps) {
+        runCatching { migrateLegacyKeyLayout() }
         runCatching {
             val subkeyId = yubikeyAuthSubkeyId()
             if (subkeyId != null) {
                 // The card's full GPG cert — what a fresh device's OKK needs.
                 when (val fk = client.fetchPublicKeyArmored(subkeyId, null)) {
                     is OpenPgpClient.PublicKey.Success -> {
-                        val f = File(keysDir(), "signer-%016X.asc".format(subkeyId))
+                        val f = File(keysSignDir(), "%016X.pub.asc".format(subkeyId))
                         if (!f.exists() || f.readText() != fk.armored) {
                             f.parentFile?.mkdirs()
-                            f.writeText(fk.armored + (if (fk.armored.endsWith("\n")) "" else "\n"))
+                            f.writeText(fk.armored.trimEnd() + "\n")
                         }
                     }
                     else -> {} // OKK interaction/failure: the next save retries
                 }
-                yubikeySshLine()?.let { line ->
-                    val tagged = line.substringBefore(" # ") +
-                        " # offlinepass-card device=${deviceId()} name=${deviceName().replace(' ', '_')}"
-                    appendAuthorizedKey(tagged, "card")
+                yubikeySshLine()?.let { appendAuthorizedKey(it.trimEnd()) }
+                val entries = readDeviceRegistry().toMutableList()
+                val certPath = "keys/sign/%016X.pub.asc".format(subkeyId)
+                if (entries.none { it.cert == certPath }) {
+                    entries += DeviceRegistryEntry(
+                        deviceName() + " (card)", yubikeySshLine()?.trimEnd(), certPath)
+                    writeDeviceRegistry(entries)
                 }
             }
             if ((commitSigningMode() == SIGNING_SCREENLOCK ||
                         sshSyncMode() == SSH_SYNC_SCREENLOCK) &&
                 com.offlinepass.app.crypto.KeystoreSigner.hasKey()
             ) {
-                appendScreenlockRegistryEntry()
+                appendScreenlockRegistryEntry(includeAuth = sshSyncMode() == SSH_SYNC_SCREENLOCK)
             }
         }
     }
 
+    // Test hooks (the singleton + the private layout ops).
+    internal fun migrateLegacyKeyLayoutForTest() = migrateLegacyKeyLayout()
+    internal fun writeDeviceRegistryForTest(entries: List<DeviceRegistryEntry>) =
+        writeDeviceRegistry(entries)
+
+    /** The one-time migration of the LEGACY flat layout into the subfolders
+     *  + meta. The files MOVE (git history preserves the originals):
+     *  keys/<id>.public.asc → keys/encrypt/<id>.pub.asc,
+     *  keys/signer-<id>.asc → keys/sign/<id>.pub.asc,
+     *  keys/keystore-signer.pub → keys/sign/ (the legacy screenlock PEM —
+     *  kept for the record; the live entry derives from the key itself). */
+    private fun migrateLegacyKeyLayout() {
+        if (prefs().getBoolean("keyMaterialMigrated", false)) return
+        val legacy = File(gitRoot(), "keys")
+        if (legacy.exists()) {
+            for (f in legacy.listFiles()?.filter { it.isFile } ?: emptyList()) {
+                val name = f.name
+                val target: File? = when {
+                    name.endsWith(".public.asc") -> File(
+                        keysEncryptDir(), name.removeSuffix(".public.asc") + ".pub.asc")
+                    name.startsWith("signer-") && name.endsWith(".asc") -> File(
+                        keysSignDir(), name.removePrefix("signer-")
+                            .removeSuffix(".asc") + ".pub.asc")
+                    name == "keystore-signer.pub" -> File(keysSignDir(), name)
+                    else -> null
+                }
+                if (target != null) {
+                    target.parentFile?.mkdirs()
+                    f.renameTo(target)
+                }
+            }
+            // recipients.txt (the informational ledger) moves into encrypt/.
+            val ledger = File(legacy, "recipients.txt")
+            if (ledger.exists()) ledger.renameTo(File(keysEncryptDir(), "recipients.txt"))
+        }
+        prefs().edit().putBoolean("keyMaterialMigrated", true).apply()
+    }
+
     /** The migration's surgical step: remove THIS device's screenlock
-     *  entry from the registry; the card's entries survive (the card is
-     *  a physical key, not a device). */
+     *  entry from meta and its line from the transport registry; the
+     *  card's entries survive (the card is a physical key, not a
+     *  device). */
     private fun removeThisDeviceFromRegistry() {
-        val f = screenlockRegistryFile()
+        val mine = readDeviceRegistry().filter {
+            it.authKey?.contains("offlinepass-screenlock device=${deviceId()}") != true
+        }
+        writeDeviceRegistry(mine)
+        val f = authorizedKeysFile()
         if (f.exists()) {
             val kept = f.readLines().filter { l ->
-                l.isBlank() || !l.contains("device=${deviceId()}")
+                l.isBlank() || !l.contains("offlinepass-screenlock device=${deviceId()}")
             }
-            f.writeText(kept.joinToString("", postfix = ""))
-        }
-        val ak = authorizedKeysFile()
-        if (ak.exists()) {
-            val kept = ak.readLines().filter { l ->
-                l.isBlank() || l.contains("kind=card") ||
-                    !l.contains("device=${deviceId()}")
+            if (kept.size != f.readLines().size) {
+                f.writeText(kept.joinToString("", postfix = "\n"))
             }
-            ak.writeText(kept.joinToString("", postfix = ""))
         }
     }
 
@@ -1756,10 +1839,12 @@ object VaultSession {
         keyIds: LongArray
     ): Boolean {
         var allPresent = true
-        val keysDir = File(repoRoot, "keys").apply { mkdirs() }
+        val encryptDir = File(repoRoot, "keys/encrypt").apply { mkdirs() }
         for (id in keyIds) {
-            val f = File(keysDir, "%016X.public.asc".format(id))
-            if (f.exists()) continue
+            val f = File(encryptDir, "%016X.pub.asc".format(id))
+            // The legacy layout (keys/<id>.public.asc) counts as present.
+            val legacy = File(repoRoot, "keys/%016X.public.asc".format(id))
+            if (f.exists() || legacy.exists()) continue
             when (val r = client.fetchPublicKeyArmored(id)) {
                 is OpenPgpClient.PublicKey.Success -> {
                     f.writeText(r.armored.trimEnd() + "\n")
@@ -1772,7 +1857,7 @@ object VaultSession {
             }
         }
         val cfg = config()
-        File(keysDir, "recipients.txt").writeText(
+        File(encryptDir, "recipients.txt").writeText(
             buildString {
                 appendLine("# who can open this vault (ledger, informational)")
                 appendLine("recipientEmails: " + (cfg?.recipientEmails?.joinToString(", ") ?: "-"))
