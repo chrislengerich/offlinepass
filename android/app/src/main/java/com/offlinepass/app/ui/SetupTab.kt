@@ -33,6 +33,7 @@ fun SetupTabScreen(
     signerLabel: String,
     onPickSigner: () -> Unit,
     onClearSigner: () -> Unit,
+    onUseYubikeySigner: () -> Unit,
     deviceCredentialReady: Boolean = true,
     onEnrollScreenlock: () -> Unit = {},
     onUseOpenKeyChain: () -> Unit = {},
@@ -310,6 +311,31 @@ fun SetupTabScreen(
                 enabled = busy == null,
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Switch to OpenKeyChain signing") }
+            if (VaultSession.yubikeyAuthSubkeyId() != null) {
+                Button(
+                    onClick = onUseYubikeySigner,
+                    enabled = busy == null,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Use the YubiKey (touch to sign)") }
+            }
+        } else if (VaultSession.commitSigningMode() == VaultSession.SIGNING_YUBIKEY) {
+            Text(
+                "YubiKey (SIG slot subkey 0x" +
+                    (VaultSession.yubikeyAuthSubkeyId()
+                        ?.let { "%016X".format(it) } ?: "?") +
+                    ") — every save prompts for the OpenPGP PIN and the touch.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Button(
+                onClick = onPickSigner,
+                enabled = busy == null,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Switch to OpenKeyChain signing") }
+            Button(
+                onClick = onEnrollScreenlock,
+                enabled = busy == null && deviceCredentialReady,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Enroll screenlock signing (alternative)") }
         } else {
             Text("Signer: $signerLabel", style = MaterialTheme.typography.bodySmall)
             Button(onClick = onPickSigner, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
@@ -327,6 +353,13 @@ fun SetupTabScreen(
                 "Enroll a screen lock (PIN/pattern) first — the signer is gated by it.",
                 style = MaterialTheme.typography.bodySmall
             )
+            if (VaultSession.yubikeyAuthSubkeyId() != null) {
+                Button(
+                    onClick = onUseYubikeySigner,
+                    enabled = busy == null,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Use the YubiKey (touch to sign)") }
+            }
         }
         HorizontalDivider()
 

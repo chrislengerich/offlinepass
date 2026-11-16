@@ -1402,6 +1402,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         }
                     },
                     onClearSigner = { VaultSession.clearSigningKey(); status = "Signer reset to default." },
+                    onUseYubikeySigner = {
+                        if (VaultSession.yubikeyAuthSubkeyId() == null) {
+                            status = "Enroll the YubiKey SSH key first (Setup → Choose key)."
+                        } else {
+                            VaultSession.setCommitSigningMode(VaultSession.SIGNING_YUBIKEY)
+                            status = "Commit signer: the YubiKey (SIG slot, touch to sign each commit)."
+                        }
+                    },
                     deviceCredentialReady = VaultSession.isDeviceCredentialReady() == 0,
                     onEnrollScreenlock = {
                         lifecycleScope.launch {

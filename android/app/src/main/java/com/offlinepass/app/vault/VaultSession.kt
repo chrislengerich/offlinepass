@@ -83,6 +83,7 @@ object VaultSession {
      *  interaction at all). */
     const val SIGNING_OPENKEYCHAIN = "openkeychain"
     const val SIGNING_SCREENLOCK = "screenlock"
+    const val SIGNING_YUBIKEY = "yubikey"
 
     fun commitSigningMode(): String =
         prefs().getString("commitSigningMode", null) ?: SIGNING_OPENKEYCHAIN
@@ -147,6 +148,68 @@ object VaultSession {
      *  error when set. */
     @Volatile var sshIdentityUnavailable: String? = null
 
+    /** The app-level YubiKey PIN cache with the screenlock gate's 60s
+     *  validity model: within a sync, the commit signature and the SSH
+     *  auth share ONE prompt (the card resets its PIN state per connection
+     *  anyway; the cache only spares the user the second dialog). The
+     *  cached value is stored ONLY on success — [yubikeyPinRemember] —
+     *  a wrong PIN is never kept. The expired/wrong value is zeroed. */
+    private var cachedYubikeyPin: CharArray? = null
+    private var cachedYubikeyPinAt = 0L
+
+    /** The YubiKey OpenPGP user PIN: the 60s-valid cache, or a fresh
+     *  prompt. Null = the user cancelled. */
+    suspend fun yubikeyPin(): CharArray? {
+        cachedYubikeyPin?.takeIf {
+            System.currentTimeMillis() - cachedYubikeyPinAt < 60_000
+        }?.let { return it }
+        cachedYubikeyPin?.fill('0')
+        cachedYubikeyPin = null
+        return openPgpPinPrompt?.invoke()
+    }
+
+    /** Caches [pin] (on a successful sign only). */
+    fun yubikeyPinRemember(pin: CharArray) {
+        cachedYubikeyPin?.fill('0')
+        cachedYubikeyPin = pin
+        cachedYubikeyPinAt = System.currentTimeMillis()
+    }
+
+    /** The YubiKey commit signer per the YUBIKEY signing mode: the
+     *  enrolled S subkey (the SSH enrollment's subkey id — the SIGNATURE
+     *  slot) signs each commit, PIN + touch. Null = not usable; the
+     *  unavailability reason lands in [sshIdentityUnavailable]. */
+    fun yubikeyCommitSignerOrNull(): org.eclipse.jgit.lib.Signer? {
+        val keyId = yubikeyAuthSubkeyId()
+        if (keyId == null) {
+            sshIdentityUnavailable =
+                "Enroll the YubiKey SSH key first (Setup → Choose key)."
+            return null
+        }
+        if (!com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(appContext)) {
+            sshIdentityUnavailable =
+                "The YubiKey is not attached (or USB access was not granted) " +
+                    "— plug it in and retry."
+            return null
+        }
+        sshIdentityUnavailable = null
+        return com.offlinepass.app.crypto.YubiKitCommitSigner(
+            appContext, keyId,
+            prompt = { yubikeyPin() },
+            rememberPin = { yubikeyPinRemember(it) })
+    }
+
+    /** The commit signer for sync-time commits (the pre-sync commit and
+     *  the merge commit) per the active signing mode. */
+    fun syncCommitSigner(client: OpenPgpClient): org.eclipse.jgit.lib.Signer? {
+        return when (commitSigningMode()) {
+            SIGNING_SCREENLOCK -> keystoreSignerHook
+                ?.let { com.offlinepass.app.crypto.KeystoreCommitSigner(it) }
+            SIGNING_YUBIKEY -> yubikeyCommitSignerOrNull()
+            else -> signingKeyId()?.let { OpenKeyChainSigner(client, it) }
+        }
+    }
+
     /** The PIN-caching signer wrapper: prompts once per session and caches
      *  the PIN ONLY after a successful sign — a wrong PIN must re-prompt
      *  (with the card's attempts-remaining message), never poison the
@@ -184,10 +247,12 @@ object VaultSession {
                 }
                 val yubiKitSigner: (suspend (payload: ByteArray) -> ByteArray) =
                     pinCachingSigner(
-                        prompt = { openPgpPinPrompt?.invoke() },
+                        prompt = { yubikeyPin() },
                         sign = { pin, payload ->
-                            com.offlinepass.app.crypto.YubiKitSshAuth
+                            val sig = com.offlinepass.app.crypto.YubiKitSshAuth
                                 .sign(context, pin, payload)
+                            yubikeyPinRemember(pin)
+                            sig
                         })
                 com.offlinepass.app.crypto.YubiKeySshIdentity(
                     client = null, authSubkeyId = subkeyId, publicKeyLine = line,
@@ -639,7 +704,12 @@ object VaultSession {
                     // interaction: the BiometricPrompt gate in the hook is
                     // the entire story.
                     val signer: org.eclipse.jgit.lib.Signer?
-                    if (commitSigningMode() == SIGNING_SCREENLOCK) {
+                    if (commitSigningMode() == SIGNING_YUBIKEY) {
+                        signer = yubikeyCommitSignerOrNull()
+                            ?: return@withContext rollback(
+                                (sshIdentityUnavailable ?: "YubiKey signer unavailable") +
+                                    " — nothing saved.")
+                    } else if (commitSigningMode() == SIGNING_SCREENLOCK) {
                         // Publish/re-publish the enrolled public key so any
                         // client can verify revisions (guarded: device-only
                         // op; skipped on JVM tests).
@@ -1379,22 +1449,28 @@ object VaultSession {
                 // Commit a stranded/dirty vault file FIRST so it participates
                 // in the divergence check + push (a failed push leaves it
                 // uncommitted; without this it never reaches the remote).
-                // Signed with the SAME signer mode as save(): screenlock or
-                // OpenKeyChain.
-                val preSigner: org.eclipse.jgit.lib.Signer? = if (commitSigningMode() == SIGNING_SCREENLOCK) {
-                    val hook = keystoreSignerHook
-                        ?: throw IllegalStateException("Screenlock signer unavailable")
-                    com.offlinepass.app.crypto.KeystoreCommitSigner(hook)
-                } else {
-                    val preSignId = signingKeyId()
-                        ?: (cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()).firstOrNull()
-                    if (preSignId != null) {
-                        busy = "Checking sign key…"
-                        ensureSignKeyReady(preSignId, openPgpClientFactory(appContext))?.let { msg ->
-                            throw IllegalStateException(msg)
-                        }
-                        OpenKeyChainSigner(OpenPgpClient(appContext), preSignId)
-                    } else null
+                // Signed with the SAME signer mode as save(): screenlock,
+                // YubiKey (the card's SIGNATURE slot), or OpenKeyChain.
+                val preSigner: org.eclipse.jgit.lib.Signer? = when (commitSigningMode()) {
+                    SIGNING_SCREENLOCK -> {
+                        val hook = keystoreSignerHook
+                            ?: throw IllegalStateException("Screenlock signer unavailable")
+                        com.offlinepass.app.crypto.KeystoreCommitSigner(hook)
+                    }
+                    SIGNING_YUBIKEY -> syncCommitSigner(OpenPgpClient(appContext))
+                        ?: throw IllegalStateException(sshIdentityUnavailable
+                            ?: "YubiKey signer unavailable")
+                    else -> {
+                        val preSignId = signingKeyId()
+                            ?: (cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()).firstOrNull()
+                        if (preSignId != null) {
+                            busy = "Checking sign key…"
+                            ensureSignKeyReady(preSignId, openPgpClientFactory(appContext))?.let { msg ->
+                                throw IllegalStateException(msg)
+                            }
+                            OpenKeyChainSigner(OpenPgpClient(appContext), preSignId)
+                        } else null
+                    }
                 }
                 git.commitDirty(root, "Update 10.gpg (pre-sync)", preSigner)
                 when (val div = git.headVsRemote(root)) {
@@ -1455,8 +1531,12 @@ object VaultSession {
                         } finally {
                             SecureWipe.file(plain)
                         }
-                        val signId = signingKeyId() ?: keyIds.first()
-                val signer = OpenKeyChainSigner(client, signId)
+                        val signer: org.eclipse.jgit.lib.Signer? = when (commitSigningMode()) {
+                            SIGNING_SCREENLOCK -> keystoreSignerHook
+                                ?.let { com.offlinepass.app.crypto.KeystoreCommitSigner(it) }
+                            SIGNING_YUBIKEY -> yubikeyCommitSignerOrNull()
+                            else -> OpenKeyChainSigner(client, signingKeyId() ?: keyIds.first())
+                        }
                         try {
                             git.commitFile(root, "Merge with remote (rev ${merged.rev})", signer)
                         } catch (e: Exception) {

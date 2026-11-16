@@ -35,6 +35,12 @@ object SshRsaPkcs1 {
             .getInstance(jcaHashName(hashAlg)).digest(message)
     }
 
+    /** The DigestInfo around an ALREADY-COMPUTED digest (the OpenPGP v4
+     *  signature hash is computed over content+trailer incrementally —
+     *  the DigestInfo wraps the result). */
+    fun digestInfoFromDigest(jcaName: String, digest: ByteArray): ByteArray =
+        prefixFor(jcaName) + digest
+
     /** The PKCS#1 v1.5 encoded block: 0x00 0x01 PS 0x00 DigestInfo, where PS
      *  is 0xFF-filled to make the block exactly [modulusSize] bytes (the
      *  encoding length ≥ 8 octets of padding is guaranteed for any real
