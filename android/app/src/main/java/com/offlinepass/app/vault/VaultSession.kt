@@ -192,6 +192,15 @@ object VaultSession {
     // new locations (git history preserves the originals) and
     // meta/devices.json is created.
 
+    /** The battery-optimization exemption: asked ONCE per install. The ROM
+     *  kills the app while OpenKeyChain foregrounds during a decrypt — the
+     *  exemption is what keeps a load alive through the OKK hand-off. */
+    fun batteryExemptionAsked(): Boolean =
+        prefs().getBoolean("batteryExemptionAsked", false)
+    fun setBatteryExemptionAsked() {
+        prefs().edit().putBoolean("batteryExemptionAsked", true).apply()
+    }
+
     /** The user-editable device name (defaults to the model); stamped into
      *  the registry. */
     fun deviceName(): String =

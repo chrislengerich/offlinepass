@@ -165,4 +165,11 @@ class KeyMaterialRegistryTest {
         assertTrue(labels[2].contains("card (auth + sign)"))
     }
 
+    @Test
+    fun batteryExemptionAskedIsOncePerInstall() {
+        assertFalse(VaultSession.batteryExemptionAsked())
+        VaultSession.setBatteryExemptionAsked()
+        assertTrue(VaultSession.batteryExemptionAsked())
+    }
+
 }
