@@ -766,8 +766,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 cardIdentity = {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                         ensureUsbPermission()
-                        com.offlinepass.app.crypto.YubiKitSshAuth
+                        val id = com.offlinepass.app.crypto.YubiKitSshAuth
                             .signingKeyIdentity(applicationContext)
+                        id.keyId to id.fingerprint
                     }
                 },
                 cardSign = { nonce ->

@@ -336,8 +336,17 @@ object VaultSession {
                 val entries = readDeviceRegistry().toMutableList()
                 val certPath = "keys/sign/%016X.pub.asc".format(subkeyId)
                 if (entries.none { it.cert == certPath }) {
+                    // The CARD's identity — an independent security key, not
+                    // a phone accessory: the cardholder name (or a neutral
+                    // fallback), never the device name.
+                    val holder = runCatching {
+                        com.offlinepass.app.crypto.YubiKitSshAuth
+                            .signingKeyIdentity(appContext).holderName
+                    }.getOrNull()
+                    val cardName = holder
+                        ?: "Security key %04X".format(subkeyId and 0xFFFF)
                     entries += DeviceRegistryEntry(
-                        deviceName() + " (card)", yubikeySshLine()?.trimEnd(), certPath)
+                        cardName, yubikeySshLine()?.trimEnd(), certPath)
                     writeDeviceRegistry(entries)
                 }
             }

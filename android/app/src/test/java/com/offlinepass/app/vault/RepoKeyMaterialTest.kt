@@ -67,7 +67,9 @@ class RepoKeyMaterialTest {
         assertTrue(f.readText().contains("full cert"))
         val entries = VaultSession.readDeviceRegistry()
         assertEquals(1, entries.size)
-        assertEquals("Pixel 8 (card)", entries[0].name)
+        // The card entry carries the CARD's identity — the cardholder name
+        // when readable, else the neutral fallback — never the device name.
+        assertEquals("Security key 8013", entries[0].name)
         assertEquals("keys/sign/63EBEE3E00698013.pub.asc", entries[0].cert)
         assertTrue(entries[0].authKey!!.contains("offlinepass-yubikey"))
         val auth = File(VaultSession.gitRootPath(), "keys/auth/authorized-keys")

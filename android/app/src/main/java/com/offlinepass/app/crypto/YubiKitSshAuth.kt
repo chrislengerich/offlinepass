@@ -111,10 +111,26 @@ object YubiKitSshAuth {
         }
     }
 
-    /** The SIGNATURE slot's (keyId, fingerprint) — an unauthenticated
-     *  GET DATA: no PIN, no touch. The key id = the fingerprint's last
-     *  8 bytes (the v4 fingerprint's low half). */
-    fun signingKeyIdentity(context: Context): Pair<Long, ByteArray> {
+    /** The cardholder name from DO 0x0065 (unauthenticated): a 39-byte
+     *  fixed field, gpg's "SURNAME<<Given" convention → "Given Surname".
+     *  Null when the field is empty. */
+    fun parseHolderName(raw: ByteArray): String? {
+        val name = raw.take(39)
+            .map { b -> if (b == '<'.code.toByte()) ' ' else b.toChar() }
+            .joinToString("").trim()
+        return name.ifEmpty { null }
+    }
+
+    data class CardIdentity(
+        val keyId: Long,
+        val fingerprint: ByteArray,
+        val holderName: String?
+    )
+
+    /** The SIGNATURE slot's identity — an unauthenticated GET DATA: no
+     *  PIN, no touch. The key id = the fingerprint's last 8 bytes (the v4
+     *  fingerprint's low half); the holder name = the card's own. */
+    fun signingKeyIdentity(context: Context): CardIdentity {
         val device = findDevice(context)
             ?: throw java.io.IOException("no YubiKey connected")
         val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
@@ -136,7 +152,10 @@ object YubiKitSshAuth {
                 val keyId = (12 until 20).fold(0L) { acc, k ->
                     (acc shl 8) or (fp[k].toLong() and 0xFF)
                 }
-                return keyId to fp
+                val holder = runCatching {
+                    parseHolderName(session.getData(0x0065))
+                }.getOrNull()
+                return CardIdentity(keyId, fp, holder)
             } finally {
                 session.close()
             }
