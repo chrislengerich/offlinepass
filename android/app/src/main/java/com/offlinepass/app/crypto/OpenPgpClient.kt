@@ -202,6 +202,16 @@ class OpenPgpClient(private val context: Context) : OpenPgpOps {
      *  onNullBinding, onBindingDied, onServiceDisconnected-before-connect —
      *  are handled by [BinderGate]; the whole await carries a timeout so a
      *  pathological service degrades to a visible error, never a freeze. */
+    /** Warms the binding early: call at the load/sync START so OKK's
+     *  5-20s cold process start overlaps the SSH touch and the fetch —
+     *  the decrypt's connect then resolves instantly. Fire-and-forget;
+     *  a failure is logged and retried by the next real call. */
+    suspend fun warm() {
+        runCatching { connect() }.onFailure {
+            Log.w(TAG, "warm bind failed (will retry on use): ${it.message}")
+        }
+    }
+
     private suspend fun connect(): Boolean {
         service?.let { return true }
         ipcPhase("binding ${OPENKEYCHAIN_PACKAGE}…")

@@ -205,6 +205,27 @@ object VaultSession {
     // new locations (git history preserves the originals) and
     // meta/devices.json is created.
 
+    /** The sync's signer reconciliation (the protocol's enforcement):
+     *  after a merge/pull, if THIS device's screenlock entry is gone from
+     *  the registry (another device's security-key-signed commit removed
+     *  it), the local signing mode flips to the security key and the
+     *  orphaned keystore key is deleted. A revocation by one device is
+     *  honored by every device on its next sync. */
+    fun reconcileSignersAfterSync() {
+        if (commitSigningMode() == SIGNING_SCREENLOCK &&
+            !screenlockRegisteredForThisDevice()
+        ) {
+            setCommitSigningMode(SIGNING_YUBIKEY)
+            com.offlinepass.app.crypto.KeystoreSigner.removeKey()
+            Log.i(TAG, "the screenlock signing was revoked in the repo — " +
+                "the signing mode is now the security key")
+        }
+    }
+
+    /** Warms the shared OpenKeyChain binding (the cold start overlaps the
+     *  SSH auth and the fetch). */
+    suspend fun warmOpenKeyChain() = sharedOpenPgpClient(appContext).warm()
+
     /** The battery-optimization exemption: asked ONCE per install. The ROM
      *  kills the app while OpenKeyChain foregrounds during a decrypt — the
      *  exemption is what keeps a load alive through the OKK hand-off. */
@@ -477,21 +498,39 @@ object VaultSession {
         }
     }
 
-    /** The screenlock enrollment: the signing key (idempotent) + the
-     *  signing mode + the at-rest seal ON. One flow for the Get Started
-     *  checklist and Setup; returns the user-facing status. */
+    /** The screenlock enrollment per the SIGNING PROTOCOL: the commit
+     *  that ADDS this device's entry is signed by the SECURITY key (the
+     *  YubiKey); the screenlock signs only from the next commit on. The
+     *  un-enroll mirrors it: the removal commit is security-key-signed.
+     *  The at-rest seal activates with the enrollment. Returns the
+     *  user-facing status. */
     suspend fun enrollScreenlockSigning(): String {
-        return runCatching {
+        val ensured = runCatching {
             com.offlinepass.app.crypto.KeystoreSigner.ensureKey()
-        }.fold(
-            onSuccess = {
-                setCommitSigningMode(SIGNING_SCREENLOCK)
-                setScreenlockUnlockEnabled(true)
-                "Screenlock protection enrolled: commits sign with the " +
-                    "screenlock key, and the item secrets are sealed at rest " +
-                    "(pair the public key on GitHub, then sync)."
-            },
-            onFailure = { "Keystore signer unavailable: ${it.message}" })
+        }.getOrElse { return "Keystore signer unavailable: ${it.message}" }
+        // 1. The registry entry lands NOW (the pre-commit materialization
+        //    writes it into the repo; the commit below is YubiKey-signed
+        //    because the signing mode is still the security key).
+        appendScreenlockRegistryEntry(
+            includeAuth = sshSyncMode() == SSH_SYNC_SCREENLOCK)
+        // 2. Publish: a sync commits + pushes the security-key-signed
+        //    enrollment (when a remote is attached; local-only = the local
+        //    commit suffices and the entry rides the next sync).
+        val cfg = config()
+        if (cfg?.remoteUrl != null) {
+            when (val r = syncNow()) {
+                is Result.Error -> return "The enrollment commit did not " +
+                    "sync (${r.message.take(80)}) — the signing mode stays " +
+                    "the security key until it does."
+                else -> {}
+            }
+        }
+        // 3. The published enrollment → the screenlock takes over signing.
+        setCommitSigningMode(SIGNING_SCREENLOCK)
+        setScreenlockUnlockEnabled(true)
+        return "Screenlock protection enrolled (security-key-signed): " +
+            "commits now sign with the screenlock key, and the item " +
+            "secrets are sealed at rest."
     }
 
     /** Post-load signing-role resolution: the screenlock stays the local
@@ -516,6 +555,12 @@ object VaultSession {
     fun migrateOffScreenlock(): String {
         val yubiEnrolled = yubikeyAuthSubkeyId() != null && yubikeySshLine() != null
         val parts = mutableListOf<String>()
+        // The PROTOCOL: the removal commit must be SECURITY-KEY-SIGNED —
+        // flip the signing mode to the security key BEFORE touching the
+        // registry, so the removal commit is signed by the YubiKey.
+        if (commitSigningMode() == SIGNING_SCREENLOCK && yubiEnrolled) {
+            setCommitSigningMode(SIGNING_YUBIKEY)
+        }
         if (sshSyncMode() == SSH_SYNC_SCREENLOCK) {
             if (yubiEnrolled) {
                 setSshSyncMode(SSH_SYNC_YUBIKEY)
@@ -526,13 +571,8 @@ object VaultSession {
             }
         }
         if (commitSigningMode() == SIGNING_SCREENLOCK) {
-            if (yubiEnrolled) {
-                setCommitSigningMode(SIGNING_YUBIKEY)
-                parts += "Commit signing now uses the YubiKey."
-            } else {
-                setCommitSigningMode(SIGNING_OPENKEYCHAIN)
-                parts += "Commit signing now uses OpenKeyChain."
-            }
+            setCommitSigningMode(SIGNING_OPENKEYCHAIN)
+            parts += "Commit signing now uses OpenKeyChain."
         }
         removeThisDeviceFromRegistry()
         com.offlinepass.app.crypto.KeystoreSigner.removeKey()
@@ -1911,6 +1951,7 @@ object VaultSession {
                         // A fresh clone may carry the vault without the
                         // session being unlocked yet.
                         refreshFromVaultFile()
+                        reconcileSignersAfterSync()
                     }
                     is VaultGitClient.Divergence.AheadOnly -> {
                         // Empty-remote first push: GitHub repos created via
@@ -1934,6 +1975,7 @@ object VaultSession {
                     is VaultGitClient.Divergence.BehindOnly -> {
                         git.resetHardTo(root, "origin/main")
                         refreshFromVaultFile()
+                        reconcileSignersAfterSync()
                         syncStatus = "Pulled remote (rev $rev)"
                     }
                     is VaultGitClient.Divergence.Diverged -> {
@@ -1980,6 +2022,7 @@ object VaultSession {
                         loadedEnvelope = merged
                         state = State.Unlocked(merged.items)
                         sealIfEnabled(merged.items, merged)
+                        reconcileSignersAfterSync()
                         syncStatus = "Merged + pushed (rev ${merged.rev})"
                     }
                 }

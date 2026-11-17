@@ -975,6 +975,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     status = ""
                     maybeRequestBatteryExemption()
                     lifecycleScope.launch {
+                        // The OKK warm-up: the cold process start overlaps
+                        // the SSH touch and the fetch.
+                        launch {
+                            runCatching {
+                                VaultSession.warmOpenKeyChain()
+                            }
+                        }
                         // Persist the load screen's chosen sync-auth BEFORE
                         // the transport: the chip choice lived only in the
                         // drafts — the YubiKey identity reads the ENROLLED

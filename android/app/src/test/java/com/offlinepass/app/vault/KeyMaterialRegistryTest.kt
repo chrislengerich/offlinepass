@@ -172,4 +172,45 @@ class KeyMaterialRegistryTest {
         assertTrue(VaultSession.batteryExemptionAsked())
     }
 
+    // -- The signing protocol (the enrollment order + the revocation) -------
+
+    @Test
+    fun revocationViaRepoFlipsLocalSignerToSecurityKey() {
+        // Another device's security-key-signed commit removed THIS device's
+        // screenlock entry from the registry. The local mode still says
+        // screenlock — the reconciliation must honor the revocation.
+        enrollLikeThisDevice()
+        VaultSession.setCommitSigningMode(VaultSession.SIGNING_SCREENLOCK)
+        // The registry: only ANOTHER device's entry (this device's was
+        // removed remotely).
+        VaultSession.writeDeviceRegistryForTest(listOf(
+            VaultSession.DeviceRegistryEntry(
+                "Laptop", "ecdsa-sha2-nistp256 AAAA2 offlinepass-screenlock " +
+                    "device=laptop-id", null)))
+
+        VaultSession.reconcileSignersAfterSync()
+
+        assertEquals(VaultSession.SIGNING_YUBIKEY, VaultSession.commitSigningMode())
+    }
+
+    @Test
+    fun reconciliationIsANoOpWhenStillRegistered() {
+        enrollLikeThisDevice()
+        VaultSession.setCommitSigningMode(VaultSession.SIGNING_SCREENLOCK)
+        VaultSession.writeDeviceRegistryForTest(listOf(
+            VaultSession.DeviceRegistryEntry(
+                "This", "ecdsa-sha2-nistp256 AAAAmine offlinepass-screenlock " +
+                    "device=" + VaultSession.deviceId(), null)))
+        println("DBG deviceId=" + VaultSession.deviceId())
+        println("DBG entries=" + VaultSession.readDeviceRegistry())
+        VaultSession.reconcileSignersAfterSync()
+        println("DBG mode=" + VaultSession.commitSigningMode())
+        assertEquals(VaultSession.SIGNING_SCREENLOCK, VaultSession.commitSigningMode())
+    }
+
+    private fun enrollLikeThisDevice() {
+        VaultSession.setYubikeySsh(
+            "ssh-rsa AAAAB3test offlinepass-test", "63EBEE3E00698013")
+    }
+
 }
