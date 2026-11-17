@@ -198,7 +198,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
     /** The optional screen-lock gate: a device biometric/PIN prompt BEFORE
      * the hardware-key interaction (only when enabled in Setup). */
     private suspend fun biometricGate(): Boolean {
-        if (!VaultSession.screenLockRequired()) return true
+        // The screenlock prompts when the vault requires it OR when the
+        // at-rest seal is on: the seal's keystore ops need the auth window,
+        // and the prompt IS the screenlock's promised interaction.
+        if (!VaultSession.screenLockRequired() &&
+            !VaultSession.screenlockUnlockEnabled()
+        ) return true
         return promptGate("Unlock offlinepass", "Device lock required before the security key")
     }
 
