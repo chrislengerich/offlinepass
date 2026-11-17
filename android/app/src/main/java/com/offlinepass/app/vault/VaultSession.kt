@@ -528,9 +528,17 @@ object VaultSession {
         // 3. The published enrollment → the screenlock takes over signing.
         setCommitSigningMode(SIGNING_SCREENLOCK)
         setScreenlockUnlockEnabled(true)
+        // 4. SEAL NOW: the protection activates immediately — the next
+        // idle-lock already shows the protected manifest, instead of
+        // waiting for the next save to seal.
+        val items = (state as? State.Unlocked)?.items
+        val env = loadedEnvelope
+        if (items != null && env != null) {
+            sealIfEnabled(items, env)
+        }
         return "Screenlock protection enrolled (security-key-signed): " +
             "commits now sign with the screenlock key, and the item " +
-            "secrets are sealed at rest."
+            "secrets are sealed at rest — effective immediately."
     }
 
     /** Post-load signing-role resolution: the screenlock stays the local
