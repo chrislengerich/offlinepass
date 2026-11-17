@@ -519,45 +519,86 @@ object VaultSession {
         }
     }
 
-    /** The screenlock enrollment per the SIGNING PROTOCOL: the commit
-     *  that ADDS this device's entry is signed by the SECURITY key (the
-     *  YubiKey); the screenlock signs only from the next commit on. The
-     *  un-enroll mirrors it: the removal commit is security-key-signed.
-     *  The at-rest seal activates with the enrollment. Returns the
-     *  user-facing status. */
-    suspend fun enrollScreenlockSigning(): String {
+    /** The screenlock enrollment — fully LOCAL per the signing protocol:
+     *  the SECURITY key signs/validates a local CERT for the screenlock's
+     *  public key material (the card attests this device's signing key;
+     *  the cert = the trust record in meta). The repo update happens on
+     *  the next ordinary sync. The at-rest seal activates here: the
+     *  prompt opens the seal key's 60s window, then the seal runs
+     *  in-window. Returns the user-facing status. */
+    suspend fun enrollScreenlockSigning(activity: android.app.Activity?): String {
         val ensured = runCatching {
             com.offlinepass.app.crypto.KeystoreSigner.ensureKey()
         }.getOrElse { return "Keystore signer unavailable: ${it.message}" }
-        // 1. The registry entry lands NOW (the pre-commit materialization
-        //    writes it into the repo; the commit below is YubiKey-signed
-        //    because the signing mode is still the security key).
-        appendScreenlockRegistryEntry(
-            includeAuth = sshSyncMode() == SSH_SYNC_SCREENLOCK)
-        // 2. Publish: a sync commits + pushes the security-key-signed
-        //    enrollment (when a remote is attached; local-only = the local
-        //    commit suffices and the entry rides the next sync).
-        val cfg = config()
-        if (cfg?.remoteUrl != null) {
-            when (val r = syncNow()) {
-                is Result.Error -> return "The enrollment commit did not " +
-                    "sync (${r.message.take(80)}) — the signing mode stays " +
-                    "the security key until it does."
-                else -> {}
-            }
+
+        // 1. The screenlock's public material (the OpenSSH line — the
+        //    certified payload).
+        val screenlockLine = com.offlinepass.app.crypto.KeystoreSigner
+            .publicKeySshLine("offlinepass-screenlock device=${deviceId()}") ?: run {
+            return "The screenlock key is unavailable (no keystore key) — " +
+                "cannot enroll."
         }
-        // 3. The published enrollment → the screenlock takes over signing.
+
+        // 2. The SECURITY key signs a LOCAL CERT over the screenlock's
+        //    public key material (SHA-256): the card attests this device's
+        //    signing key. One touch; the cert = the trust record.
+        val materialHash = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(screenlockLine.toByteArray())
+        val certSig = try {
+            val pin = yubikeyPin() ?: return "OpenPGP PIN cancelled."
+            withTouchPrompt {
+                com.offlinepass.app.crypto.YubiKitSshAuth.sign(
+                    appContext, pin,
+                    com.offlinepass.app.crypto.SshRsaPkcs1
+                        .digestInfo("SHA-256", materialHash))
+            }.also { yubikeyPinRemember(pin) }
+        } catch (e: Exception) {
+            return "The security key could not sign the local cert: " +
+                "${e.message} — the enrollment aborted."
+        }
+
+        // 3. The registry entry + the local cert (LOCAL only — no repo
+        //    update; the next ordinary sync publishes).
+        val entries = readDeviceRegistry().toMutableList()
+        val subkeyId = yubikeyAuthSubkeyId() ?: 0L
+        entries += DeviceRegistryEntry(
+            name = deviceName(),
+            authKey = screenlockLine,
+            cert = "keys/sign/screenlock-cert-%016X.meta.json".format(subkeyId))
+        writeDeviceRegistry(entries)
+        runCatching {
+            val dir = File(gitRoot(), "keys/sign").apply { mkdirs() }
+            File(dir, "screenlock-cert-%016X.meta.json".format(subkeyId)).writeText(
+                org.json.JSONObject()
+                    .put("kind", "offlinepass-screenlock-cert")
+                    .put("device", deviceName())
+                    .put("deviceId", deviceId())
+                    .put("screenlockKeySha256",
+                        materialHash.joinToString("") { "%02x".format(it) })
+                    .put("cardKeyId", "%016X".format(subkeyId))
+                    .put("certSha256",
+                        java.security.MessageDigest.getInstance("SHA-256")
+                            .digest(certSig).joinToString("") { "%02x".format(it) })
+                    .put("certBase64", java.util.Base64.getEncoder()
+                        .encodeToString(certSig))
+                    .toString(2))
+        }
+
+        // 4. The signing mode flips + the seal activates with the prompt.
         setCommitSigningMode(SIGNING_SCREENLOCK)
         setScreenlockUnlockEnabled(true)
-        // 4. SEAL NOW: the protection activates immediately — the next
-        // idle-lock already shows the protected manifest, instead of
-        // waiting for the next save to seal.
         val items = (state as? State.Unlocked)?.items
         val env = loadedEnvelope
         if (items != null && env != null) {
-            sealIfEnabled(items, env)
+            val gated = if (activity != null)
+                com.offlinepass.app.crypto.ScreenlockGate.promptGate(
+                    activity,
+                    "Seal the vault",
+                    "The device lock encrypts the item secrets at rest")
+            else true
+            if (gated) sealIfEnabled(items, env)
         }
-        return "Screenlock protection enrolled (security-key-signed): " +
+        return "Screenlock protection enrolled (security-key-signed locally): " +
             "commits now sign with the screenlock key, and the item " +
             "secrets are sealed at rest — effective immediately."
     }

@@ -1384,7 +1384,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     },
                     onEnrollScreenlock = {
                         lifecycleScope.launch {
-                            status = VaultSession.enrollScreenlockSigning()
+                            status = VaultSession.enrollScreenlockSigning(this)
                         }
                     },
                     onShowSshKey = { showSshKeyQr(Screen.GetStarted) },
@@ -1535,7 +1535,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     },
                     deviceCredentialReady = VaultSession.isDeviceCredentialReady() == 0,
                     onEnrollScreenlock = {
-                        lifecycleScope.launch { status = VaultSession.enrollScreenlockSigning() }
+                        lifecycleScope.launch { status = VaultSession.enrollScreenlockSigning(this) }
                     },
                     onUseOpenKeyChain = {
                         VaultSession.setCommitSigningMode(VaultSession.SIGNING_OPENKEYCHAIN)
