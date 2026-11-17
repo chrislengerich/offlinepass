@@ -209,36 +209,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
      *  share the 60s window). strongOrCredential: the framework-enforced
      *  authenticator set (BIOMETRIC_STRONG | DEVICE_CREDENTIAL) — matches
      *  the seal key's binding exactly, so any prompt success opens it. */
-    private suspend fun promptGate(title: String, subtitle: String, strongOrCredential: Boolean = false): Boolean {
-        return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
-            val cancel = android.os.CancellationSignal()
-            val builder = android.hardware.biometrics.BiometricPrompt.Builder(this)
-                .setTitle(title)
-                .setSubtitle(subtitle)
-            if (strongOrCredential && android.os.Build.VERSION.SDK_INT >= 30) {
-                builder.setAllowedAuthenticators(
-                    android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG
-                        or android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
-            } else {
-                builder.setDeviceCredentialAllowed(true)
-            }
-            val prompt = builder.build()
-            cont.invokeOnCancellation { cancel.cancel() }
-            prompt.authenticate(
-                cancel,
-                androidx.core.content.ContextCompat.getMainExecutor(this),
-                object : android.hardware.biometrics.BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(
-                        result: android.hardware.biometrics.BiometricPrompt.AuthenticationResult
-                    ) { cont.resume(true) }
-                    override fun onAuthenticationError(code: Int, errString: CharSequence) {
-                        Log.w(TAG, "screen-lock gate: $code $errString")
-                        cont.resume(false)
-                    }
-                }
-            )
-        }
-    }
+    private suspend fun promptGate(title: String, subtitle: String, strongOrCredential: Boolean = false): Boolean =
+        com.offlinepass.app.crypto.ScreenlockGate.promptGate(this, title, subtitle, strongOrCredential)
 
     private suspend fun unlockLoop() {
         if (!biometricGate()) {

@@ -59,6 +59,10 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <activity
+            android:name=".autofill.AutofillAuthActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Offlinepass" />
         <service
             android:name=".autofill.OfflinepassAutofillService"
             android:exported="false"

@@ -10,6 +10,7 @@ import android.widget.RemoteViews
 import com.offlinepass.app.MainActivity
 import com.offlinepass.app.R
 import com.offlinepass.app.vault.ProtonItem
+import com.offlinepass.app.vault.SealedVault
 import com.offlinepass.app.vault.VaultSession
 
 /**
@@ -47,10 +48,14 @@ class OfflinepassAutofillService : AutofillService() {
             callback.onSuccess(null); return
         }
 
-        val response = if (VaultSession.state is VaultSession.State.Unlocked) {
-            unlockedResponse(fields)
-        } else {
-            lockedResponse(fields)
+        val response = when {
+            VaultSession.state is VaultSession.State.Unlocked -> unlockedResponse(fields)
+            // Sealed: the autofill picker = the SAME manifest the locked
+            // screen shows; tapping = the SAME screenlock gate as the item
+            // view → the targeted single-item unseal → the fill.
+            VaultSession.screenlockUnlockEnabled() &&
+                SealedVault.manifestItems().isNotEmpty() -> sealedResponse(fields)
+            else -> lockedResponse(fields)
         }
         callback.onSuccess(response)
     }
@@ -96,6 +101,65 @@ class OfflinepassAutofillService : AutofillService() {
             searchDs.setValue(it, null as AutofillValue?, searchView)
         }
         builder.addDataset(searchDs.build())
+        return builder.build()
+    }
+
+    /** The sealed state: the manifest entries as authenticated datasets —
+     *  tapping launches the auth activity (the device credential), which
+     *  unseals that ONE item and returns RESULT_OK; the framework then
+     *  re-invokes onFillRequest and the freshly revealed item fills. */
+    private fun sealedResponse(fields: Fields): FillResponse {
+        // A fresh reveal (within the TTL) fills with the REAL values.
+        val revealed = AutofillRevealStore.peek()
+        if (revealed != null) {
+            return FillResponse.Builder().addDataset(
+                datasetFor(revealed, fields,
+                    "${revealed.displayName} — ${revealed.identity}")).build()
+        }
+        val manifest = SealedVault.manifestItems()
+        // Rank: the URL/domain match first, then everything else.
+        val ranked = manifest.sortedByDescending { item ->
+            when {
+                fields.webDomain != null && item.urls.any { url ->
+                    url.contains(fields.webDomain!!.removePrefix("www."))
+                } -> 2
+                item.urls.any { url -> url.contains(fields.appPackage) } -> 1
+                else -> 0
+            }
+        }
+        val builder = FillResponse.Builder()
+        val ids = (fields.username + fields.password)
+        var requestCode = 10
+        for (item in ranked.take(5)) {
+            val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
+                .putExtra(AutofillAuthActivity.EXTRA_UUID, item.itemUuid)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            val pi = android.app.PendingIntent.getActivity(
+                appContext(), requestCode++, intent,
+                android.app.PendingIntent.FLAG_IMMUTABLE or
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+            val view = RemoteViews(packageName, R.layout.autofill_item).apply {
+                setTextViewText(R.id.autofill_text,
+                    "🔒 ${item.displayName} — tap, unlock, fill")
+            }
+            val ds = Dataset.Builder().setAuthentication(pi.intentSender)
+            ids.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
+            builder.addDataset(ds.build())
+        }
+        // The unsealed/not-sealed fallback: the open-the-app dataset.
+        val intent = android.content.Intent(appContext(), MainActivity::class.java)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val pi = android.app.PendingIntent.getActivity(
+            appContext(), 0, intent,
+            android.app.PendingIntent.FLAG_IMMUTABLE or
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+        val view = RemoteViews(packageName, R.layout.autofill_item).apply {
+            setTextViewText(R.id.autofill_text, "🔒 Unlock offlinepass (touch key), then autofill again")
+        }
+        val ds = Dataset.Builder().setAuthentication(pi.intentSender)
+        ids.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
+        builder.addDataset(ds.build())
         return builder.build()
     }
 
