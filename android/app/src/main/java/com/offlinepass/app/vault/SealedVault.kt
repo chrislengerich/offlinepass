@@ -256,8 +256,20 @@ object SealedVault {
             sealMutex.withLock {
                 try {
                     sealNow(items, env, vaultFile)
+                    // The file channel: the ROM's logd is broken — the seal's
+                    // outcome must be visible to the log pull.
+                    runCatching {
+                        java.io.File(appContext.filesDir, "debug-sync.log").appendText(
+                            "[${System.currentTimeMillis()}] seal: sealed " +
+                                "${items.size} items\n")
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "seal failed: ${e.javaClass.simpleName}: ${e.message}")
+                    runCatching {
+                        java.io.File(appContext.filesDir, "debug-sync.log").appendText(
+                            "[${System.currentTimeMillis()}] seal FAILED: " +
+                                "${e.javaClass.simpleName}: ${e.message}\n")
+                    }
                 }
             }
         }

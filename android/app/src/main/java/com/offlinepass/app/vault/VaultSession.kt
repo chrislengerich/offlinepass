@@ -77,7 +77,20 @@ object VaultSession {
      * OpenKeyChain IPC client. Tests override this to stub OpenKeyChain
      * (device-only) and exercise the save transaction on the JVM.
      */
-    internal var openPgpClientFactory: (Context) -> OpenPgpOps = { OpenPgpClient(it) }
+    internal var openPgpClientFactory: (Context) -> OpenPgpOps = { sharedOpenPgpClient(it) }
+
+    /** The SHARED OpenKeyChain client: ONE instance whose binding persists
+     *  for the process lifetime. The per-op clients unbound on close —
+     *  OKK's process then died between ops, and every subsequent decrypt/
+     *  encrypt re-paid OKK's 5-20s cold start (the measured "slow
+     *  OpenKeyChain" regression). Never close() the shared one. */
+    @Volatile private var sharedClientInstance: OpenPgpClient? = null
+    private fun sharedOpenPgpClient(context: Context): OpenPgpClient =
+        sharedClientInstance ?: synchronized(this) {
+            sharedClientInstance ?: OpenPgpClient(context).also {
+                sharedClientInstance = it
+            }
+        }
 
     /** Commit signing modes: OpenKeyChain's signing key (default — software
      *  keys or security keys behind the OKK interaction) or the SCREENLOCK
@@ -789,7 +802,7 @@ object VaultSession {
      * UI loop.
      */
     suspend fun pickSigningKey(): Result {
-        val client = OpenPgpClient(appContext)
+        val client = sharedOpenPgpClient(appContext)
         var reqData: Intent? = null
         var guard = 0
         while (guard++ < 2) {
@@ -822,7 +835,7 @@ object VaultSession {
      * (in [lastPickedKeyIds]). Interaction propagates for the UI loop.
      */
     suspend fun pickRecipient(): Result {
-        val client = OpenPgpClient(appContext)
+        val client = sharedOpenPgpClient(appContext)
         var reqData: Intent? = null
         var guard = 0
         while (guard++ < 2) {
@@ -922,7 +935,7 @@ object VaultSession {
         busy = "Decrypting vault… (touch your key)"
         val plain = File(appContext.cacheDir, "vault-plain.json")
         try {
-            val client = OpenPgpClient(appContext)
+            val client = sharedOpenPgpClient(appContext)
             // OpenKeychain's interaction contract: after the user completes
             // the prompt, retry with the RETURNED intent (it carries the
             // call UUIDs that locate the cached crypto input).
@@ -1323,7 +1336,9 @@ object VaultSession {
     /** Re-seals the cache when the toggle is on. Fire-and-forget; failures
      *  only log (the repo's GPG envelope stays the source of truth). */
     private fun sealIfEnabled(items: List<ProtonItem>, env: Envelope) {
-        if (screenlockUnlockEnabled()) SealedVault.seal(items, env, File(vaultFilePath()))
+        if (!screenlockUnlockEnabled()) return
+        // The seal's outcome logs itself to the file channel (SealedVault).
+        SealedVault.seal(items, env, File(vaultFilePath()))
     }
 
     /** The load/unlock phase breadcrumbs: a toast (posted to Main — toasts
@@ -1487,10 +1502,16 @@ object VaultSession {
      *  exist (never clobbers). Returns the effective ids. */
     fun seedRecipientsFromRepo(): List<Long> {
         if (recipientKeyIds().isNotEmpty()) return recipientKeyIds()
-        val dir = File(gitRoot(), "keys")
-        val ids = dir.listFiles { f -> f.name.endsWith(".public.asc") }
+        // The recipients live in keys/encrypt/<keyid>.pub.asc (the legacy
+        // keys/<keyid>.public.asc counts for the pre-migration repos).
+        val encryptDir = File(gitRoot(), "keys/encrypt")
+        val legacyDir = File(gitRoot(), "keys")
+        val ids = (encryptDir.listFiles { f -> f.name.endsWith(".pub.asc") }
             ?.mapNotNull { f -> f.name.substringBefore(".").toLongOrNull(16) }
-            .orEmpty()
+            ?: emptyList())
+            .ifEmpty { legacyDir.listFiles { f -> f.name.endsWith(".public.asc") }
+                ?.mapNotNull { f -> f.name.substringBefore(".").toLongOrNull(16) }
+                ?: emptyList() }
         if (ids.isNotEmpty()) {
             setRecipientKeyIds(ids)
             Log.i(TAG, "seeded " + ids.size + " recipient key id(s) from the repo's keys/")
@@ -1748,13 +1769,13 @@ object VaultSession {
         val useSsh = VaultGitClient().isSshRemote(remote)
         if (remote.isBlank()) return Result.Error("Remote URL is required")
         if (!useSsh && pat.isBlank()) return Result.Error("A PAT is required for HTTPS remotes")
-        if (useSsh && !SshKeyManager().hasKeyPair())
-            return Result.Error("Enroll the screenlock SSH key first (Setup)")
         if (useSsh) {
-            // Enrollment + gate depend on the active SSH identity mode.
+            // The AUTH key = the SECURITY KEY by default: the YubiKey
+            // enrollment suffices for the remote. The screenlock is only
+            // required in the screenlock mode (its signing/local roles).
             if (sshSyncMode() == SSH_SYNC_YUBIKEY) {
                 if (yubikeySshLine() == null || yubikeyAuthSubkeyId() == null)
-                    return Result.Error("Enroll the YubiKey SSH key first (Setup → paste the SSH line)")
+                    return Result.Error("Enroll the YubiKey SSH key first (Setup → Choose key)")
             } else {
                 if (!SshKeyManager().hasKeyPair())
                     return Result.Error("Enroll the screenlock SSH key first (Setup)")
@@ -1868,7 +1889,7 @@ object VaultSession {
                             ?: throw IllegalStateException("Screenlock signer unavailable")
                         com.offlinepass.app.crypto.KeystoreCommitSigner(hook)
                     }
-                    SIGNING_YUBIKEY -> syncCommitSigner(OpenPgpClient(appContext))
+                    SIGNING_YUBIKEY -> syncCommitSigner(sharedOpenPgpClient(appContext))
                         ?: throw IllegalStateException(sshIdentityUnavailable
                             ?: "YubiKey signer unavailable")
                     else -> {
@@ -1879,7 +1900,7 @@ object VaultSession {
                             ensureSignKeyReady(preSignId, openPgpClientFactory(appContext))?.let { msg ->
                                 throw IllegalStateException(msg)
                             }
-                            OpenKeyChainSigner(OpenPgpClient(appContext), preSignId)
+                            OpenKeyChainSigner(sharedOpenPgpClient(appContext), preSignId)
                         } else null
                     }
                 }
@@ -1928,7 +1949,7 @@ object VaultSession {
                         // Rebuild the branch on top of origin/main with the
                         // merged (re-encrypted) vault file.
                         git.resetHardTo(root, "origin/main")
-                        val client = OpenPgpClient(appContext)
+                        val client = sharedOpenPgpClient(appContext)
                         val keyIds = cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()
                         if (keyIds.isEmpty()) throw IllegalStateException("no recipients")
                         val plain = File(appContext.cacheDir, "merge-plain.json")
@@ -2039,7 +2060,7 @@ object VaultSession {
     suspend fun decryptEnvelope(file: File): DecryptEnvelope = withContext(Dispatchers.IO) {
         if (!file.exists()) return@withContext DecryptEnvelope.Error("File missing")
         val plain = File(appContext.cacheDir, "restore-plain.json")
-        val client = OpenPgpClient(appContext)
+        val client = sharedOpenPgpClient(appContext)
         try {
             var reqData: Intent? = null
             var guard = 0
