@@ -53,6 +53,9 @@ android {
     }
 
     packaging {
+        resources.excludes += setOf(
+            "META-INF/**",
+        )
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
         resources.excludes += "/META-INF/versions/9/OSGI-INF/MANIFEST.MF"
     }
@@ -118,7 +121,11 @@ dependencies {
     implementation("androidx.webkit:webkit:1.9.0")
 
     // S2 spike: standalone SSH client for the Keystore-identity auth test
-    // (maintained jsch fork; supports ed25519 + rsa-sha2-256).
+    // BouncyCastle: the OpenPGP-CFB mode for the YubiKit decrypt path
+    // (the battle-tested OpenPGPCFBBlockCipher — the per-byte CFB8 was
+    // wrong; the OpenPGP CFB is a block-level variant with a 2-byte-
+    // rotating keystream offset).
+    implementation("org.bouncycastle:bcprov-jdk18on:1.79")
     implementation("com.github.mwiede:jsch:0.2.17")
     // Direct OpenPGP-applet access (the card's AUTH slot) — the SSH auth
     // backend for card-resident keys; OpenKeyChain's remote API returns
