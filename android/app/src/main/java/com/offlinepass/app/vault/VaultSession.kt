@@ -941,9 +941,17 @@ object VaultSession {
                         Log.i(TAG, "unlocked: ${env.items.size} items, rev=${env.rev}")
                         return Result.Success
                     }
-                    is OpenPgpClient.DecryptResult.UserInteraction ->
+                    is OpenPgpClient.DecryptResult.UserInteraction -> {
+                        loadPhase("OKK demands its screen — launching it " +
+                            "(the API-allow or the decrypt confirm; touch the " +
+                            "card when OKK blinks it)")
                         reqData = interactionHandler?.invoke(r.pendingIntent)
-                            ?: return Result.Error("Interaction needs the UI layer")
+                        loadPhase("OKK screen returned " +
+                            (if (reqData != null) "ok — retrying with its intent"
+                             else "CANCELED — nothing completed"))
+                        reqData ?: return Result.Error(
+                            "Interaction needs the UI layer")
+                    }
                     is OpenPgpClient.DecryptResult.Error -> return Result.Error("Decrypt failed (see logcat)")
                 }
             }
@@ -1709,6 +1717,13 @@ object VaultSession {
             return Result.Success
         } catch (e: Exception) {
             Log.w(TAG, "git open failed: ${e.message}")
+            // The file channel: logd is broken on this ROM — the load's
+            // failure message must survive for the log pull.
+            runCatching {
+                File(appContext.filesDir, "debug-sync.log").appendText(
+                    "[${System.currentTimeMillis()}] gitOpenOnly FAILED: " +
+                        "${e.javaClass.simpleName}: ${e.message}\n")
+            }
             // The YubiKey identity records the OpenKeyChain-side failure
             // (JSch only says "Auth cancelled") — surface it so a wrong-
             // subkey enrollment or an OKK rejection is diagnosable. Cleared
