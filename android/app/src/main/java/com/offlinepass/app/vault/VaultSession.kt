@@ -476,9 +476,8 @@ object VaultSession {
             return null
         }
         if (!com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(appContext)) {
-            sshIdentityUnavailable =
-                "The YubiKey is not attached (or USB access was not granted) " +
-                    "— plug it in and retry."
+            sshIdentityUnavailable = usbPermissionPromptOrMissing()
+                .ifEmpty { "The YubiKey is not ready — retry." }
             return null
         }
         sshIdentityUnavailable = null
@@ -516,6 +515,24 @@ object VaultSession {
         }
     }
 
+    /** The attached-but-not-permitted branch, shared by the identity and
+     *  the commit-signer builders (both non-suspend — they cannot await a
+     *  dialog): FIRE the system permission request (non-blocking) and
+     *  return the user-facing message; null = permitted (or nothing
+     *  attached — the caller names that case itself). */
+    private fun usbPermissionPromptOrMissing(): String {
+        if (com.offlinepass.app.crypto.YubiKitSshAuth.findDevice(appContext) == null) {
+            return "The YubiKey is not attached — plug it in and retry."
+        }
+        if (!com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(appContext)) {
+            appScope.launch {
+                com.offlinepass.app.crypto.YubiKitSshAuth.requestPermission(appContext)
+            }
+            return "The USB permission dialog was shown — grant it and retry."
+        }
+        return ""  // permitted
+    }
+
     /** Builds the active SSH identity for a sync/load, or null when the
      *  chosen mode isn't fully usable. YubiKey mode = the YubiKit card
      *  path ONLY (the SIGNATURE slot, no OpenKeyChain): when the key is
@@ -530,8 +547,8 @@ object VaultSession {
                 val subkeyId = yubikeyAuthSubkeyId() ?: return null
                 val context = appContext
                 if (!com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(context)) {
-                    sshIdentityUnavailable = "The YubiKey is not attached (or USB access was " +
-                        "not granted) — plug it in and retry."
+                    sshIdentityUnavailable = usbPermissionPromptOrMissing()
+                        .ifEmpty { "The YubiKey is not ready — retry." }
                     return null
                 }
                 val yubiKitSigner: (suspend (payload: ByteArray) -> ByteArray) =
