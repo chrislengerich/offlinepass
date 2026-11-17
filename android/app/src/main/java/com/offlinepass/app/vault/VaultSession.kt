@@ -12,6 +12,8 @@ import com.offlinepass.app.crypto.OpenPgpOps
 import com.offlinepass.app.crypto.PgpSshBridge
 import com.offlinepass.app.crypto.SshKeyManager
 import com.offlinepass.app.crypto.YubiKeySshIdentity
+import android.os.Handler
+import android.os.Looper
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -427,6 +429,23 @@ object VaultSession {
                 f.writeText(kept.joinToString("", postfix = "\n"))
             }
         }
+    }
+
+    /** The screenlock enrollment: the signing key (idempotent) + the
+     *  signing mode + the at-rest seal ON. One flow for the Get Started
+     *  checklist and Setup; returns the user-facing status. */
+    suspend fun enrollScreenlockSigning(): String {
+        return runCatching {
+            com.offlinepass.app.crypto.KeystoreSigner.ensureKey()
+        }.fold(
+            onSuccess = {
+                setCommitSigningMode(SIGNING_SCREENLOCK)
+                setScreenlockUnlockEnabled(true)
+                "Screenlock protection enrolled: commits sign with the " +
+                    "screenlock key, and the item secrets are sealed at rest " +
+                    "(pair the public key on GitHub, then sync)."
+            },
+            onFailure = { "Keystore signer unavailable: ${it.message}" })
     }
 
     /** Post-load signing-role resolution: the screenlock stays the local
@@ -879,11 +898,13 @@ object VaultSession {
             while (guard++ < 2) {
                 when (val r = client.decryptVerify(vaultFile(), plain, reqData)) {
                     is OpenPgpClient.DecryptResult.Success -> {
+                        loadPhase("Decrypted — adopting ${plain.length()}B")
                         val env = Envelope.fromJson(plain.readText())
                         rev = env.rev
                         loadedEnvelope = env
                         state = State.Unlocked(env.items)
                         sealIfEnabled(env.items, env)
+                        loadPhase("Vault loaded (${env.items.size} items, rev=${env.rev})")
                         Log.i(TAG, "unlocked: ${env.items.size} items, rev=${env.rev}")
                         return Result.Success
                     }
@@ -1245,12 +1266,13 @@ object VaultSession {
     // OFF = exact legacy behavior (GPG unlock for everything); turning it
     // off wipes the cache.
 
-    /** The screenlock-based encryption at rest (the sealed cache) is ON by
-     *  default: the item secrets are AES-256-GCM'd behind the device
-     *  credential; the toggle turning it off wipes the cache. An EXPLICIT
-     *  off stays off. */
+    /** The screenlock-based encryption at rest (the sealed cache): OFF
+     *  until the screenlock is ENROLLED for the first time (the enrollment
+     *  turns it on — the sealed cache before any screenlock enrollment
+     *  would gate the vault on nothing the user has set up). The toggle
+     *  turning it off wipes the cache. */
     fun screenlockUnlockEnabled(): Boolean =
-        prefs().getBoolean("screenlockUnlock", true)
+        prefs().getBoolean("screenlockUnlock", false)
 
     fun setScreenlockUnlockEnabled(on: Boolean) {
         prefs().edit().putBoolean("screenlockUnlock", on).apply()
@@ -1261,6 +1283,23 @@ object VaultSession {
      *  only log (the repo's GPG envelope stays the source of truth). */
     private fun sealIfEnabled(items: List<ProtonItem>, env: Envelope) {
         if (screenlockUnlockEnabled()) SealedVault.seal(items, env, File(vaultFilePath()))
+    }
+
+    /** The load/unlock phase breadcrumbs: a toast (posted to Main — toasts
+     *  survive a process death, unlike the app's log) + a persistent file
+     *  line. This ROM's logd is broken: a crash leaves NO trace, so these
+     *  are the only way to locate where a load died. */
+    fun loadPhase(phase: String) {
+        runCatching {
+            File(appContext.filesDir, "debug-sync.log").appendText(
+                "[${System.currentTimeMillis()}] load-phase: $phase\n")
+        }
+        Handler(Looper.getMainLooper()).post {
+            runCatching {
+                android.widget.Toast.makeText(
+                    appContext, phase, android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     /** Locked-mode list backing: manifest stubs (secrets empty). Empty when

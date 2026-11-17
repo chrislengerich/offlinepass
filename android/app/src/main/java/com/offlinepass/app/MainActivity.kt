@@ -1005,6 +1005,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         }
                         // The loaded repo carries its recipients
                         // (keys/<keyid>.public.asc) — seed the save targets.
+                        VaultSession.loadPhase("Repository fetched — decrypting…")
                         VaultSession.seedRecipientsFromRepo()
                         // The local signing role: the screenlock stays the
                         // signer when enrolled; otherwise the security key.
@@ -1354,16 +1355,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     },
                     onEnrollScreenlock = {
                         lifecycleScope.launch {
-                            status = runCatching {
-                                com.offlinepass.app.crypto.KeystoreSigner.ensureKey()
-                            }.fold(
-                                onSuccess = {
-                                    VaultSession.setCommitSigningMode(
-                                        VaultSession.SIGNING_SCREENLOCK)
-                                    "Screenlock signing enrolled — pair the public " +
-                                        "key on GitHub (the QR), then sync."
-                                },
-                                onFailure = { "Keystore signer unavailable: ${it.message}" })
+                            status = VaultSession.enrollScreenlockSigning()
                         }
                     },
                     onShowSshKey = { showSshKeyQr(Screen.GetStarted) },
@@ -1514,19 +1506,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     },
                     deviceCredentialReady = VaultSession.isDeviceCredentialReady() == 0,
                     onEnrollScreenlock = {
-                        lifecycleScope.launch {
-                            status = runCatching {
-                                com.offlinepass.app.crypto.KeystoreSigner.ensureKey()
-                            }.fold(
-                                onSuccess = {
-                                    VaultSession.setCommitSigningMode(VaultSession.SIGNING_SCREENLOCK)
-                                    "Screenlock signing enrolled (fp " +
-                                        com.offlinepass.app.crypto.KeystoreSigner.publicKeyFingerprint() +
-                                        ") — pubkey publishes on the next save."
-                                },
-                                onFailure = { "Keystore signer unavailable: ${it.message}" }
-                            )
-                        }
+                        lifecycleScope.launch { status = VaultSession.enrollScreenlockSigning() }
                     },
                     onUseOpenKeyChain = {
                         VaultSession.setCommitSigningMode(VaultSession.SIGNING_OPENKEYCHAIN)
