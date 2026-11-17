@@ -726,13 +726,36 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
     }
 
+    /** The USB permission gate for the card ops: when a YubiKey is
+     *  attached but not yet permitted, pop the system dialog and await
+     *  the grant. Idempotent — a no-op when already granted. */
+    private suspend fun ensureUsbPermission(): Boolean {
+        if (com.offlinepass.app.crypto.YubiKitSshAuth.findDevice(applicationContext) == null) {
+            return false // nothing attached; the caller's error names it
+        }
+        if (com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(applicationContext)) {
+            return true
+        }
+        return com.offlinepass.app.crypto.YubiKitSshAuth.requestPermission(applicationContext)
+    }
+
     /** Enrolls the card's SSH key from github.com/<user>.keys — the
      *  orchestration lives in GithubKeysEnrollment.enroll (unit-tested
      *  with stubs); this wrapper supplies the real dependencies and the
      *  status surface. */
     private fun enrollFromGithubKeys() {
         val remote = VaultSession.loadRemoteState.value
+        // The USB permission FIRST: the system dialog pops immediately on
+        // click (before the network fetch) when the card is attached but
+        // not yet granted.
         lifecycleScope.launch {
+            val granted = ensureUsbPermission()
+            if (!granted && com.offlinepass.app.crypto.YubiKitSshAuth
+                    .findDevice(applicationContext) != null
+            ) {
+                status = "USB permission denied — tap Enroll again to grant."
+                return@launch
+            }
             status = com.offlinepass.app.crypto.GithubKeysEnrollment.enroll(
                 remote,
                 fetchLines = { user ->
@@ -742,12 +765,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 },
                 cardIdentity = {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        ensureUsbPermission()
                         com.offlinepass.app.crypto.YubiKitSshAuth
                             .signingKeyIdentity(applicationContext)
                     }
                 },
                 cardSign = { nonce ->
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        ensureUsbPermission()
                         val pin = VaultSession.yubikeyPin()
                             ?: throw java.io.IOException("OpenPGP PIN cancelled")
                         val digestInfo = com.offlinepass.app.crypto.SshRsaPkcs1
