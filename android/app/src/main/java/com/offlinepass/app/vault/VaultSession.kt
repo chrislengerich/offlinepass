@@ -294,15 +294,26 @@ object VaultSession {
             val subkeyId = yubikeyAuthSubkeyId()
             if (subkeyId != null) {
                 // The card's full GPG cert — what a fresh device's OKK needs.
-                when (val fk = client.fetchPublicKeyArmored(subkeyId, null)) {
-                    is OpenPgpClient.PublicKey.Success -> {
-                        val f = File(keysSignDir(), "%016X.pub.asc".format(subkeyId))
-                        if (!f.exists() || f.readText() != fk.armored) {
-                            f.parentFile?.mkdirs()
-                            f.writeText(fk.armored.trimEnd() + "\n")
+                // OKK may want an interaction (a first-use approval) — loop
+                // it through the handler like every other OKK call.
+                var reqData: android.content.Intent? = null
+                var guard = 0
+                while (guard++ < 3) {
+                    when (val fk = client.fetchPublicKeyArmored(subkeyId, reqData)) {
+                        is OpenPgpClient.PublicKey.Success -> {
+                            val f = File(keysSignDir(), "%016X.pub.asc".format(subkeyId))
+                            if (!f.exists() || f.readText() != fk.armored) {
+                                f.parentFile?.mkdirs()
+                                f.writeText(fk.armored.trimEnd() + "\n")
+                            }
+                            break
                         }
+                        is OpenPgpClient.PublicKey.UserInteraction -> {
+                            reqData = interactionHandler?.invoke(fk.pendingIntent)
+                                ?: break // no UI layer: the next save retries
+                        }
+                        else -> break // a real error: the next save retries
                     }
-                    else -> {} // OKK interaction/failure: the next save retries
                 }
                 yubikeySshLine()?.let { appendAuthorizedKey(it.trimEnd()) }
                 val entries = readDeviceRegistry().toMutableList()

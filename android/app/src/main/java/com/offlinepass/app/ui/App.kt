@@ -275,8 +275,12 @@ fun GetStartedScreen(
             Text("The card's SSH line must be on GitHub (an account key), then " +
                 "the app matches it against the card with one touch.",
                 style = MaterialTheme.typography.bodySmall)
-            Button(onClick = onEnrollFromGithubKeys, enabled = busy == null,
-                modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = onEnrollFromGithubKeys,
+                enabled = busy == null && VaultSession
+                    .connectDraftOwnerRepo()?.contains("/") == true,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Text("Enroll from GitHub keys (one touch)")
             }
         }

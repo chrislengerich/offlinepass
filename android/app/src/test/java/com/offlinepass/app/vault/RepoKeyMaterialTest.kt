@@ -3,6 +3,7 @@ package com.offlinepass.app.vault
 import android.content.Context
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -28,6 +29,7 @@ class RepoKeyMaterialTest {
     private class FakeOkk(private val armored: String) :
         com.offlinepass.app.crypto.OpenPgpOps {
         var fetches = 0
+        var result: com.offlinepass.app.crypto.OpenPgpClient.PublicKey? = null
         override suspend fun lookupKeyIds(
             userIds: Array<String>, requestData: android.content.Intent?
         ) = throw UnsupportedOperationException()
@@ -38,7 +40,7 @@ class RepoKeyMaterialTest {
             keyId: Long, requestData: android.content.Intent?
         ): com.offlinepass.app.crypto.OpenPgpClient.PublicKey {
             fetches += 1
-            return com.offlinepass.app.crypto.OpenPgpClient.PublicKey.Success(armored)
+            return result ?: com.offlinepass.app.crypto.OpenPgpClient.PublicKey.Success(armored)
         }
         override suspend fun pickSignKey(requestData: android.content.Intent?)
             : com.offlinepass.app.crypto.OpenPgpClient.SignKey =
@@ -76,5 +78,34 @@ class RepoKeyMaterialTest {
         VaultSession.updateRepoKeyMaterial(fake)
         assertEquals(before, f.readText())
         assertEquals(1, VaultSession.readDeviceRegistry().size)
+    }
+    // -- The degraded path: a fetch failure must not lose the registry -------
+
+    @Test
+    fun fetchFailureStillRegistersMetaAndAuthLine() = runBlocking {
+        VaultSession.setYubikeySsh(
+            "ssh-rsa AAAAcard offlinepass-yubikey", "63EBEE3E00698013")
+        val failing = FakeOkk("") // the fetch "fails" (no cert content)
+        failing.result = com.offlinepass.app.crypto.OpenPgpClient.PublicKey.Error
+
+        VaultSession.updateRepoKeyMaterial(failing)
+
+        // The meta entry exists but its cert file does NOT (a dangling ref
+        // until a later fetch succeeds — the hand-off only stages existing
+        // files, so this is safe).
+        val entries = VaultSession.readDeviceRegistry()
+        assertEquals(1, entries.size)
+        assertEquals("keys/sign/63EBEE3E00698013.pub.asc", entries[0].cert)
+        assertFalse(File(VaultSession.gitRootPath(),
+            "keys/sign/63EBEE3E00698013.pub.asc").exists())
+        assertTrue(File(VaultSession.gitRootPath(), "keys/auth/authorized-keys")
+            .readText().contains("offlinepass-yubikey"))
+
+        // A later SUCCESSFUL fetch fills the cert in place.
+        failing.result = com.offlinepass.app.crypto.OpenPgpClient.PublicKey.Success(
+            "-----BEGIN PGP PUBLIC KEY BLOCK-----\nfull cert\n")
+        VaultSession.updateRepoKeyMaterial(failing)
+        assertTrue(File(VaultSession.gitRootPath(),
+            "keys/sign/63EBEE3E00698013.pub.asc").exists())
     }
 }
