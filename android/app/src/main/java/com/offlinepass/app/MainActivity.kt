@@ -583,10 +583,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 val info = withContext(kotlinx.coroutines.Dispatchers.IO) {
                     com.offlinepass.app.crypto.SshKeyManager().ensureKeyPair()
                 }
-                // The QR enrolls the SCREENLOCK key — make this mode ACTIVE
-                // (the YubiKey dialog switches it the other way; last
-                // enrollment wins).
-                VaultSession.setSshSyncMode(VaultSession.SSH_SYNC_SCREENLOCK)
+                // The QR enrolls the SCREENLOCK key for SIGNING/AT-REST —
+                // it is NOT an auth key (deprecated): the SSH auth mode is
+                // untouched.
+                @Suppress("DEPRECATION")
+                VaultSession.setSshSyncMode(VaultSession.sshSyncMode())
                 val payload = org.json.JSONObject()
                     .put("type", "offlinepass-ssh-pubkey")
                     .put("sshKey", info.openSshLine)
@@ -973,7 +974,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                     return@launch
                                 }
                             }
-                            else -> VaultSession.setSshSyncMode(VaultSession.SSH_SYNC_SCREENLOCK)
                         }
                         // The YubiKit backend needs the USB permission for
                         // the YubiKey — request it when the card is attached

@@ -119,9 +119,18 @@ object VaultSession {
     const val SSH_SYNC_SCREENLOCK = "screenlock"
     const val SSH_SYNC_YUBIKEY = "yubikey"
 
+    /** The SSH sync auth mode: **the SECURITY KEY (YubiKey) is the
+     *  default** — a previously-wiped/unset pref previously fell back to
+     *  the screenlock mode, and a sync then offered the screenlock's
+     *  unregistered SSH key (the "Auth fail" seen on-device). */
     fun sshSyncMode(): String =
-        prefs().getString("sshSyncMode", null) ?: SSH_SYNC_SCREENLOCK
+        prefs().getString("sshSyncMode", null) ?: SSH_SYNC_YUBIKEY
 
+    /** DEPRECATED for the SCREENLOCK value: the screenlock is no longer an
+     *  auth key (only signing + the local at-rest seal). The backend stays
+     *  (the SshKeyManager identity + the SSH transport are intact) for a
+     *  possible re-enable; the flows must not set SCREENLOCK anymore. */
+    @Deprecated("the screenlock is not an auth key; the security key is the auth default")
     fun setSshSyncMode(mode: String) {
         prefs().edit().putString("sshSyncMode", mode).apply()
     }
@@ -570,11 +579,12 @@ object VaultSession {
             setCommitSigningMode(SIGNING_YUBIKEY)
         }
         if (sshSyncMode() == SSH_SYNC_SCREENLOCK) {
+            @Suppress("DEPRECATION")
             if (yubiEnrolled) {
                 setSshSyncMode(SSH_SYNC_YUBIKEY)
                 parts += "SSH auth now uses the YubiKey."
             } else {
-                parts += "SSH auth stays on the screenlock key " +
+                parts += "SSH auth stays on the (deprecated) screenlock key " +
                     "(enroll the YubiKey first to move it)."
             }
         }

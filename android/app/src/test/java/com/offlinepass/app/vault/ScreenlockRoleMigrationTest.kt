@@ -69,7 +69,7 @@ class ScreenlockRoleMigrationTest {
         // signing falls back to OpenKeyChain.
         assertEquals(VaultSession.SSH_SYNC_SCREENLOCK, VaultSession.sshSyncMode())
         assertEquals(VaultSession.SIGNING_OPENKEYCHAIN, VaultSession.commitSigningMode())
-        assertTrue(summary.contains("stays on the screenlock"))
+        assertTrue(summary.contains("stays on the")) // the (deprecated) screenlock auth
         assertTrue(summary.contains("OpenKeyChain"))
     }
 }
