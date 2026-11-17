@@ -1,7 +1,6 @@
 package com.offlinepass.app.vault
 
 import android.content.Context
-import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Log
@@ -15,35 +14,28 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
-import java.security.KeyPair
 import java.security.KeyStore
 import java.security.MessageDigest
-import java.security.SecureRandom
-import java.security.spec.MGF1ParameterSpec
 import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.OAEPParameterSpec
-import javax.crypto.spec.PSource
-import javax.crypto.spec.SecretKeySpec
 
 /**
- * The device-local sealed cache behind the experimental "encrypt individual items while in use"
+ * The device-local sealed cache behind the "encrypt individual items while in use"
  * toggle. The GPG-encrypted envelope in the repo stays the only synced
  * representation; this cache is never committed anywhere.
  *
- * At rest in app-private storage:
+ * At rest in app-private storage (FORMAT v2):
  *  - PLAINTEXT: the metadata the search/list UI already shows — names,
  *    usernames, emails, URLs, modify times, uuids — plus the envelope's
  *    public bookkeeping (rev, deviceId, paired paste devices, tombstones;
  *    all non-secret by design — the pairing record is a public key).
- *  - SEALED: each item's secrets ({password, note, totpUri}) AES-256-GCM'd
- *    under ONE random cache key (KEK); the KEK itself is RSA-OAEP-wrapped
- *    to the SCREENLOCK keystore key. The wrap uses the certificate's public
- *    key (plain JCE — no keystore op, no auth: saves re-seal freely); the
- *    KEK unwrap runs through the keystore private key, which requires the
- *    device screen lock and opens a 60s validity window per successful
- *    prompt.
+ *  - SEALED: each item's secrets ({password, note, totpUri}) are
+ *    AES-256-GCM'd DIRECTLY under a SCREENLOCK-GATED AndroidKeyStore AES
+ *    key (one keystore op per item; the IV is keystore-generated). NO KEK,
+ *    NO RSA wrap, NO wrapped symmetric key at rest — one layer, and the
+ *    TEE performs the per-item crypto. The unseal requires the device
+ *    screen lock and opens a 60s validity window per successful prompt.
  *
  * Flow: the locked app renders the manifest directly; tapping an entry
  * prompts once and unseals that item; a save/edit promotes to a full
@@ -55,14 +47,15 @@ import javax.crypto.spec.SecretKeySpec
 object SealedVault {
 
     private const val TAG = "SealedVault"
-    private const val KEY_ALIAS = "offlinepass-seal-rsa"
+    private const val KEY_ALIAS = "offlinepass-seal-aes"
     private const val FILE_NAME = "sealed/sealed.json"
-    private const val FORMAT_VERSION = 1
+    private const val FORMAT_VERSION = 2
     private const val ITEM_AAD_PREFIX = "offlinepass-seal-item-v1:"
     /** Bump when the keystore key spec changes: the alias is deleted and
-     *  regenerated (the old cache becomes unwrappable → the GPG re-seal
-     *  path rebuilds everything). v3: MGF1-SHA1 + hybrid KEK format. */
-    private const val KEY_SPEC_VERSION = 3
+     *  regenerated (the old cache becomes un-decryptable → the GPG re-seal
+     *  path rebuilds everything). v1: the direct AES-GCM per-item format
+     *  (the KEK/RSA hybrid is retired). */
+    private const val KEY_SPEC_VERSION = 1
 
     /** One manifest row: everything the locked list/search shows. */
     data class ManifestEntry(
@@ -108,7 +101,8 @@ object SealedVault {
         appContext.getSharedPreferences("sealed_vault", Context.MODE_PRIVATE)
 
     /** Raised when the cache was sealed by a DIFFERENT keystore key (spec
-     *  regeneration) — only the GPG re-seal path can rebuild it. */
+     *  regeneration) or carries a retired format — only the GPG re-seal
+     *  path can rebuild it. */
     internal class SealedKeyMismatchException : Exception()
 
     internal fun isKeyMismatch(e: Exception): Boolean {
@@ -120,40 +114,51 @@ object SealedVault {
         return false
     }
 
-    private fun keyIdOf(kp: KeyPair): String = sha256Hex(kp.public.encoded)
+    // -- injectable per-item crypto (Robolectric tests replace the keystore) --
 
-    // -- injectable CEK crypto (Robolectric tests replace the keystore) ------
+    /** The per-item crypto: the production impl = the screenlock-gated
+     *  AndroidKeyStore AES-GCM key (the keystore generates the IVs).
+     *  Tests inject a software AES with a throwaway key. */
+    interface SealCrypto {
+        fun seal(plain: ByteArray, aad: ByteArray): Pair<ByteArray, ByteArray>
+        fun unseal(iv: ByteArray, ct: ByteArray, aad: ByteArray): ByteArray
+    }
 
-    /** Wraps a CEK. Production: RSA-OAEP to the keystore cert's public key
-     *  (public-key math outside the keystore — no user auth needed). */
-    internal var wrapCekHook: ((cek: ByteArray) -> ByteArray)? = null
+    internal var cryptoHook: SealCrypto? = null
 
-    /** Unwraps a CEK. Production: the keystore private key — THE gated
-     *  operation. Throws [android.security.keystore.UserNotAuthenticatedException]
-     *  when the validity window is closed. */
-    internal var unwrapCekHook: ((wrapped: ByteArray) -> ByteArray)? = null
+    /** Production: the keystore AES-GCM cipher. Both directions are
+     *  auth-gated (the per-op window covers the whole batch). */
+    private class KeystoreSealCrypto(private val key: javax.crypto.SecretKey) : SealCrypto {
+        override fun seal(plain: ByteArray, aad: ByteArray): Pair<ByteArray, ByteArray> {
+            val c = Cipher.getInstance("AES/GCM/NoPadding")
+            c.init(Cipher.ENCRYPT_MODE, key)
+            c.updateAAD(aad)
+            val ct = c.doFinal(plain)
+            return (c.iv) to ct
+        }
 
-    private fun wrapFn(kp: KeyPair?): (ByteArray) -> ByteArray =
-        wrapCekHook ?: { cek -> rsaWrap(cek, kp!!.public) }
-
-    private fun unwrapFn(kp: KeyPair?): (ByteArray) -> ByteArray =
-        unwrapCekHook ?: { w -> rsaUnwrap(w, kp!!.private) }
-
-    // -- keystore key ---------------------------------------------------------
+        override fun unseal(iv: ByteArray, ct: ByteArray, aad: ByteArray): ByteArray {
+            val c = Cipher.getInstance("AES/GCM/NoPadding")
+            c.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
+            c.updateAAD(aad)
+            return c.doFinal(ct)
+        }
+    }
 
     /**
-     * Loads — or lazily generates — the screenlock-gated RSA keypair.
+     * Loads — or lazily generates — the screenlock-gated AES-256-GCM key.
      * Returns null when the device has no screen lock (keystore refuses
      * auth-required keys) or generation fails; callers degrade to the
      * legacy GPG-unlock flow. A permanently invalidated key (screen lock
      * removed) is deleted here so the NEXT seal regenerates a fresh one;
-     * old CEKs become unwrappable, which the staleness flow absorbs.
+     * the old cache becomes un-decryptable, which the staleness flow
+     * absorbs.
      */
-    private fun ensureKeyPair(): KeyPair? {
+    private fun ensureAesKey(): javax.crypto.SecretKey? {
         return try {
             val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
             val entry = try {
-                ks.getEntry(KEY_ALIAS, null) as? KeyStore.PrivateKeyEntry
+                ks.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry
             } catch (e: Exception) {
                 // Unrecoverable/invalidated → drop and regenerate below.
                 runCatching { ks.deleteEntry(KEY_ALIAS) }
@@ -165,77 +170,37 @@ object SealedVault {
                     ks.deleteEntry(KEY_ALIAS)
                     specs().edit().remove("keySpecVersion").apply()
                 } else {
-                    return KeyPair(entry.certificate.publicKey, entry.privateKey)
+                    return entry.secretKey
                 }
             }
-            val gen = java.security.KeyPairGenerator.getInstance(
-                KeyProperties.KEY_ALGORITHM_RSA, "AndroidKeyStore")
+            val gen = javax.crypto.KeyGenerator.getInstance(
+                KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
             val spec = KeyGenParameterSpec.Builder(
-                KEY_ALIAS, KeyProperties.PURPOSE_DECRYPT)
-                .setKeySize(2048)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
-                // OAEP hash (SHA-256) AND the MGF1 digest (SHA-1 — what the
-                // OAEPWithSHA-256AndMGF1Padding transformation actually uses
-                // on this keystore, see INCOMPATIBLE_MGF_DIGEST) must both
-                // be allowed by the key.
-                .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA1)
+                KEY_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                .setKeySize(256)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                 .setUserAuthenticationRequired(true)
                 // New biometric enrollments must not brick the cache.
                 .setInvalidatedByBiometricEnrollment(false)
                 .apply {
                     // The LEGACY validity-duration setting — the exact
                     // combination the app's SSH key + screenlock gate use
-                    // successfully on this ROM. (The modern
-                    // setUserAuthenticationParameters(STRONG|CREDENTIAL) +
-                    // setAllowedAuthenticators prompt authenticated fine but
-                    // did NOT open this key's window here.) Legacy = any
-                    // biometric or lockscreen credential, 60s window.
+                    // successfully on this ROM. Legacy = any biometric or
+                    // lockscreen credential, 60s window (one prompt covers
+                    // the whole unseal batch).
                     setUserAuthenticationValidityDurationSeconds(60)
                 }
                 .build()
-            gen.initialize(spec)
-            val kp = gen.generateKeyPair()
+            gen.init(spec)
+            val key = gen.generateKey()
             specs().edit().putInt("keySpecVersion", KEY_SPEC_VERSION).apply()
-            return kp
+            key
         } catch (e: Exception) {
             Log.w(TAG, "seal key unavailable (${e.javaClass.simpleName}: ${e.message})")
             null
         }
-    }
-
-    /** RSA-OAEP(SHA-256, MGF1-SHA256). The explicit MGF1 digest is required:
-     *  the JCE default MGF1-SHA1 would NOT match the keystore side, which
-     *  applies its configured digest to MGF1 as well. */
-    private fun rsaWrap(cek: ByteArray, publicKey: java.security.PublicKey): ByteArray {
-        val cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding")
-        cipher.init(Cipher.ENCRYPT_MODE, publicKey, oaepSpec())
-        return cipher.doFinal(cek)
-    }
-
-    private fun rsaUnwrap(wrapped: ByteArray, privateKey: java.security.PrivateKey): ByteArray {
-        val cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding")
-        cipher.init(Cipher.DECRYPT_MODE, privateKey, oaepSpec())
-        return cipher.doFinal(wrapped)
-    }
-
-    private fun oaepSpec() = OAEPParameterSpec(
-        "SHA-256", "MGF1", MGF1ParameterSpec.SHA1, PSource.PSpecified.DEFAULT)
-
-    private fun aesSeal(cek: ByteArray, plain: ByteArray, aad: ByteArray):
-            Pair<ByteArray, ByteArray> {
-        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(cek, "AES"), GCMParameterSpec(128, iv))
-        cipher.updateAAD(aad)
-        return iv to cipher.doFinal(plain)
-    }
-
-    private fun aesUnseal(cek: ByteArray, iv: ByteArray, ct: ByteArray, aad: ByteArray):
-            ByteArray {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(cek, "AES"), GCMParameterSpec(128, iv))
-        cipher.updateAAD(aad)
-        return cipher.doFinal(ct)
     }
 
     private fun sha256Hex(bytes: ByteArray): String =
@@ -276,14 +241,8 @@ object SealedVault {
     }
 
     private fun sealNow(items: List<ProtonItem>, env: Envelope, vaultFile: File) {
-        val kp = ensureKeyPair()
-        if (kp == null && wrapCekHook == null) return
-        val wrap = wrapFn(kp)
-        // Hybrid: ONE random cache key (KEK) RSA-wrapped to the screenlock
-        // keystore key; every item's secrets AES-GCM'd under the KEK (plain
-        // JCE — deterministic on all devices). Only the KEK unwrap is the
-        // gated keystore operation.
-        val kek = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val crypto = cryptoHook ?: (ensureAesKey()?.let { KeystoreSealCrypto(it) })
+            ?: return
         val vaultSha = sha256Hex(vaultFile.takeIf { it.exists() }?.readBytes() ?: ByteArray(0))
         val arr = JSONArray()
         for (item in items) {
@@ -292,7 +251,7 @@ object SealedVault {
                 .put("password", item.password)
                 .put("note", item.note)
                 .put("totpUri", item.totpUri)
-            val (iv, ct) = aesSeal(kek, secrets.toString().toByteArray(), aad)
+            val (iv, ct) = crypto.seal(secrets.toString().toByteArray(), aad)
             arr.put(itemJson(item)
                 .put("iv", Base64.getEncoder().encodeToString(iv))
                 .put("ct", Base64.getEncoder().encodeToString(ct)))
@@ -301,8 +260,6 @@ object SealedVault {
             .put("v", FORMAT_VERSION)
             .put("vaultSha256", vaultSha)
             .put("items", arr)
-            .put("kek", Base64.getEncoder().encodeToString(wrap(kek)))
-        if (kp != null) out.put("keyId", keyIdOf(kp))
         // Envelope PUBLIC bookkeeping (non-secret: pairing records are
         // public keys, tombstones are uuids) — lets a save/edit promote
         // to a full session without GPG.
@@ -339,25 +296,11 @@ object SealedVault {
 
     private fun itemJson(item: ProtonItem): JSONObject = JSONObject()
         .put("uuid", item.itemUuid)
-        .put("name", item.displayName)
+        .put("name", item.name)
         .put("username", item.username)
         .put("email", item.email)
-        .put("urls", JSONArray(item.urls))
+        .put("urls", JSONArray().apply { item.urls.forEach { put(it) } })
         .put("modifyTime", item.modifyTime)
-
-    // -- read: the pre-auth surface ---------------------------------------------
-
-    private fun readCache(): JSONObject? = runCatching {
-        val f = cacheFile()
-        if (!f.exists()) return null
-        JSONObject(f.readText())
-    }.getOrNull()
-
-    fun hasCache(): Boolean = readCache() != null
-
-    fun wipe() {
-        cacheFile().delete()
-    }
 
     /** The cache is fresh when it was sealed against the CURRENT vault file
      *  bytes. Stale ⇒ unsealing would resurrect outdated secrets — flows
@@ -431,19 +374,11 @@ object SealedVault {
 
     private fun unsealInternal(uuids: List<String>): List<ProtonItem> {
         val cache = readCache() ?: return emptyList()
-        val kp = if (unwrapCekHook == null) ensureKeyPair() else null
-        if (kp == null && unwrapCekHook == null) return emptyList()
-        val unwrap = unwrapFn(kp)
-        // Sealed by a different key generation, or the pre-KEK format?
-        // Only the GPG re-seal rebuilds.
-        val cacheKeyId = cache.optString("keyId", "")
-        if (unwrapCekHook == null &&
-            (cacheKeyId.isEmpty() || cacheKeyId != keyIdOf(kp!!)))
-            throw SealedKeyMismatchException()
-        val kekWrapped = cache.optString("kek", "")
-        if (kekWrapped.isEmpty()) throw SealedKeyMismatchException()
-        // THE gated keystore operation — once per unseal batch.
-        val kek = unwrap(Base64.getDecoder().decode(kekWrapped))
+        // v1 caches (the retired KEK/RSA format) = stale: only the GPG
+        // re-seal rebuilds.
+        if (cache.optInt("v", 1) != FORMAT_VERSION) throw SealedKeyMismatchException()
+        val crypto = cryptoHook ?: (ensureAesKey()?.let { KeystoreSealCrypto(it) })
+            ?: return emptyList()
         val stubs = manifestItems().associateBy { it.itemUuid }
         val byUuid = cache.optJSONArray("items")?.let { arr ->
             (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i) }
@@ -454,8 +389,7 @@ object SealedVault {
             val o = byUuid[uuid] ?: continue
             try {
                 val aad = (ITEM_AAD_PREFIX + uuid).toByteArray()
-                val secrets = JSONObject(String(aesUnseal(
-                    kek,
+                val secrets = JSONObject(String(crypto.unseal(
                     Base64.getDecoder().decode(o.getString("iv")),
                     Base64.getDecoder().decode(o.getString("ct")),
                     aad)))
@@ -505,5 +439,17 @@ object SealedVault {
                 ?.let { a -> (0 until a.length()).map { a.getString(it) }.toMutableSet() }
                 ?: mutableSetOf()
         )
+    }
+
+    private fun readCache(): JSONObject? {
+        val f = cacheFile()
+        if (!f.exists()) return null
+        return runCatching { JSONObject(f.readText()) }.getOrNull()
+    }
+
+    fun hasCache(): Boolean = readCache() != null
+
+    fun wipe() {
+        cacheFile().delete()
     }
 }

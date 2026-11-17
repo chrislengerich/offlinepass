@@ -31,17 +31,28 @@ class SealedVaultTest {
     @Before
     fun setup() {
         SealedVault.resetForTest(RuntimeEnvironment.getApplication())
-        // Fake CEK wraps: reversible, clearly non-secret-safe (assertions
-        // below rely on the CEK plaintext NOT appearing — the fake wraps
-        // it, so the invariant tested is the real one: wrapped-CEK bytes in
-        // the file, sealed secrets AES-GCM'd).
-        SealedVault.wrapCekHook = { cek ->
-            ("W:" + Base64.getEncoder().encodeToString(cek.reversedArray())).toByteArray()
-        }
-        SealedVault.unwrapCekHook = { w ->
-            val s = String(w)
-            require(s.startsWith("W:")) { "not wrapped" }
-            Base64.getDecoder().decode(s.substring(2)).reversedArray()
+        // The v2 crypto seam: a software AES-GCM with a throwaway key —
+        // the invariant tested is the real one: the file carries only the
+        // IVs + the ciphertexts (NO plaintext secrets), bound by the
+        // per-item AAD.
+        SealedVault.cryptoHook = object : SealedVault.SealCrypto {
+            private val key = javax.crypto.spec.SecretKeySpec(
+                ByteArray(32) { (it * 7 + 3).toByte() }, "AES")
+            override fun seal(plain: ByteArray, aad: ByteArray): Pair<ByteArray, ByteArray> {
+                val iv = ByteArray(12).also { java.security.SecureRandom().nextBytes(it) }
+                val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+                c.init(javax.crypto.Cipher.ENCRYPT_MODE, key,
+                    javax.crypto.spec.GCMParameterSpec(128, iv))
+                c.updateAAD(aad)
+                return iv to c.doFinal(plain)
+            }
+            override fun unseal(iv: ByteArray, ct: ByteArray, aad: ByteArray): ByteArray {
+                val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+                c.init(javax.crypto.Cipher.DECRYPT_MODE, key,
+                    javax.crypto.spec.GCMParameterSpec(128, iv))
+                c.updateAAD(aad)
+                return c.doFinal(ct)
+            }
         }
         vaultFile = File(RuntimeEnvironment.getApplication().filesDir, "state/10.gpg")
         vaultFile.parentFile?.mkdirs()
