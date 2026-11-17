@@ -388,6 +388,7 @@ fun PinPromptDialog(onPin: (String?) -> Unit) {
 fun LockGateScreen(
     status: String,
     busy: String?,
+    sealedAvailable: Boolean,
     onUnlock: () -> Unit
 ) {
     Column(
@@ -398,11 +399,23 @@ fun LockGateScreen(
         Spacer(Modifier.height(64.dp))
         Text("offlinepass", style = MaterialTheme.typography.headlineSmall)
         Text("Locked", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "The screen lock is required to continue " +
-                "(biometric or device PIN).",
-            style = MaterialTheme.typography.bodyMedium
-        )
+        if (sealedAvailable) {
+            Text(
+                "The screen lock is required to continue " +
+                    "(biometric or device PIN).",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        } else {
+            // The sealed cache is missing/stale (the last seal failed or
+            // none ran yet): the screenlock can't open it — the security
+            // key is the gate until the next successful seal.
+            Text(
+                "The sealed cache is unavailable — unlocking requires " +
+                    "your security key (touch + PIN). The screen lock " +
+                    "protection resumes after the next unlock.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
         Button(onClick = onUnlock, enabled = busy == null) {
             Text(busy ?: "Unlock")
         }

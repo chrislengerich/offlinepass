@@ -1055,6 +1055,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     LockGateScreen(
                         status = status,
                         busy = VaultSession.busy,
+                        // The gate's honest label: the sealed manifest when
+                        // present (the screenlock unlocks); otherwise the
+                        // security-key fallback (the cache empty/stale).
+                        sealedAvailable = VaultSession.screenlockUnlockEnabled() &&
+                            VaultSession.sealedManifestItems().isNotEmpty(),
                         onUnlock = { lifecycleScope.launch { entryGate() } }
                     )
                 }
