@@ -231,6 +231,18 @@ object VaultSession {
         }
     }
 
+    /** The touch prompt: TRUE while ANY YubiKey op waits for a touch (the
+     *  SSH auth, the commit signing, the enrollment, the self-test) — the
+     *  router shows the "touch your YubiKey" dialog, which dismisses the
+     *  moment the op completes (or fails). */
+    var touchPrompt by androidx.compose.runtime.mutableStateOf(false)
+        private set
+
+    internal suspend fun <T> withTouchPrompt(block: suspend () -> T): T {
+        touchPrompt = true
+        try { return block() } finally { touchPrompt = false }
+    }
+
     /** Warms the shared OpenKeyChain binding (the cold start overlaps the
      *  SSH auth and the fetch). */
     suspend fun warmOpenKeyChain() = sharedOpenPgpClient(appContext).warm()
@@ -618,7 +630,10 @@ object VaultSession {
         return com.offlinepass.app.crypto.YubiKitCommitSigner(
             appContext, keyId,
             prompt = { yubikeyPin() },
-            rememberPin = { yubikeyPinRemember(it) })
+            rememberPin = { yubikeyPinRemember(it) },
+            cardSign = { pin, payload -> withTouchPrompt {
+                com.offlinepass.app.crypto.YubiKitSshAuth.sign(appContext, pin, payload)
+            } })
     }
 
     /** The commit signer for sync-time commits (the pre-sync commit and
@@ -689,8 +704,10 @@ object VaultSession {
                     pinCachingSigner(
                         prompt = { yubikeyPin() },
                         sign = { pin, payload ->
-                            val sig = com.offlinepass.app.crypto.YubiKitSshAuth
-                                .sign(context, pin, payload)
+                            val sig = withTouchPrompt {
+                                com.offlinepass.app.crypto.YubiKitSshAuth
+                                    .sign(context, pin, payload)
+                            }
                             yubikeyPinRemember(pin)
                             sig
                         })
@@ -1647,7 +1664,10 @@ object VaultSession {
                 runCatching {
                     val block = com.offlinepass.app.crypto.SshRsaPkcs1
                         .digestInfo("SHA-512", data)
-                    com.offlinepass.app.crypto.YubiKitSshAuth.sign(appContext, pin, block)
+                    withTouchPrompt {
+                        com.offlinepass.app.crypto.YubiKitSshAuth
+                            .sign(appContext, pin, block)
+                    }
                 }
             }
             val sigBlock = signOutcome.getOrElse { e ->

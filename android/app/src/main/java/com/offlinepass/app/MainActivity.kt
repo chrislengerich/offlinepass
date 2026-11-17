@@ -775,8 +775,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             ?: throw java.io.IOException("OpenPGP PIN cancelled")
                         val digestInfo = com.offlinepass.app.crypto.SshRsaPkcs1
                             .digestInfo("SHA-256", nonce)
-                        val sig = com.offlinepass.app.crypto.YubiKitSshAuth.sign(
-                            applicationContext, pin, digestInfo)
+                        val sig = VaultSession.withTouchPrompt {
+                            com.offlinepass.app.crypto.YubiKitSshAuth.sign(
+                                applicationContext, pin, digestInfo)
+                        }
                         VaultSession.yubikeyPinRemember(pin)  // cache-on-success
                         sig
                     }
@@ -869,6 +871,20 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 onBack = { screen = sshKeyBackScreen }
             )
             return
+        }
+        // The YubiKey touch prompt: every state — the card waits for a
+        // touch during the auth/commit/enrollment ops; the dialog shows
+        // and self-dismisses when the op completes (or fails).
+        if (VaultSession.touchPrompt) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { /* the ops dismiss via the state */ },
+                title = { androidx.compose.material3.Text("🔐 Touch your YubiKey") },
+                text = {
+                    androidx.compose.material3.Text(
+                        "The key is waiting — touch it (the LED blinks).",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium)
+                },
+                confirmButton = {})
         }
         val pinCallbackNow = pinCallback
         if (pinCallbackNow != null) {
