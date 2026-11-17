@@ -114,4 +114,32 @@ class KeyMaterialRegistryTest {
         assertTrue(auth.contains("offlinepass-yubikey"))
         assertTrue(auth.contains("other-device"))
     }
+
+    // -- The authorized-keys dedupe keys on the BLOB --------------------------
+
+    @Test
+    fun twoDifferentRsaLinesBothAppend() {
+        // The dedupe must key on the base64 BLOB — the alg token collapsed
+        // every ssh-rsa line into one (the second device's card line never
+        // registered).
+        VaultSession.updateAuthorizedKeysForTest(listOf(
+            "ssh-rsa AAAAone offlinepass-yubikey",
+            "ssh-rsa AAAAtwo offlinepass-card2"))
+        val f = File(repoRoot(), "keys/auth/authorized-keys")
+        assertEquals(2, f.readLines().filter { it.isNotBlank() }.size)
+        // Re-adding the SAME blob stays deduped.
+        VaultSession.updateAuthorizedKeysForTest(listOf(
+            "ssh-rsa AAAAone offlinepass-yubikey"))
+        assertEquals(2, f.readLines().filter { it.isNotBlank() }.size)
+    }
+
+    @Test
+    fun okkHandoffStagesOneOverwrittenFile() {
+        val signDir = File(repoRoot(), "keys/sign").apply { mkdirs() }
+        File(signDir, "63EBEE3E00698013.pub.asc")
+            .writeText("-----BEGIN PGP PUBLIC KEY BLOCK-----\ncard\n")
+        val files = VaultSession.repoKeyMaterialFiles()
+        assertEquals(1, files.size)
+        assertTrue(files[0].name.endsWith(".pub.asc"))
+    }
 }

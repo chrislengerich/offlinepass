@@ -271,12 +271,15 @@ object VaultSession {
         }
     }
 
-    /** Ensures a transport line is present in keys/auth/authorized-keys. */
+    /** Ensures a transport line is present in keys/auth/authorized-keys.
+     *  The dedupe key = the base64 BLOB (the second token) — deduping by
+     *  the algorithm token collapsed every same-alg line into one. */
     private fun appendAuthorizedKey(line: String) {
         val f = authorizedKeysFile()
         f.parentFile?.mkdirs()
+        val blob = line.split(" ").getOrNull(1) ?: return
         val existing = if (f.exists()) f.readLines() else emptyList()
-        if (existing.none { it.substringBefore(" ").substringBefore(" ") == line.substringBefore(" ") }) {
+        if (existing.none { it.split(" ").getOrNull(1) == blob }) {
             f.appendText(line + "\n")
         }
     }
@@ -328,26 +331,18 @@ object VaultSession {
         return out
     }
 
-    /** Stages the repo's key material (one concatenated .asc in Downloads)
-     *  and opens OpenKeyChain's import screen — the file hand-off, since
-     *  the OpenPGP remote API cannot mutate OKK's keyring. */
+    /** Stages the repo's key material in APP storage (one file, overwritten
+     *  on every tap — no accumulation) and opens OpenKeyChain's import
+     *  screen via the app's FileProvider — the file hand-off, since the
+     *  OpenPGP remote API cannot mutate OKK's keyring. */
     fun openOkkImportFromRepo(activity: android.app.Activity): String {
-        if (android.os.Build.VERSION.SDK_INT < 29) {
-            return "The OKK bootstrap needs Android 10+."
-        }
         val files = repoKeyMaterialFiles()
         if (files.isEmpty()) return "The repo carries no public key material yet."
-        val content = files.joinToString("\n") { it.readText().trimEnd() } + "\n"
-        val values = android.content.ContentValues().apply {
-            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, "offlinepass-keys.asc")
-            put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/pgp-keys")
-        }
-        val uri = activity.contentResolver.insert(
-            android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-            ?: return "Could not stage the key material (the Downloads insert failed)."
-        activity.contentResolver.openOutputStream(uri)?.use { out ->
-            out.write(content.toByteArray())
-        } ?: return "Could not write the staged keys."
+        val staged = File(appContext.cacheDir, "okk-import.asc")
+        staged.parentFile?.mkdirs()
+        staged.writeText(files.joinToString("\n") { it.readText().trimEnd() } + "\n")
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            activity, activity.packageName + ".files", staged)
         val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
             .setDataAndType(uri, "application/pgp-keys")
             .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -356,12 +351,17 @@ object VaultSession {
             "OpenKeyChain's import opened — confirm the keys there."
         } catch (e: Exception) {
             "OpenKeyChain's import could not be opened: ${e.message} " +
-                "(the staged file is in Downloads: offlinepass-keys.asc)"
+                "(the staged file: $staged)"
         }
     }
 
     // Test hooks (the singleton + the private layout ops).
     internal fun migrateLegacyKeyLayoutForTest() = migrateLegacyKeyLayout()
+    internal fun updateAuthorizedKeysForTest(lines: List<String>) {
+        val f = authorizedKeysFile()
+        f.parentFile?.mkdirs()
+        lines.forEach { appendAuthorizedKey(it) }
+    }
     internal fun writeDeviceRegistryForTest(entries: List<DeviceRegistryEntry>) =
         writeDeviceRegistry(entries)
 

@@ -248,6 +248,25 @@ fun GetStartedScreen(
         Text("Every step is skippable and stays available in Settings.",
             style = MaterialTheme.typography.bodySmall)
 
+        // The owner/repo FIRST — the enrollment's username derives from it
+        // (a fresh new-vault user has a blank remote draft otherwise).
+        Text("0. GitHub repository (owner/repo)", style = MaterialTheme.typography.titleSmall)
+        var ownerRepo by remember { mutableStateOf(VaultSession.connectDraftOwnerRepo() ?: "") }
+        androidx.compose.material3.OutlinedTextField(
+            value = ownerRepo, onValueChange = { ownerRepo = it },
+            label = { Text("owner/repo") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth())
+        Button(
+            onClick = {
+                VaultSession.saveConnectDraft(ownerRepo.trim(), "ssh")
+                VaultSession.loadRemoteState.value = "git@github.com:$ownerRepo"
+            },
+            enabled = busy == null && ownerRepo.contains("/") &&
+                !ownerRepo.startsWith("/") && !ownerRepo.endsWith("/"),
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Use this repository") }
+        HorizontalDivider()
+
         Text("1. Security key (SSH auth)", style = MaterialTheme.typography.titleSmall)
         if (yubikeyEnrolled) {
             Text("✅ Enrolled — every sync authenticates with the card (PIN + touch).",
@@ -269,17 +288,13 @@ fun GetStartedScreen(
                 style = MaterialTheme.typography.bodySmall)
         } else {
             Text("The first sync commits meta/devices.json + keys/ — the repo " +
-                "becomes the offline keyring for new devices.",
+                "becomes the offline keyring for new devices. Uses the " +
+                "repository from step 0.",
                 style = MaterialTheme.typography.bodySmall)
-            var ownerRepo by remember { mutableStateOf(VaultSession.connectDraftOwnerRepo() ?: "") }
-            androidx.compose.material3.OutlinedTextField(
-                value = ownerRepo, onValueChange = { ownerRepo = it },
-                label = { Text("owner/repo") }, singleLine = true,
-                modifier = Modifier.fillMaxWidth())
             Button(
                 onClick = {
-                    VaultSession.saveConnectDraft(ownerRepo.trim(), "ssh")
-                    onConnectAndSync("git@github.com:$ownerRepo")
+                    val draft = VaultSession.connectDraftOwnerRepo() ?: ""
+                    if (draft.isNotBlank()) onConnectAndSync("git@github.com:$draft")
                 },
                 enabled = busy == null && ownerRepo.contains("/") &&
                     !ownerRepo.startsWith("/") && !ownerRepo.endsWith("/"),
