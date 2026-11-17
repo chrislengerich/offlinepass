@@ -276,9 +276,21 @@ fun GetStartedScreen(
                 "the app matches it against the card with one touch.",
                 style = MaterialTheme.typography.bodySmall)
             Button(
-                onClick = onEnrollFromGithubKeys,
-                enabled = busy == null && VaultSession
-                    .connectDraftOwnerRepo()?.contains("/") == true,
+                onClick = {
+                    // Commit the field FIRST: the enrollment derives the
+                    // username from the draft — a stale draft enrolled the
+                    // wrong user's keys.
+                    val draft = ownerRepo.trim()
+                    if (draft.contains("/") && !draft.startsWith("/") &&
+                        !draft.endsWith("/")
+                    ) {
+                        VaultSession.saveConnectDraft(draft, "ssh")
+                        VaultSession.loadRemoteState.value = "git@github.com:$draft"
+                        onEnrollFromGithubKeys()
+                    }
+                },
+                enabled = busy == null && ownerRepo.contains("/") &&
+                    !ownerRepo.startsWith("/") && !ownerRepo.endsWith("/"),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Enroll from GitHub keys (one touch)")
