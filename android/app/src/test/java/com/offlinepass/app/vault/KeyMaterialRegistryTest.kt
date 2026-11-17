@@ -142,4 +142,27 @@ class KeyMaterialRegistryTest {
         assertEquals(1, files.size)
         assertTrue(files[0].name.endsWith(".pub.asc"))
     }
+    @Test
+    fun deviceListLabelsCarryNameKindAndThisDeviceMarker() {
+        val mine = VaultSession.deviceId()
+        VaultSession.writeDeviceRegistryForTest(listOf(
+            VaultSession.DeviceRegistryEntry(
+                "Pixel 8", "ecdsa-sha2-nistp256 AAAA1 offlinepass-screenlock " +
+                    "device=$mine", null),
+            VaultSession.DeviceRegistryEntry(
+                "Laptop", "ecdsa-sha2-nistp256 AAAA2 offlinepass-screenlock " +
+                    "device=laptop-id", null),
+            VaultSession.DeviceRegistryEntry(
+                "Pixel 8 (card)", "ssh-rsa AAAAcard offlinepass-yubikey",
+                "keys/sign/63EBEE3E00698013.pub.asc")))
+
+        val labels = VaultSession.deviceListLabels()
+
+        assertEquals(3, labels.size)
+        assertTrue(labels[0].contains("Pixel 8 — screenlock (sign) — this device"))
+        assertTrue(labels[1].contains("Laptop — screenlock (sign)") &&
+            !labels[1].contains("this device"))
+        assertTrue(labels[2].contains("card (auth + sign)"))
+    }
+
 }

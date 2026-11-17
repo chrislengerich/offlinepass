@@ -247,6 +247,21 @@ object VaultSession {
         f.writeText(root.toString(2) + "\n")
     }
 
+    /** The device-list labels for Setup: per registry entry — the name,
+     *  the kind, the roles, and a "(this device)" marker where the entry's
+     *  key line carries this device's id. */
+    fun deviceListLabels(): List<String> =
+        readDeviceRegistry().map { e ->
+            // The kind derives from the entry: a cert = the card (it signs
+            // and authenticates); the rest = the screenlock signers.
+            val kindLabel = if (e.cert != null) "card (auth + sign)"
+            else if (e.authKey?.contains(
+                    "offlinepass-screenlock device=${deviceId()}") == true
+            ) "screenlock (sign) — this device"
+            else "screenlock (sign)"
+            "${e.name} — $kindLabel"
+        }
+
     /** This device's screenlock enrollment per the REGISTRY (what other
      *  devices see). The local capability check is KeystoreSigner.hasKey(). */
     fun screenlockRegisteredForThisDevice(): Boolean =

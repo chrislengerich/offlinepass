@@ -324,6 +324,16 @@ fun SetupTabScreen(
             modifier = Modifier.fillMaxWidth()
         ) { Text("Initialize OpenKeyChain from this repo's keys") }
         HorizontalDivider()
+        if (cfg?.remoteUrl != null) {
+            Text("Devices", style = MaterialTheme.typography.titleSmall)
+            val devices = VaultSession.deviceListLabels()
+            if (devices.isEmpty()) {
+                Text("(no devices registered yet — the first sync adds this device)",
+                    style = MaterialTheme.typography.bodySmall)
+            } else {
+                devices.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
+        }
         Text("Commit signer", style = MaterialTheme.typography.titleSmall)
         if (VaultSession.commitSigningMode() == VaultSession.SIGNING_SCREENLOCK) {
             // Screenlock mode: OpenKeyChain signing is not used at all.
