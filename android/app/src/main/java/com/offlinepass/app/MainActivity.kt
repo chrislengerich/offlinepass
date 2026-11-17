@@ -1011,6 +1011,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         // signer when enrolled; otherwise the security key.
                         VaultSession.resolveCommitSigningModeAfterLoad()
                         unlockLoop()
+                        // The post-load checklist: the steps 1-2 render as
+                        // done; step 3 = the (skippable) screenlock enrollment.
+                        if (screen == Screen.Search) screen = Screen.GetStarted
                         // The toast must not lie: unlockLoop reports its own
                         // failure via status (and a failed load leaves the
                         // session Locked).
