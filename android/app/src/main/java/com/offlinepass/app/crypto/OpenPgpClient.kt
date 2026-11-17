@@ -46,6 +46,12 @@ class OpenPgpClient(private val context: Context) : OpenPgpOps {
     companion object {
         private const val TAG = "OpenPgpClient"
 
+        /** The IPC timeouts: a pathological OpenKeyChain state degrades to
+         *  a visible error instead of a silent forever-freeze. The call
+         *  window covers a card decrypt (the touch + the crypto). */
+        private const val BIND_TIMEOUT_MS = 20_000L
+        private const val CALL_TIMEOUT_MS = 45_000L
+
         /** The action OpenKeychain's remote service binds on. */
         const val SERVICE_INTENT_2 = "org.openintents.openpgp.IOpenPgpService2"
 
@@ -178,45 +184,74 @@ class OpenPgpClient(private val context: Context) : OpenPgpOps {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val pipeIdGen = AtomicInteger()
-    private var service: IOpenPgpService2? = null
+    @Volatile private var service: IOpenPgpService2? = null
     private var connection: ServiceConnection? = null
 
-    /** Binds OpenKeychain's service and suspends until the binder arrives. */
+    /** The IPC phases land in the persistent file channel (debug-sync.log):
+     *  this ROM's logd is broken — a hang or a crash leaves the logcat
+     *  record missing, so the file is the only survivable trace. */
+    private fun ipcPhase(phase: String) {
+        runCatching {
+            java.io.File(context.filesDir, "debug-sync.log").appendText(
+                "[${System.currentTimeMillis()}] ipc: $phase\n")
+        }
+    }
+
+    /** Binds OpenKeychain's service and suspends until the binder arrives
+     *  (or a definitive failure resolves null). All three hang modes —
+     *  onNullBinding, onBindingDied, onServiceDisconnected-before-connect —
+     *  are handled by [BinderGate]; the whole await carries a timeout so a
+     *  pathological service degrades to a visible error, never a freeze. */
     private suspend fun connect(): Boolean {
         service?.let { return true }
-        val boundService = suspendCancellableCoroutine { continuation ->
-            // The package is named rather than left implicit: an implicit
-            // service intent only resolves for a package this app can see, and
-            // naming it is the documented way to reach OpenKeychain's service.
-            val intent = Intent(SERVICE_INTENT_2).setPackage(OPENKEYCHAIN_PACKAGE)
-            val newConnection = object : ServiceConnection {
-                override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-                    connection = null
-                    continuation.resume(IOpenPgpService2.Stub.asInterface(binder))
-                }
-
-                override fun onServiceDisconnected(name: ComponentName) {
-                    service = null
-                }
-            }
-            try {
-                if (!context.bindService(intent, newConnection, Context.BIND_AUTO_CREATE)) {
-                    Log.w(TAG, "OpenKeychain service did not resolve for $SERVICE_INTENT_2")
-                    continuation.resume(null)
-                    return@suspendCancellableCoroutine
-                }
-                // Held so close() can unbind: the binding outlives the call.
-                connection = newConnection
-                continuation.invokeOnCancellation {
-                    runCatching { context.unbindService(newConnection) }
-                    connection = null
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "OpenKeychain bind failed: ${e.message}")
-                continuation.resume(null)
-            }
+        ipcPhase("binding ${OPENKEYCHAIN_PACKAGE}…")
+        val gate = BinderGate<IOpenPgpService2> { binder ->
+            IOpenPgpService2.Stub.asInterface(binder)
         }
+        val boundService = kotlinx.coroutines.withTimeoutOrNull(BIND_TIMEOUT_MS) {
+            suspendCancellableCoroutine { continuation ->
+                // The package is named rather than left implicit: an implicit
+                // service intent only resolves for a package this app can see, and
+                // naming it is the documented way to reach OpenKeychain's service.
+                val intent = Intent(SERVICE_INTENT_2).setPackage(OPENKEYCHAIN_PACKAGE)
+                val newConnection = object : ServiceConnection {
+                    override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+                        connection = null
+                        gate.onServiceConnected(binder)
+                    }
+
+                    override fun onServiceDisconnected(name: ComponentName) {
+                        service = null
+                    }
+
+                    override fun onBindingDied(name: ComponentName) {
+                        gate.onBindingDied()
+                    }
+
+                    override fun onNullBinding(name: ComponentName) {
+                        gate.onNullBinding()
+                    }
+                }
+                try {
+                    if (!context.bindService(intent, newConnection, Context.BIND_AUTO_CREATE)) {
+                        Log.w(TAG, "OpenKeychain service did not resolve for $SERVICE_INTENT_2")
+                        gate.onNullBinding()
+                        return@suspendCancellableCoroutine
+                    }
+                    // Held so close() can unbind: the binding outlives the call.
+                    connection = newConnection
+                    continuation.invokeOnCancellation {
+                        runCatching { context.unbindService(newConnection) }
+                        connection = null
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "OpenKeychain bind failed: ${e.message}")
+                    gate.onNullBinding()
+                }
+            }
+        } ?: gate.await() // the timeout elapsed: adopt the gate's outcome
         service = boundService
+        ipcPhase(if (boundService != null) "bound ✓" else "bind FAILED (null)")
         return boundService != null
     }
 
@@ -251,8 +286,17 @@ class OpenPgpClient(private val context: Context) : OpenPgpOps {
                     pump = pipeTo(output, outputFd, pipeId)
                 }
                 // Blocks until the service returns; binder calls are already
-                // off the main thread via Dispatchers.IO.
-                val result = api.execute(data, inputFd, pipeId)
+                // off the main thread via Dispatchers.IO. The timeout turns a
+                // dead service into a visible failure (withTimeoutOrNull →
+                // the error result path below).
+                ipcPhase("${data.action} sent (pipe $pipeId)")
+                val result = kotlinx.coroutines.withTimeoutOrNull(CALL_TIMEOUT_MS) {
+                    api.execute(data, inputFd, pipeId)
+                } ?: run {
+                    ipcPhase("${data.action} TIMED OUT (${CALL_TIMEOUT_MS}ms)")
+                    throw java.io.IOException("OpenKeyChain did not answer " +
+                        "${data.action} within ${CALL_TIMEOUT_MS}ms")
+                }
                 // Cross-process extras carry lazily-unparceled values —
                 // without the app classloader set, parcelable extras (the
                 // interaction PendingIntent, OpenPgpError) read as null and
