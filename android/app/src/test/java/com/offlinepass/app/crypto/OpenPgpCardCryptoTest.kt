@@ -1,17 +1,15 @@
 package com.offlinepass.app.crypto
 
 import org.bouncycastle.openpgp.PGPObjectFactory
-import org.bouncycastle.openpgp.PGPPublicKey
-import org.bouncycastle.openpgp.PGPPublicKeyRing
 import org.bouncycastle.openpgp.PGPSecretKeyRing
 import org.bouncycastle.openpgp.PGPUtil
 import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator
 import org.bouncycastle.openpgp.operator.jcajce.JcePBESecretKeyDecryptorBuilder
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertArrayEquals
-import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.ByteArrayInputStream
 import java.security.Security
 
 /**
@@ -36,31 +34,49 @@ class OpenPgpCardCryptoTest {
     /** The second fixture key ("second@fixture.test"). */
     private val secondKeyId = 0x4199727F7793732FUL.toLong()
 
-    /** The "card": RSA-decrypts the PKESK's MPI value with the given
-     *  secret key — the software stand-in for the YubiKey's PSO:DEC
-     *  (the same raw block in/out). The input is left-padded to the
-     *  modulus length, exactly like the production YubiKit lambda. */
+    /** The "card" (the CLASSIC shape): RSA-decrypts the PKESK's MPI value
+     *  and returns the full PKCS#1 type-2 block — the same raw block in/out
+     *  as the older YubiKey applets' PSO:DEC. The input is left-padded to
+     *  the modulus length, exactly like the production YubiKit lambda. */
     private fun softwareCard(secResource: String, keyId: Long): (ByteArray) -> ByteArray {
         return { mpiValue: ByteArray ->
-            val decoded = PGPUtil.getDecoderStream(resource(secResource).inputStream())
-            val ring = PGPObjectFactory(decoded, JcaKeyFingerprintCalculator()).nextObject()
-                    as PGPSecretKeyRing
-            val sk = ring.getSecretKey(keyId.toLong())
-                ?: throw IllegalStateException("the fixture key 0x${keyId.toString(16)} is missing")
-            val privJca = org.bouncycastle.openpgp.operator.jcajce.JcaPGPKeyConverter().getPrivateKey(
-                sk.extractPrivateKey(
-                    JcePBESecretKeyDecryptorBuilder().setProvider("BC").build(charArrayOf())))
-            val c = javax.crypto.Cipher.getInstance("RSA/ECB/NoPadding")
-            c.init(javax.crypto.Cipher.DECRYPT_MODE, privJca)
-            // Left-pad to the modulus length (the MPI may have lost its
-            // leading zero via BigInteger normalization).
             val padded = ByteArray(256) { 0 }
             mpiValue.copyInto(padded, 256 - mpiValue.size)
-            c.doFinal(padded)
+            softwareRsaDecrypt(secResource, keyId, padded)
         }
     }
 
-    private fun recipientKeys(vararg resources: String): List<PGPPublicKey> =
+    /** The "newer applet" card: returns the ALREADY-UNPADDED session data
+     *  M (algo || key || checksum) instead of the PKCS#1 type-2 block —
+     *  YubiKit's "decrypted and unpadded plaintext" shape. */
+    private fun softwareCardUnpadded(secResource: String, keyId: Long): (ByteArray) -> ByteArray {
+        return { mpiValue: ByteArray ->
+            val padded = ByteArray(256) { 0 }
+            mpiValue.copyInto(padded, 256 - mpiValue.size)
+            com.offlinepass.app.crypto.OpenPgpSeipd.stripType2(
+                softwareRsaDecrypt(secResource, keyId, padded))
+        }
+    }
+
+    private fun softwareRsaDecrypt(
+        secResource: String,
+        keyId: Long,
+        input: ByteArray
+    ): ByteArray {
+        val decoded = PGPUtil.getDecoderStream(resource(secResource).inputStream())
+        val ring = PGPObjectFactory(decoded, JcaKeyFingerprintCalculator()).nextObject()
+                as PGPSecretKeyRing
+        val sk = ring.getSecretKey(keyId.toLong())
+            ?: throw IllegalStateException("the fixture key 0x${keyId.toString(16)} is missing")
+        val privJca = org.bouncycastle.openpgp.operator.jcajce.JcaPGPKeyConverter().getPrivateKey(
+            sk.extractPrivateKey(
+                JcePBESecretKeyDecryptorBuilder().setProvider("BC").build(charArrayOf())))
+        val c = javax.crypto.Cipher.getInstance("RSA/ECB/NoPadding")
+        c.init(javax.crypto.Cipher.DECRYPT_MODE, privJca)
+        return c.doFinal(input)
+    }
+
+    private fun recipientKeys(vararg resources: String): List<org.bouncycastle.openpgp.PGPPublicKey> =
         resources.flatMap { OpenPgpCardCrypto.loadRecipientKeys(resource(it)) }
 
     @Test
@@ -105,7 +121,38 @@ class OpenPgpCardCryptoTest {
         try {
             runBlocking {
                 OpenPgpCardCrypto.decrypt(
-                    resource("fixture-enc.gpg"), longArrayOf(secondKeyId), softwareCard("second-sec.asc", secondKeyId))
+                    resource("fixture-enc.gpg"), longArrayOf(secondKeyId),
+                    softwareCard("second-sec.asc", secondKeyId))
+            }
+        } catch (e: Exception) {
+            failed = true
+        }
+        assertEquals(true, failed)
+    }
+
+    @Test
+    fun unpaddedResponseShapeStillDecrypts() {
+        // The newer YubiKey applets return the ALREADY-UNPADDED session
+        // data (M = algo || key || checksum) instead of the PKCS#1 block —
+        // the factory must accept both shapes.
+        val plain = runBlocking {
+            OpenPgpCardCrypto.decrypt(
+                resource("fixture-enc.gpg"), longArrayOf(fixtureKeyId),
+                softwareCardUnpadded("fixture-sec.asc", fixtureKeyId))
+        }
+        assertEquals(String(resource("fixture-plain.txt")), String(plain))
+    }
+
+    @Test
+    fun unpaddedShapeWrongCardFailsCleanly() {
+        // The unpadded shape from a card that owns no PKESK: the checksum
+        // check must reject the garbage session data cleanly.
+        var failed = false
+        try {
+            runBlocking {
+                OpenPgpCardCrypto.decrypt(
+                    resource("fixture-enc.gpg"), longArrayOf(fixtureKeyId),
+                    softwareCardUnpadded("second-sec.asc", secondKeyId))
             }
         } catch (e: Exception) {
             failed = true

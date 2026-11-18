@@ -1,6 +1,5 @@
 package com.offlinepass.app.crypto
 
-import kotlinx.coroutines.runBlocking
 import org.bouncycastle.openpgp.PGPCompressedData
 import org.bouncycastle.openpgp.PGPEncryptedDataGenerator
 import org.bouncycastle.openpgp.PGPEncryptedDataList
@@ -58,16 +57,27 @@ object OpenPgpCardCrypto {
             secKeyData: Array<ByteArray>,
             pkeskVersion: Int
         ): ByteArray {
-            val m: ByteArray = try {
+            val raw = try {
                 // runBlocking: the call chain is synchronous (BC's) and
                 // lives on Dispatchers.IO — the card op blocks this thread
                 // either way; the touch prompt renders on Main.
-                OpenPgpSeipd.stripType2(runBlocking {
+                kotlinx.coroutines.runBlocking {
                     cardDecrypt(mpiValue(secKeyData[0], pkeskVersion))
-                })
+                }
             } catch (e: Exception) {
                 throw PGPException("the card decrypt failed: ${e.message}", e)
             }
+            // TWO RESPONSE SHAPES: the classic cards return the full PKCS#1
+            // type-2 block (00 02 PS 00 M — strip it); the newer YubiKey
+            // applets return the ALREADY-UNPADDED session data M
+            // (algo || key || checksum — see YubiKit's "decrypted and
+            // unpadded plaintext"). The sizes never collide: a padded
+            // block = the modulus length (256+), M ≤ the key size + 3.
+            val m = if (raw.size > 128) try {
+                OpenPgpSeipd.stripType2(raw)
+            } catch (e: Exception) {
+                throw PGPException("the card decrypt failed: not a type-2 block (a ${raw.size}B response)", e)
+            } else raw
             if (m.size < 4) throw PGPException("the recovered session data too short")
             return m
         }
