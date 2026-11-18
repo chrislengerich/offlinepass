@@ -54,6 +54,7 @@ fun SetupChoiceScreen(
     status: String,
     recipientIds: List<Long>,
     onPickRecipients: () -> Unit,
+    onAddCardRecipient: () -> Unit = {},
     onRemoveRecipient: (Long) -> Unit,
     onNewVault: () -> Unit,
     onImportProton: (remote: String?, pat: String, uri: android.net.Uri) -> Unit,
@@ -113,7 +114,7 @@ fun SetupChoiceScreen(
                  " Recipients are picked from OpenKeyChain before creating. A remote can be" +
                  " attached later from Setup.",
                 style = MaterialTheme.typography.bodySmall)
-            RecipientsEditor(recipientIds, onPickRecipients, onRemoveRecipient)
+            RecipientsEditor(recipientIds, onAddCardRecipient, onPickRecipients, onRemoveRecipient)
             Button(
                 onClick = { onNewVault() },
                 enabled = recipientIds.isNotEmpty(),
@@ -125,7 +126,7 @@ fun SetupChoiceScreen(
             Text("Import a Proton export — pick the recipients (who can open " +
                 "the imported entries) first, then the export file.",
                 style = MaterialTheme.typography.bodySmall)
-            RecipientsEditor(recipientIds, onPickRecipients, onRemoveRecipient)
+            RecipientsEditor(recipientIds, onAddCardRecipient, onPickRecipients, onRemoveRecipient)
             Button(
                 onClick = { importPicker.launch(arrayOf("*/*")) },
                 enabled = recipientIds.isNotEmpty(),
@@ -204,17 +205,14 @@ fun SetupChoiceScreen(
 @Composable
 private fun RecipientsEditor(
     recipientIds: List<Long>,
+    onAddCardRecipient: () -> Unit,
     onPickRecipients: () -> Unit,
     onRemoveRecipient: (Long) -> Unit
 ) {
-    Text("Before adding a recipient: set up the security key in " +
-        "OpenKeyChain — import the key (the public key at minimum) and " +
-        "pair the security key (OpenKeyChain menu → Manage Smart Card), " +
-        "so the picker lists the encryption subkey to encrypt to.",
-        style = MaterialTheme.typography.bodySmall)
-    Text("Recipients (from OpenKeyChain picker)", style = MaterialTheme.typography.titleSmall)
+    Text("Recipients (from the vault ledger; adds use the card or OpenKeyChain)",
+        style = MaterialTheme.typography.titleSmall)
     if (recipientIds.isEmpty()) {
-        Text("(none — pick at least one before creating/importing)",
+        Text("(none — add at least one before creating/importing)",
             style = MaterialTheme.typography.bodySmall)
     }
     recipientIds.forEach { id ->
@@ -224,8 +222,15 @@ private fun RecipientsEditor(
             TextButton(onClick = { onRemoveRecipient(id) }) { Text("Remove") }
         }
     }
-    Button(onClick = onPickRecipients, enabled = true, modifier = Modifier.fillMaxWidth()) {
-        Text("Add recipient (pick in OpenKeyChain)")
+    // The PRIMARY = the card-based: the attached card's DEC slot = the
+    // raw public key (the no-OpenKeyChain discovery — the fingerprint
+    // self-check gates it). The OKK picker = the secondary (the
+    // third-party keys).
+    Button(onClick = onAddCardRecipient, enabled = true, modifier = Modifier.fillMaxWidth()) {
+        Text("Add recipient from card")
+    }
+    TextButton(onClick = onPickRecipients, enabled = true, modifier = Modifier.fillMaxWidth()) {
+        Text("Add recipient from OpenKeyChain")
     }
 }
 

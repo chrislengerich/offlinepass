@@ -959,6 +959,15 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 status = status,
                 recipientIds = VaultSession.recipientKeyIds(),
                 onPickRecipients = { lifecycleScope.launch { pickRecipientsUntilDone() } },
+                onAddCardRecipient = {
+                    lifecycleScope.launch {
+                        status = when (val r = VaultSession.addCardRecipient()) {
+                            VaultSession.Result.Success -> "The card added as a recipient — " +
+                                "the first save encrypts to it."
+                            else -> "Add card: $r"
+                        }
+                    }
+                },
                 onRemoveRecipient = { id ->
                     VaultSession.setRecipientKeyIds(VaultSession.recipientKeyIds() - id)
                     status = "Recipient removed."
