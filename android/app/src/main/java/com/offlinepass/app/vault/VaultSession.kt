@@ -92,9 +92,16 @@ object VaultSession {
     internal var vaultDecryptBytes: suspend (ByteArray) -> ByteArray = { bytes ->
         kotlinx.coroutines.withContext(Dispatchers.IO) {
             val pin = yubikeyPin() ?: throw java.io.IOException("OpenPGP PIN cancelled")
-            val plain = com.offlinepass.app.crypto.YubiKitCardDecrypt.decryptEnvelopeBytes(
-                appContext, bytes, pin
-            ) { op -> withTouchPrompt { op() } }
+            val plain = try {
+                com.offlinepass.app.crypto.YubiKitCardDecrypt.decryptEnvelopeBytes(
+                    appContext, bytes, pin,
+                    log = { loadPhase(it) },
+                ) { op -> withTouchPrompt { op() } }
+            } catch (e: com.offlinepass.app.crypto.OpenPgpPinRejected) {
+                // The card proved the cached PIN wrong — never retry it.
+                yubikeyPinInvalidate()
+                throw e
+            }
             yubikeyPinRemember(pin)
             plain
         }
@@ -230,21 +237,38 @@ object VaultSession {
     private var cachedYubikeyPinAt = 0L
 
     /** The YubiKey OpenPGP user PIN: the 60s-valid cache, or a fresh
-     *  prompt. Null = the user cancelled. */
+     *  prompt. Null = the user cancelled.
+     *
+     *  Returns a COPY: the cached array must never leak to a caller that
+     *  could mutate it — and it MUST never be the same object the pin
+     *  prompt returned, because the expiry path zero-fills the cache and
+     *  PinCachingSigner holds ITS own reference to the same array (the
+     *  shared array was zeroed out from under the SSH handshake's cache,
+     *  and the handshake then signed with an all-zeros PIN — "bad pin"
+     *  with no prompt, measured on-device). */
     suspend fun yubikeyPin(): CharArray? {
         cachedYubikeyPin?.takeIf {
             System.currentTimeMillis() - cachedYubikeyPinAt < 60_000
-        }?.let { return it }
+        }?.let { return it.copyOf() }
         cachedYubikeyPin?.fill('0')
         cachedYubikeyPin = null
         return openPgpPinPrompt?.invoke()
     }
 
-    /** Caches [pin] (on a successful sign only). */
+    /** Caches a COPY of [pin] (on a successful card op only). */
     fun yubikeyPinRemember(pin: CharArray) {
         cachedYubikeyPin?.fill('0')
-        cachedYubikeyPin = pin
+        cachedYubikeyPin = pin.copyOf()
         cachedYubikeyPinAt = System.currentTimeMillis()
+    }
+
+    /** Drops the cached PIN — called when the card REJECTS it (a proven-
+     *  wrong cached PIN must never be retried: every retry burns one of
+     *  the card's 3 attempts). */
+    fun yubikeyPinInvalidate() {
+        cachedYubikeyPin?.fill('0')
+        cachedYubikeyPin = null
+        cachedYubikeyPinAt = 0
     }
 
     // -- The device identity + the repo's key-material registry --------------
@@ -1117,6 +1141,7 @@ object VaultSession {
             return Result.Success
         } catch (e: Exception) {
             Log.w(TAG, "unlock failed: ${e.message}")
+            loadPhase("decrypt FAILED: ${e.javaClass.simpleName}: ${e.message}")
             return Result.Error("${e.javaClass.simpleName}: ${e.message}")
         } finally {
             busy = null
