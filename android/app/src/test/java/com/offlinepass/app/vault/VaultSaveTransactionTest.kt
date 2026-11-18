@@ -258,6 +258,46 @@ class VaultSaveTransactionTest {
         // The persisted form = the same prefs the save reads.
         assertTrue(VaultSession.recipientKeyIds().contains(
             java.lang.Long.parseUnsignedLong(ledgerId, 16)))
+        // The adoption outcome, surfaced for the Setup's status.
+        assertEquals("Recipients adopted: 2 (from the vault)", VaultSession.seedStatus)
+    }
+
+    @Test
+    fun seedReadsLegacyFlatLayoutAndRecentCommitsRender() = runBlocking {
+        // The legacy flat layout (the pre-migration repos) + the git-log
+        // display: the recentCommits = the local main's last 5, the oldest
+        // last, with the sha/subject/author/age format.
+        val legacyId = "A367234D973E0E3E"
+        gitRoot().mkdirs()
+        File(gitRoot(), "keys").mkdirs()
+        File(gitRoot(), "keys/$legacyId.public.asc").writeText("legacy key\n")
+        val ids = VaultSession.seedRecipientsFromRepo()
+        assertTrue("the legacy flat id must parse",
+            ids.contains(java.lang.Long.parseUnsignedLong(legacyId, 16)))
+        assertEquals("Recipients adopted: 1 (from the vault)", VaultSession.seedStatus)
+
+        // The commits: a real local repo with 2 commits (the 7th+ = the
+        // extra one beyond the limit-5 must be dropped).
+        org.eclipse.jgit.api.Git.init().setDirectory(gitRoot()).call().use { git ->
+            git.repository.updateRef(org.eclipse.jgit.lib.Constants.HEAD)
+                .link(org.eclipse.jgit.lib.Constants.R_HEADS + "main")
+            repeat(7) { n ->
+                File(gitRoot(), "state").mkdirs()
+                File(gitRoot(), "state/f$n").writeText("x$n")
+                git.add().addFilepattern(".").call()
+                val ident = org.eclipse.jgit.lib.PersonIdent("t", "t@t")
+                git.commit().setAuthor(ident).setCommitter(ident)
+                    .setMessage("Update 10.gpg (rev ${n + 1})").call()
+            }
+        }
+        val commits = VaultSession.recentCommits()
+        assertEquals("the limit = 5", 5, commits.size)
+        assertTrue("the newest first",
+            commits.first().contains("Update 10.gpg (rev 7)"))
+        assertTrue("the 5th = rev 3", commits.last().contains("Update 10.gpg (rev 3)"))
+        assertTrue("the sha + the author ride along",
+            commits.first().length > "Update 10.gpg (rev 7)".length &&
+                commits.first().contains("t"))
     }
 
     @Test
