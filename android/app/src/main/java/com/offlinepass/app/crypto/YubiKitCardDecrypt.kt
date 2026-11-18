@@ -56,8 +56,17 @@ object YubiKitCardDecrypt {
             val session = OpenPgpSession(connection as SmartCardConnection)
             try {
                 Log.i(TAG, "yubikit: applet=${session.getVersion()}")
-                // The user PIN gates PSO:DEC on the OpenPGP applet.
-                session.verifyUserPin(pin, false)
+                // The user PIN gates PSO:DEC on the OpenPGP applet. A wrong
+                // PIN burns one of the card's 3 attempts — surface the
+                // remaining count, never silently walk toward a lockout.
+                try {
+                    session.verifyUserPin(pin, false)
+                } catch (e: com.yubico.yubikit.core.application.InvalidPinException) {
+                    val left = runCatching { session.pinStatus.attemptsUser }.getOrDefault(-1)
+                    throw java.io.IOException(
+                        if (left >= 0) "wrong OpenPGP PIN — $left attempt(s) left before the key locks"
+                        else "wrong OpenPGP PIN", e)
+                }
                 // The DEC slot's fingerprint → the PKESK dispatch id (an
                 // unauthenticated read; the key id = the fp's low half).
                 val decFp = session.applicationRelatedData.discretionary

@@ -90,12 +90,14 @@ object VaultSession {
      * prompt wraps the card op.
      */
     internal var vaultDecryptBytes: suspend (ByteArray) -> ByteArray = { bytes ->
-        val pin = yubikeyPin() ?: throw java.io.IOException("OpenPGP PIN cancelled")
-        val plain = com.offlinepass.app.crypto.YubiKitCardDecrypt.decryptEnvelopeBytes(
-            appContext, bytes, pin
-        ) { op -> withTouchPrompt { op() } }
-        yubikeyPinRemember(pin)
-        plain
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            val pin = yubikeyPin() ?: throw java.io.IOException("OpenPGP PIN cancelled")
+            val plain = com.offlinepass.app.crypto.YubiKitCardDecrypt.decryptEnvelopeBytes(
+                appContext, bytes, pin
+            ) { op -> withTouchPrompt { op() } }
+            yubikeyPinRemember(pin)
+            plain
+        }
     }
 
     /** The vault encrypt: the plaintext JSON → the OpenPGP ciphertext for
@@ -725,7 +727,7 @@ object VaultSession {
 
     /** The commit signer for sync-time commits (the pre-sync commit and
      *  the merge commit) per the active signing mode. */
-    fun syncCommitSigner(client: OpenPgpClient): org.eclipse.jgit.lib.Signer? {
+    fun syncCommitSigner(client: OpenPgpOps): org.eclipse.jgit.lib.Signer? {
         return when (commitSigningMode()) {
             SIGNING_SCREENLOCK -> keystoreSignerHook
                 ?.let { com.offlinepass.app.crypto.KeystoreCommitSigner(it) }
@@ -1075,7 +1077,11 @@ object VaultSession {
     fun savePat(pat: String) = secretStore().save("pat", pat)
     fun hasPat(): Boolean = secretStore().contains("pat")
 
-    private fun pat(): String? = secretStore().read("pat")
+    /** The test seam: the PAT override (the JVM tests cannot touch the
+     *  AndroidKeyStore-backed SecretStore). Null = the real store. */
+    internal var patOverride: String? = null
+
+    private fun pat(): String? = patOverride ?: secretStore().read("pat")
 
     // -- unlock ----------------------------------------------------------------
 
@@ -2034,7 +2040,7 @@ object VaultSession {
                             ?: throw IllegalStateException("Screenlock signer unavailable")
                         com.offlinepass.app.crypto.KeystoreCommitSigner(hook)
                     }
-                    SIGNING_YUBIKEY -> syncCommitSigner(sharedOpenPgpClient(appContext))
+                    SIGNING_YUBIKEY -> syncCommitSigner(openPgpClientFactory(appContext))
                         ?: throw IllegalStateException(sshIdentityUnavailable
                             ?: "YubiKey signer unavailable")
                     else -> {
@@ -2045,7 +2051,7 @@ object VaultSession {
                             ensureSignKeyReady(preSignId, openPgpClientFactory(appContext))?.let { msg ->
                                 throw IllegalStateException(msg)
                             }
-                            OpenKeyChainSigner(sharedOpenPgpClient(appContext), preSignId)
+                            OpenKeyChainSigner(openPgpClientFactory(appContext), preSignId)
                         } else null
                     }
                 }
@@ -2110,7 +2116,7 @@ object VaultSession {
                         // Rebuild the branch on top of origin/main with the
                         // merged (re-encrypted) vault file.
                         git.resetHardTo(root, "origin/main")
-                        val client = sharedOpenPgpClient(appContext)
+                        val client = openPgpClientFactory(appContext)
                         val keyIds = cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()
                         if (keyIds.isEmpty()) throw IllegalStateException("no recipients")
                         // The recipients' armored files must be present for
@@ -2169,7 +2175,13 @@ object VaultSession {
             state = State.Unlocked(env.items)
             sealIfEnabled(env.items, env)
         } catch (e: Exception) {
+            // The repo pulled but the session could not adopt it — say so
+            // loudly: saving on top of a stale session invites a divergence
+            // merge, and the on-disk vault is AHEAD of memory until the
+            // next unlock.
             Log.w(TAG, "post-pull decrypt failed: ${e.message}")
+            syncStatus = "pulled the remote vault but could not decrypt it " +
+                "(${e.message}) — lock and re-unlock with the key"
         }
     }
 

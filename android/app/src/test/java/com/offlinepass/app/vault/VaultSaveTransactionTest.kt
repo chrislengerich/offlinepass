@@ -150,6 +150,7 @@ class VaultSaveTransactionTest {
         VaultSession.openPgpClientFactory = { OpenPgpClient(it) }
         VaultSession.vaultEncryptBytes = prodEncrypt
         VaultSession.vaultDecryptBytes = prodDecrypt
+        VaultSession.patOverride = null
     }
 
     // -- success ------------------------------------------------------------
@@ -308,6 +309,72 @@ class VaultSaveTransactionTest {
         assertEquals("pending", VaultSession.lastSaveRemoteState)
         val state = VaultSession.state as VaultSession.State.Unlocked
         assertEquals(listOf("New"), state.items.map { it.name })
+    }
+
+    @Test
+    fun divergenceMergeDecryptsRemoteAndPreservesBothSides() = runBlocking {
+        // THE REGRESSION TEST for the merge data-loss bug: the vault files
+        // are ENCRYPTED — the merge used to feed the ciphertext to
+        // Envelope.fromJson, silently merge EMPTY envelopes and wipe the
+        // vault on divergence. Now the merge decrypts both sides first.
+        //
+        // Choreography over a real bare file:// remote:
+        //   1. the local save+push (items: [Local Item])
+        //   2. a "second device" clone commits its own vault ([Remote Item])
+        //      and pushes → the remote and the local diverge
+        //   3. syncNow → the Diverged branch → the remote decrypt →
+        //      unionMerge → re-encrypt → push
+        val remoteDir = File(app.cacheDir, "op-diverge-remote.git")
+        remoteDir.deleteRecursively()
+        org.eclipse.jgit.api.Git.init().setBare(true).setDirectory(remoteDir).call().close()
+        val remoteUrl = "file://" + remoteDir.absolutePath
+        VaultSession.configure(remoteUrl, listOf("user@example.com"))
+        VaultSession.patOverride = "fake-pat" // ignored by the file:// transport
+        seedRepo("PREVIOUS".toByteArray())
+
+        val saved = VaultSession.save(listOf(item("Local Item")))
+        assertTrue("save must succeed, got $saved", saved is VaultSession.Result.Success)
+        VaultGitClient().pushBranch(remoteUrl, "fake-pat", gitRoot())
+
+        // The second device: clone, write ITS OWN encrypted vault, commit, push.
+        val second = File(app.cacheDir, "op-diverge-second")
+        second.deleteRecursively()
+        org.eclipse.jgit.api.Git.cloneRepository().setURI(remoteUrl).setDirectory(second).call().use { g ->
+            val env = Envelope(deviceId = "second-device").also { e ->
+                e.rev = 5
+                e.items = mutableListOf(item("Remote Item"))
+            }
+            File(second, "state/10.gpg").apply { parentFile?.mkdirs() }.writeBytes(
+                java.util.Base64.getEncoder()
+                    .encode(env.toJsonObject().toString().toByteArray(Charsets.UTF_8)))
+            g.add().addFilepattern(".").call()
+            g.commit().setAuthor(PersonIdent("second", "second@test"))
+                .setCommitter(PersonIdent("second", "second@test"))
+                .setMessage("second device rev 5").call()
+            g.push().setRemote("origin").call()
+        }
+
+        // The local head and the remote tip are siblings — syncNow's fetch
+        // (by remote name, with the refspec) must see Diverged and merge.
+        val r = VaultSession.syncNow()
+
+        assertTrue("sync must succeed, got $r", r is VaultSession.Result.Success)
+        val state = VaultSession.state as VaultSession.State.Unlocked
+        val names = state.items.map { it.name }.sorted()
+        assertTrue("both sides must survive: $names",
+            names.containsAll(listOf("Local Item", "Remote Item")))
+
+        // The pushed merged vault decodes to a JSON carrying both items.
+        // (Fetch first: the push does not move the local's origin/main
+        // tracking ref.)
+        org.eclipse.jgit.api.Git.open(gitRoot()).use { g ->
+            g.fetch().setRemote("origin").call()
+        }
+        val pushed = VaultGitClient().readFileAt(gitRoot(), "origin/main:state/10.gpg")
+        assertNotNull("merged vault must be pushed", pushed)
+        val pushedJson = String(java.util.Base64.getDecoder().decode(pushed!!))
+        assertTrue(pushedJson.contains("Local Item"))
+        assertTrue(pushedJson.contains("Remote Item"))
     }
 
     @Test

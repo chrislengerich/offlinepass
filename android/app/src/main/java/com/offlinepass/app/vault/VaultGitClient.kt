@@ -65,19 +65,32 @@ class VaultGitClient {
             Git.open(root).use { git ->
                 // A local-only repo gaining a remote for the first time:
                 // connect origin (the history merges via syncNow's
-                // divergence handling).
+                // divergence handling). The config write (NOT remoteAdd —
+                // it sets only the URL, no fetch refspec, so every later
+                // fetch threw "Nothing to fetch" and origin/main never
+                // updated — the pulls silently never happened here).
                 if (git.repository.config.getString("remote", "origin", "url") == null) {
-                    git.remoteAdd().setName("origin").setUri(org.eclipse.jgit.transport.URIish(remote)).call()
-                    Log.i(TAG, "connected local repo to origin")
+                    git.repository.config.apply {
+                        setString("remote", "origin", "url", remote)
+                        setStringList("remote", "origin", "fetch",
+                            listOf("+refs/heads/*:refs/remotes/origin/*"))
+                    }.save()
+                    Log.i(TAG, "connected local repo to origin (with the fetch refspec)")
                 }
                 // A remote with no refs yet (first device in an empty repo)
                 // is the normal first-use state, not a failure. ONLY that
                 // case is tolerated: an auth/transport failure must
                 // propagate — swallowing it here returned Success with an
                 // empty worktree and the load "succeeded" without a vault.
+                // Fetch by NAME ("origin"): fetching by URL string yields a
+                // URI-transport with NO refspecs — TransportException
+                // "Nothing to fetch.", silently swallowed below — the fetch
+                // was a no-op all along (masked by the clone path, where the
+                // worktree is already fresh). The name resolves the config's
+                // fetch refspec and actually updates origin/*.
                 runCatching {
                     git.fetch()
-                        .setRemote(remote)
+                        .setRemote("origin")
                         .also { if (!isSshRemote(remote)) it.setCredentialsProvider(TokenCredentials(pat)) }
                         .setTagOpt(TagOpt.NO_TAGS)
                         .setTimeout(30)
