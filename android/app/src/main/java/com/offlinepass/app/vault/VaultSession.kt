@@ -990,6 +990,12 @@ object VaultSession {
     /** Envelope revision of the currently-open vault; bumped on each save. */
     private var rev: Long = 0
 
+    /** The load's recipient-adoption outcome, surfaced by the Setup's
+     *  status ("Recipients adopted: N (from the vault)"). Cleared on
+     *  the session reset. */
+    var seedStatus by androidx.compose.runtime.mutableStateOf<String?>(null)
+        private set
+
     /** The envelope as loaded (tombstones + unknown fields preserved through saves). */
     private var loadedEnvelope: Envelope? = null
 
@@ -1023,6 +1029,7 @@ object VaultSession {
         appContext = context.applicationContext
         rev = 0
         loadedEnvelope = null
+        seedStatus = null
         stubSession = false
         state = if (File(vaultFilePath()).exists()) State.Locked else State.NoConfig
         pendingPush = false
@@ -1887,6 +1894,10 @@ object VaultSession {
         // answers WHY without the logcat (the ROM's logd is unreliable).
         loadPhase("recipient seed: " + ids.size + " id(s) (the files: " +
             fromFiles.size + ", the ledger: " + fromLedger.size + ")")
+        // The UI-facing outcome: the Setup's status shows what the load
+        // adopted (the vault's own recipients).
+        if (ids.isNotEmpty()) seedStatus =
+            "Recipients adopted: " + ids.size + " (from the vault)"
         return ids
     }
 

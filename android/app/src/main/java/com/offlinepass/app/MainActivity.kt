@@ -1037,6 +1037,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         if (VaultSession.state is VaultSession.State.Unlocked) {
                             android.widget.Toast.makeText(this@MainActivity, "Vault loaded",
                                 android.widget.Toast.LENGTH_SHORT).show()
+                            // The load's recipient adoption, surfaced:
+                            // "Recipients adopted: N (from the vault)".
+                            VaultSession.seedStatus?.let { status = it }
                         }
                     }
                 },
