@@ -29,6 +29,7 @@ fun SetupTabScreen(
     autofillEnabled: Boolean,
     recipientIds: List<Long>,
     onAddRecipient: () -> Unit,
+    onAddCardRecipient: () -> Unit = {},
     onRemoveRecipient: (Long) -> Unit,
     signerLabel: String,
     onPickSigner: () -> Unit,
@@ -313,7 +314,12 @@ fun SetupTabScreen(
                 TextButton(onClick = { onRemoveRecipient(id) }) { Text("Remove") }
             }
         }
-        Button(onClick = onAddRecipient, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+        Button(onClick = onAddCardRecipient, enabled = busy == null,
+            modifier = Modifier.fillMaxWidth()) {
+            Text("Add the attached card as a recipient")
+        }
+        TextButton(onClick = onAddRecipient, enabled = busy == null,
+            modifier = Modifier.fillMaxWidth()) {
             Text("Add recipient (pick in OpenKeyChain)")
         }
         HorizontalDivider()

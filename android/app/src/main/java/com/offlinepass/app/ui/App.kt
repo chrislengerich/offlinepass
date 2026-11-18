@@ -58,7 +58,7 @@ fun SetupChoiceScreen(
     onNewVault: () -> Unit,
     onImportProton: (remote: String?, pat: String, uri: android.net.Uri) -> Unit,
     onLoadGitHub: (remote: String, emails: List<String>, pat: String) -> Unit,
-    onLoadUsb: () -> Unit,
+    onLoadQrft: () -> Unit,
     onLoadBackupZip: () -> Unit = {},
     onEnrollFromGithubKeys: () -> Unit = {},
     onSshSelfTest: () -> Unit = {},
@@ -140,9 +140,9 @@ fun SetupChoiceScreen(
                     modifier = Modifier.weight(1f)
                 ) { Text("GitHub") }
                 OutlinedButton(
-                    onClick = { onLoadUsb() },
+                    onClick = { onLoadQrft() },
                     modifier = Modifier.weight(1f)
-                ) { Text("USB file") }
+                ) { Text("QRFT scan") }
                 OutlinedButton(
                     onClick = { onLoadBackupZip() },
                     modifier = Modifier.weight(1f)

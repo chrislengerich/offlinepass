@@ -1087,7 +1087,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         }
                     }
                 },
-                onLoadUsb = { usbRestoreLauncher.launch(arrayOf("application/octet-stream")) },
+                onLoadQrft = { cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA) },
                 onEnrollFromGithubKeys = { enrollFromGithubKeys() },
                 onSshSelfTest = {
                     lifecycleScope.launch {
@@ -1558,9 +1558,30 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 Screen.QrftScan -> QrftScanScreen(
                     onPayload = { name, payload ->
                         Log.i(TAG, "QRFT received: $name")
-                        lifecycleScope.launch { importQrftPayload(payload) }
+                        lifecycleScope.launch {
+                            // THE DUAL ROUTE: the Proton JSON export (the
+                            // plaintext entries) = the merge import; the
+                            // vault file (the OpenPGP ciphertext, the
+                            // base64 in the QRFT) = the staged file → the
+                            // SAME restore path as the USB.
+                            if (payload.trimStart().startsWith("{") ||
+                                payload.trimStart().startsWith("[")) {
+                                importQrftPayload(payload)
+                            } else {
+                                val staged = File(cacheDir, "qrft-import.gpg")
+                                try {
+                                    staged.writeBytes(
+                                        java.util.Base64.getDecoder().decode(payload.trim()))
+                                } catch (e: IllegalArgumentException) {
+                                    staged.writeText(payload)
+                                }
+                                VaultSession.adoptRecipientsFromVaultFile(staged)
+                                restoreLoop(android.net.Uri.parse(
+                                    "file://" + staged.absolutePath))
+                            }
+                        }
                     },
-                    onBack = { screen = Screen.Setup }
+                    onBack = { screen = Screen.SetupChoice }
                 )
                 Screen.PairScan -> PairScanScreen(
                     onRecord = { raw ->
@@ -1722,6 +1743,15 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     autofillEnabled = isAutofillEnabled(),
                     recipientIds = VaultSession.recipientKeyIds(),
                     onAddRecipient = { lifecycleScope.launch { pickRecipientsUntilDone() } },
+                    onAddCardRecipient = {
+                        lifecycleScope.launch {
+                            status = when (val r = VaultSession.addCardRecipient()) {
+                                VaultSession.Result.Success -> "The card added as a recipient — " +
+                                    "the next save encrypts to it."
+                                else -> "Add card: $r"
+                            }
+                        }
+                    },
                     onRemoveRecipient = { id ->
                         VaultSession.setRecipientKeyIds(VaultSession.recipientKeyIds() - id)
                         status = "Recipient removed."
