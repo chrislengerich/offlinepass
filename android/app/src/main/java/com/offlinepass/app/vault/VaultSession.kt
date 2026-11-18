@@ -110,7 +110,7 @@ object VaultSession {
 
     /** Loads the recipients' public keys from the repo's armored files
      *  (keys/encrypt/&lt;keyid&gt;.pub.asc; the legacy flat layout counts). */
-    private fun loadRecipientKeysFor(repoRoot: File, keyIds: LongArray): List<org.bouncycastle.openpgp.PGPPublicKey> {
+    internal fun loadRecipientKeysFor(repoRoot: File, keyIds: LongArray): List<org.bouncycastle.openpgp.PGPPublicKey> {
         val encryptDir = File(repoRoot, "keys/encrypt")
         val keys = keyIds.flatMap { id ->
             val f = File(encryptDir, "%016X.pub.asc".format(id))
@@ -1216,8 +1216,15 @@ object VaultSession {
                     // into the repo BEFORE the encrypt — the BC envelope needs
                     // the recipient files on disk — so git history records
                     // exactly who can open each revision (design:
-                    // keys/encrypt/*.pub.asc + recipients.txt).
-                    val keysOk = materializeRecipientKeys(client, gitRoot(), keyIds)
+                    // keys/encrypt/*.pub.asc + recipients.txt). Guarded: a
+                    // failure must roll back (file + state), never escape.
+                    val keysOk = try {
+                        materializeRecipientKeys(client, gitRoot(), keyIds)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "recipient key materialization failed: ${e.message}")
+                        return@withContext rollback(
+                            "Recipient key materialization failed: ${e.message}")
+                    }
                     if (!keysOk) {
                         return@withContext rollback("Some recipient key files missing — nothing saved")
                     }
