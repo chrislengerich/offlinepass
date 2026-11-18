@@ -263,12 +263,49 @@ fun GetStartedScreen(
             style = MaterialTheme.typography.bodySmall)
 
         // The owner/repo is NOT asked here: the load-existing flow configures
-        // the remote and seeds the connect draft (the enrollment's username
-        // derives from it). This screen = the post-load checklist.
-        Text("1. Security key (SSH auth)", style = MaterialTheme.typography.titleSmall)
+        // This screen = the post-load checklist. The step 1 = the remote
+        // (the set if already configured — the load-existing — or the entry
+        // otherwise); the step 2 = the security-key enrollment FROM GitHub
+        // (the remote accepts the paired key). The remote's order = FIRST:
+        // the enrollment derives the username from it.
+        Text("1. GitHub remote", style = MaterialTheme.typography.titleSmall)
+        if (remoteAttached) {
+            Text("✅ Remote attached: ${VaultSession.config()?.remoteUrl ?: ""}",
+                style = MaterialTheme.typography.bodySmall)
+        } else {
+            var ownerRepo by remember { mutableStateOf(VaultSession.connectDraftOwnerRepo() ?: "") }
+            androidx.compose.material3.OutlinedTextField(
+                value = ownerRepo, onValueChange = { ownerRepo = it },
+                label = { Text("owner/repo") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth())
+            Button(
+                onClick = {
+                    VaultSession.saveConnectDraft(ownerRepo.trim(), "card")
+                    VaultSession.loadRemoteState.value = "git@github.com:$ownerRepo"
+                },
+                enabled = busy == null && ownerRepo.contains("/") &&
+                    !ownerRepo.startsWith("/") && !ownerRepo.endsWith("/"),
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Use this repository") }
+        }
+        HorizontalDivider()
+
+        Text("2. Enroll the security key (SSH auth)", style = MaterialTheme.typography.titleSmall)
         if (yubikeyEnrolled) {
             Text("✅ Enrolled — every sync authenticates with the card (PIN + touch).",
                 style = MaterialTheme.typography.bodySmall)
+            // THE AUTHORIZED-KEYS CHECK: the remote accepts the card only
+            // after the sync publishes this device's line into the repo's
+            // keys/auth/authorized-keys.
+            when (VaultSession.cardLineInAuthorizedKeys()) {
+                true -> Text("✓ The card's line is in the repo's authorized keys.",
+                    style = MaterialTheme.typography.bodySmall)
+                false -> Text("⚠ The repo's authorized keys are from another " +
+                    "device — the next sync adds this device's line; the " +
+                    "remote accepts the card after that sync.",
+                    style = MaterialTheme.typography.bodySmall)
+                null -> {}
+            }
             // The card slot: the SIG subkey (the default — the card pads the
             // digest) vs the AUT subkey (the dedicated authentication key —
             // the raw-RSA challenge, the caller pads; the transport is the

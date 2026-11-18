@@ -593,6 +593,18 @@ object VaultSession {
         }
     }
 
+    /** The card's SSH line's presence in the repo's authorized keys:
+     *  null = no line or no file (the fresh / the not-yet-synced),
+     *  true = the card's blob is authorized, false = the repo's keys are
+     *  from another device (the sync appends this device's line). */
+    fun cardLineInAuthorizedKeys(): Boolean? {
+        val line = yubikeySshLine() ?: return null
+        val blob = line.split(" ").getOrNull(1) ?: return null
+        val f = authorizedKeysFile()
+        if (!f.exists()) return null
+        return f.readLines().any { it.split(" ").getOrNull(1) == blob }
+    }
+
     /** The repo's public-key material OKK could import (the sign/encrypt
      *  certs present on disk). */
     fun repoKeyMaterialFiles(): List<File> {
