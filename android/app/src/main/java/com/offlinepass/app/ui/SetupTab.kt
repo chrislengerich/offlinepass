@@ -282,6 +282,18 @@ fun SetupTabScreen(
             Button(onClick = onTestSync, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
                 Text("Sync now (fetch/push)")
             }
+            // The local main's last commits — the git-log style history.
+            val commits = VaultSession.recentCommits()
+            if (commits.isNotEmpty()) {
+                Text("Recent commits:", style = MaterialTheme.typography.labelSmall)
+                commits.forEach { c ->
+                    Text(
+                        c,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1
+                    )
+                }
+            }
             Button(
                 onClick = { confirmDialog = "repo" },
                 enabled = busy == null,

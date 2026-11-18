@@ -312,7 +312,17 @@ object VaultSession {
 
     internal suspend fun <T> withTouchPrompt(block: suspend () -> T): T {
         touchPrompt = true
-        try { return block() } finally { touchPrompt = false }
+        try {
+            // The card op = the blocking USB/APDU (the touch wait!) — the
+            // IO hop BEFORE the block: the state mutation lands first, the
+            // main thread stays free to compose the dialog, and the op
+            // cannot freeze it (the enrollment used to sign from the
+            // lifecycleScope = the dialog never rendered while the card
+            // waited for a touch the user never saw requested).
+            return kotlinx.coroutines.withContext(Dispatchers.IO) { block() }
+        } finally {
+            touchPrompt = false
+        }
     }
 
     /** Warms the shared OpenKeyChain binding (the cold start overlaps the
@@ -442,13 +452,15 @@ object VaultSession {
      *  keys/sign/, this device's lines join keys/auth/. Failures are
      *  non-fatal (the next save retries). */
     suspend fun updateRepoKeyMaterial(client: OpenPgpOps) {
-        runCatching { migrateLegacyKeyLayout() }
+        updateRepoKeyMaterialLocal()
+        // The card's full GPG cert — what a fresh device's OKK needs. The
+        // fetch = the OKK IPC: the SETUP/save-time operation ONLY, never
+        // the sync (the sync = the YubiKit path exclusively; the cert file
+        // is written at the enrollment, and the OKK import = the checklist
+        // step's FileProvider staging).
         runCatching {
             val subkeyId = yubikeyAuthSubkeyId()
             if (subkeyId != null) {
-                // The card's full GPG cert — what a fresh device's OKK needs.
-                // OKK may want an interaction (a first-use approval) — loop
-                // it through the handler like every other OKK call.
                 var reqData: android.content.Intent? = null
                 var guard = 0
                 while (guard++ < 3) {
@@ -468,6 +480,19 @@ object VaultSession {
                         else -> break // a real error: the next save retries
                     }
                 }
+            }
+        }
+    }
+
+    /** The LOCAL-ONLY repo key material: the authorized-key append, the
+     *  device registry, the screenlock entry, the legacy migration. No
+     *  OpenKeyChain — the sync calls this (the sync = the YubiKit path
+     *  exclusively). */
+    suspend fun updateRepoKeyMaterialLocal() {
+        runCatching { migrateLegacyKeyLayout() }
+        runCatching {
+            val subkeyId = yubikeyAuthSubkeyId()
+            if (subkeyId != null) {
                 yubikeySshLine()?.let { appendAuthorizedKey(it.trimEnd()) }
                 val entries = readDeviceRegistry().toMutableList()
                 val certPath = "keys/sign/%016X.pub.asc".format(subkeyId)
@@ -494,6 +519,26 @@ object VaultSession {
             }
         }
     }
+
+    /** The local main's last commits — the sync's history display. */
+    fun recentCommits(limit: Int = 5): List<String> = runCatching {
+        if (!File(gitRoot(), org.eclipse.jgit.lib.Constants.DOT_GIT).exists())
+            return@runCatching emptyList()
+        org.eclipse.jgit.api.Git.open(gitRoot()).use { git ->
+            git.log().setMaxCount(limit).call().map { c ->
+                val age = java.time.Duration.ofMillis(
+                    System.currentTimeMillis() - c.commitTime * 1000L)
+                val whenTxt = when {
+                    age.toMinutes() < 1 -> "now"
+                    age.toHours() < 1 -> "${age.toMinutes()}m ago"
+                    age.toDays() < 1 -> "${age.toHours()}h ago"
+                    else -> "${age.toDays()}d ago"
+                }
+                "%s %s — %s (%s)".format(
+                    c.name().take(7), c.shortMessage, c.authorIdent.name, whenTxt)
+            }
+        }
+    }.getOrDefault(emptyList())
 
     /** The repo's public-key material OKK could import (the sign/encrypt
      *  certs present on disk). */
@@ -2156,6 +2201,9 @@ object VaultSession {
         }
         val pat = if (useSsh) "" else (pat() ?: return Result.Error("No PAT stored"))
         busy = "Syncing…"
+        // The progress messages (the intermittent, like the import flow):
+        // the syncStatus = the phase ledger the Sync tab shows live.
+        syncStatus = "syncing: fetching…"
         try {
             withContext(Dispatchers.IO) {
                 val git = VaultGitClient()
@@ -2163,7 +2211,10 @@ object VaultSession {
                 git.open(remote, pat, root)
                 // Track the signer/authorized-key material in the repo (the
                 // offline keyring); best-effort, committed with the vault.
-                updateRepoKeyMaterial(openPgpClientFactory(appContext))
+                // THE SYNC = THE YUBIKIT PATH ONLY: the local key-material
+                // (the authorized keys, the device registry) — never the
+                // OpenKeyChain IPC (the cert fetch = the Setup-time op).
+                updateRepoKeyMaterialLocal()
                 val vaultRelPath = "state/10.gpg"
                 // Commit a stranded/dirty vault file FIRST so it participates
                 // in the divergence check + push (a failed push leaves it
@@ -2216,10 +2267,12 @@ object VaultSession {
                             }
                             busy = "Pushing…"
                         }
+                        syncStatus = "syncing: pushing…"
                         git.pushBranch(remote, pat, root)
                         syncStatus = "Pushed (rev $rev)"
                     }
                     is VaultGitClient.Divergence.BehindOnly -> {
+                        syncStatus = "syncing: pulled — decrypting with the key…"
                         git.resetHardTo(root, "origin/main")
                         refreshFromVaultFile()
                         reconcileSignersAfterSync()
