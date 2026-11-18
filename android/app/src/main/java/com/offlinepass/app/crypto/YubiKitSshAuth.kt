@@ -169,7 +169,33 @@ object YubiKitSshAuth {
      * (the pre-built PKCS#1 v1.5 block) with the card's SIGNATURE slot.
      * The YubiKey's slot touch policy applies on the hardware side.
      */
-    fun sign(context: Context, pin: CharArray, payload: ByteArray): ByteArray {
+    /**
+     * Verifies the OpenPGP user PIN on the applet, then signs or
+     * authenticates. The slot choice:
+     *
+     * - **SIG (default)** — PSO:CDS on the SIGNATURE slot; the card pads
+     *   the bare DigestInfo itself (the payload = the DigestInfo).
+     * - **AUT (useAut)** — INTERNAL AUTHENTICATE on the AUTHENTICATION
+     *   slot: NO on-card padding, so the caller's payload = the FULL
+     *   PKCS#1 v1.5 type-1 block, padded here to the AUT key's modulus
+     *   length (the RSA-4096 = a 512-byte command — this path is the
+     *   long-command transport's test; the YubiKit 3.3.0 core added the
+     *   ExtendedApduProcessor). The output = the raw RSA result — the
+     *   same operation the RSA sign is — so it verifies as an
+     *   ssh-rsa/rsa-sha2 signature unchanged (proven by AutKeyPathTest).
+     *   The AUT key = the DEDICATED authentication key: the SIG key
+     *   stays pure signing.
+     *
+     * The PIN flavor (extended=false = P2:0x81) = the hypothesis for
+     * INTERNAL AUTHENTICATE; the self-test tries both flavors on-device
+     * before this path goes default.
+     */
+    fun sign(
+        context: Context,
+        pin: CharArray,
+        payload: ByteArray,
+        useAut: Boolean = false
+    ): ByteArray {
         val device = findDevice(context)
             ?: throw java.io.IOException("no YubiKey connected")
         val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
@@ -215,9 +241,31 @@ object YubiKitSshAuth {
                     throw e
                 }
                 android.util.Log.i("YubiKeySsh",
-                    "yubikit: PIN verified — PSO:CDS on the SIGNATURE slot " +
-                        "(touch the key if its LED blinks)")
-                val sig = session.sign(payload)
+                    "yubikit: PIN verified — " +
+                        (if (useAut) "INTERNAL AUTHENTICATE on the AUTH slot"
+                        else "PSO:CDS on the SIGNATURE slot") +
+                        " (touch the key if its LED blinks)")
+                val sig = if (useAut) {
+                    // The raw-RSA path: the challenge = the FULL PKCS#1
+                    // block padded to the AUT modulus (no on-card padding).
+                    val autPub = session.getPublicKey(com.yubico.yubikit.openpgp.KeyRef.AUT)
+                    val modulusLen = when (val pub = autPub) {
+                        is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa ->
+                            (pub.modulus.bitLength() + 7) / 8
+                        else -> throw java.io.IOException(
+                            "the AUT slot is not RSA — the AUT path needs an RSA authentication key")
+                    }
+                    require(payload.size <= modulusLen) {
+                        "the payload (${payload.size}B) exceeds the AUT modulus ($modulusLen B)"
+                    }
+                    val block = ByteArray(modulusLen) { 0 }
+                    payload.copyInto(block, modulusLen - payload.size)
+                    android.util.Log.i("YubiKeySsh",
+                        "yubikit: challenge padded to $modulusLen B")
+                    session.authenticate(block)
+                } else {
+                    session.sign(payload)
+                }
                 android.util.Log.i("YubiKeySsh", "yubikit: card signed (${sig.size} bytes)")
                 return sig
             } finally {

@@ -181,6 +181,18 @@ object VaultSession {
     fun sshSyncMode(): String =
         prefs().getString("sshSyncMode", null) ?: SSH_SYNC_YUBIKEY
 
+    /** The SSH auth's card slot: false = the SIG subkey (the default —
+     *  the card pads the digest itself), true = the AUT subkey (the
+     *  dedicated authentication key — the raw-RSA INTERNAL AUTHENTICATE,
+     *  the caller pads the block to the modulus; the RSA-4096's 512-byte
+     *  command = the long-command transport experiment). Static tests
+     *  prove the wire compatibility (AutKeyPathTest); the on-device
+     *  self-test measures the transport before this goes default. */
+    fun sshAuthUseAut(): Boolean = prefs().getBoolean("sshAuthUseAut", false)
+    fun setSshAuthUseAut(on: Boolean) {
+        prefs().edit().putBoolean("sshAuthUseAut", on).apply()
+    }
+
     /** DEPRECATED for the SCREENLOCK value: the screenlock is no longer an
      *  auth key (only signing + the local at-rest seal). The backend stays
      *  (the SshKeyManager identity + the SSH transport are intact) for a
@@ -810,7 +822,12 @@ object VaultSession {
             prompt = { yubikeyPin() },
             rememberPin = { yubikeyPinRemember(it) },
             cardSign = { pin, payload -> withTouchPrompt {
-                com.offlinepass.app.crypto.YubiKitSshAuth.sign(appContext, pin, payload)
+                // The slot = the SIG (the default — the card pads the
+                // digest) or AUT (the dedicated authentication key — the
+                // raw-RSA challenge, the caller pads; the measured
+                // experiment, the pref flips it).
+                com.offlinepass.app.crypto.YubiKitSshAuth.sign(
+                    appContext, pin, payload, useAut = sshAuthUseAut())
             } })
     }
 
