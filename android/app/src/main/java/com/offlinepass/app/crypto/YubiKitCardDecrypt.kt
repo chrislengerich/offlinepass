@@ -42,6 +42,39 @@ object YubiKitCardDecrypt {
 
     private const val TAG = "YubiKitCardDecrypt"
 
+    /** The DECRYPTION slot's key id — an unauthenticated read (no PIN, no
+     *  touch). The id = the v4 fingerprint's low half — the same id the
+     *  vault's PKESKs name. Used to auto-add the card as a new vault's
+     *  first recipient. */
+    fun decKeyId(context: Context): Long {
+        val device = YubiKitSshAuth.findDevice(context)
+            ?: throw java.io.IOException("no YubiKey connected")
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: throw java.io.IOException("USB service unavailable")
+        if (!usbManager.hasPermission(device)) {
+            throw java.io.IOException("USB permission not granted for the YubiKey")
+        }
+        val ykDevice = UsbYubiKeyDevice(usbManager, device)
+        val connection = ykDevice.openConnection(SmartCardConnection::class.java)
+        try {
+            val session = OpenPgpSession(connection as SmartCardConnection)
+            try {
+                val decFp = session.applicationRelatedData.discretionary
+                    .getFingerprint(KeyRef.DEC)
+                if (decFp == null || decFp.size < 20) {
+                    throw java.io.IOException("the card reports no DECRYPTION fingerprint (an empty slot?)")
+                }
+                return (12 until 20).fold(0L) { acc, k ->
+                    (acc shl 8) or (decFp[k].toLong() and 0xFF)
+                }
+            } finally {
+                session.close()
+            }
+        } finally {
+            runCatching { connection.close() }
+        }
+    }
+
     /**
      * Decrypts an OpenPGP message (the vault envelope) with the card's
      * DECRYPTION slot, returning the original plaintext.

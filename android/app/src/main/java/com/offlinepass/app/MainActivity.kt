@@ -938,14 +938,30 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     VaultSession.configure(null, emptyList())
                     status = ""
                     lifecycleScope.launch {
-                        // Recipients, then adopt the empty envelope as the
-                        // unlocked session (state must leave NoConfig or the
-                        // Setup screen keeps rendering), then Search. The
-                        // vault file persists on first save (git-init there).
-                        pickRecipientsUntilDone()
+                        // THE CARD = THE FIRST RECIPIENT: the card is attached
+                        // at setup; its DEC key = the vault's decryption key.
+                        // Auto-add it — the first save encrypts to the card
+                        // with zero OKK-picker friction. The extra recipients
+                        // = the Setup's picker later.
+                        val decId = runCatching {
+                            com.offlinepass.app.crypto.YubiKitCardDecrypt
+                                .decKeyId(applicationContext)
+                        }.getOrNull()
+                        if (decId != null) {
+                            VaultSession.setRecipientKeyIds(listOf(decId))
+                            status = "The card's key added as the first recipient."
+                        } else {
+                            status = "The card not readable — add a recipient " +
+                                "in Setup before saving."
+                        }
+                        // Adopt the empty envelope as the unlocked session
+                        // (the state must leave NoConfig or the Setup screen
+                        // keeps rendering), then Search. The vault file
+                        // persists on first save (git-init there).
                         VaultSession.adopt(Envelope(rev = 0, deviceId = VaultSession.deviceId()))
                         screen = Screen.Search
-                        status = "Local-only vault ready — Add entry to begin."
+                        status = "Local-only vault ready — Add entry to begin." +
+                            if (decId != null) " The card's key = the first recipient." else ""
                     }
                 },
                 onImportProton = { remote, pat, uri ->
