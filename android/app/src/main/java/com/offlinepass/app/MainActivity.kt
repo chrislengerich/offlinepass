@@ -1640,7 +1640,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         status = "Device name set: $it"
                     },
                     onInitOkkFromRepo = {
-                        status = VaultSession.openOkkImportFromRepo(this)
+                        lifecycleScope.launch {
+                            status = VaultSession.openOkkImportFromRepo(this@MainActivity)
+                        }
                     },
                     onGetStarted = { screen = Screen.GetStarted },
                     onUseYubikeySigner = {

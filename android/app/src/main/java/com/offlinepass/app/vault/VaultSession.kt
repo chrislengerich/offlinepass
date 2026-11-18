@@ -459,43 +459,6 @@ object VaultSession {
         }
     }
 
-    /** Best-effort repo materialization, called pre-commit in syncNow:
-     *  the legacy layout migrates once, the card's cert lands in
-     *  keys/sign/, this device's lines join keys/auth/. Failures are
-     *  non-fatal (the next save retries). */
-    suspend fun updateRepoKeyMaterial(client: OpenPgpOps) {
-        updateRepoKeyMaterialLocal()
-        // The card's full GPG cert — what a fresh device's OKK needs. The
-        // fetch = the OKK IPC: the SETUP/save-time operation ONLY, never
-        // the sync (the sync = the YubiKit path exclusively; the cert file
-        // is written at the enrollment, and the OKK import = the checklist
-        // step's FileProvider staging).
-        runCatching {
-            val subkeyId = yubikeyAuthSubkeyId()
-            if (subkeyId != null) {
-                var reqData: android.content.Intent? = null
-                var guard = 0
-                while (guard++ < 3) {
-                    when (val fk = client.fetchPublicKeyArmored(subkeyId, reqData)) {
-                        is OpenPgpClient.PublicKey.Success -> {
-                            val f = File(keysSignDir(), "%016X.pub.asc".format(subkeyId))
-                            if (!f.exists() || f.readText() != fk.armored) {
-                                f.parentFile?.mkdirs()
-                                f.writeText(fk.armored.trimEnd() + "\n")
-                            }
-                            break
-                        }
-                        is OpenPgpClient.PublicKey.UserInteraction -> {
-                            reqData = interactionHandler?.invoke(fk.pendingIntent)
-                                ?: break // no UI layer: the next save retries
-                        }
-                        else -> break // a real error: the next save retries
-                    }
-                }
-            }
-        }
-    }
-
     /** The LOCAL-ONLY repo key material: the authorized-key append, the
      *  device registry, the screenlock entry, the legacy migration. No
      *  OpenKeyChain — the sync calls this (the sync = the YubiKit path
@@ -565,19 +528,53 @@ object VaultSession {
      *  on every tap — no accumulation) and opens OpenKeyChain's import
      *  screen via the app's FileProvider — the file hand-off, since the
      *  OpenPGP remote API cannot mutate OKK's keyring. */
-    fun openOkkImportFromRepo(activity: android.app.Activity): String {
+    suspend fun openOkkImportFromRepo(context: android.content.Context): String {
+        // THE CARD'S PUBLIC CERT = bootstrapped into the repo HERE — the
+        // one moment where touching OpenKeyChain = the user's intent (the
+        // import itself). The card exposes only the raw key; the full
+        // OpenPGP cert (the uid + the self-signature) = exportable only
+        // from OKK's keyring. Once written, the cert rides the repo —
+        // every later device gets it from the clone, no fetch at all.
+        val subkeyId = yubikeyAuthSubkeyId()
+        if (subkeyId != null) {
+            val certFile = File(keysSignDir(), "%016X.pub.asc".format(subkeyId))
+            if (!certFile.exists()) {
+                val client = openPgpClientFactory(appContext)
+                var reqData: android.content.Intent? = null
+                var guard = 0
+                var fetched: String? = null
+                while (guard++ < 3 && fetched == null) {
+                    when (val fk = client.fetchPublicKeyArmored(subkeyId, reqData)) {
+                        is OpenPgpClient.PublicKey.Success -> fetched = fk.armored
+                        is OpenPgpClient.PublicKey.UserInteraction -> {
+                            reqData = interactionHandler?.invoke(fk.pendingIntent) ?: break
+                        }
+                        else -> break
+                    }
+                }
+                fetched?.let { armor ->
+                    certFile.parentFile?.mkdirs()
+                    certFile.writeText(armor.trimEnd() + "\n")
+                    Log.i(TAG, "the card's cert materialized at the OKK-import step")
+                } ?: run {
+                    Log.w(TAG, "the card's cert fetch did not succeed — staging without it")
+                }
+            }
+        }
         val files = repoKeyMaterialFiles()
         if (files.isEmpty()) return "The repo carries no public key material yet."
         val staged = File(appContext.cacheDir, "okk-import.asc")
         staged.parentFile?.mkdirs()
         staged.writeText(files.joinToString("\n") { it.readText().trimEnd() } + "\n")
-        val uri = androidx.core.content.FileProvider.getUriForFile(
-            activity, activity.packageName + ".files", staged)
-        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
-            .setDataAndType(uri, "application/pgp-keys")
-            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
         return try {
-            activity.startActivity(intent)
+            // The provider resolution inside the try: a misconfigured root
+            // (the test environments) = a readable error, not a crash.
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context, context.packageName + ".files", staged)
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                .setDataAndType(uri, "application/pgp-keys")
+                .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            context.startActivity(intent)
             "OpenKeyChain's import opened — confirm the keys there."
         } catch (e: Exception) {
             "OpenKeyChain's import could not be opened: ${e.message} " +
