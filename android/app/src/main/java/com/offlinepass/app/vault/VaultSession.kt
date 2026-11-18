@@ -339,7 +339,6 @@ object VaultSession {
 
     /** Warms the shared OpenKeyChain binding (the cold start overlaps the
      *  SSH auth and the fetch). */
-    suspend fun warmOpenKeyChain() = sharedOpenPgpClient(appContext).warm()
 
     /** The user-editable device name (defaults to the model); stamped into
      *  the registry. */
@@ -505,6 +504,84 @@ object VaultSession {
             }
         }
     }.getOrDefault(emptyList())
+
+    /** THE REPO BACKUP EXPORT: the entire repo dir — `.git` included (the
+     *  signed history) + the worktree — into one zip. The clone semantics:
+     *  the import unzips into a repo dir and Git.open = a real repository.
+     *  No plaintext secrets travel: the vault = the card-encrypted
+     *  ciphertext, the keys = the public halves. Returns the file count
+     *  (0 = no repo to back up). The size math: ~100–200 compressed bytes
+     *  per secret — a 5–10-secret vault zips to a handful of QR frames;
+     *  the frame count scales linearly. */
+    fun exportBackupZip(out: java.io.OutputStream): Int {
+        val root = gitRoot()
+        if (!File(root, org.eclipse.jgit.lib.Constants.DOT_GIT).exists()) return 0
+        var n = 0
+        java.util.zip.ZipOutputStream(out).use { z ->
+            root.walkTopDown()
+                .filter { it.isFile && !it.name.endsWith(".lock") }
+                .sortedBy { it.relativeTo(root).path }
+                .forEach { f ->
+                    z.putNextEntry(java.util.zip.ZipEntry(f.relativeTo(root).path))
+                    f.inputStream().use { it.copyTo(z) }
+                    z.closeEntry()
+                    n += 1
+                }
+        }
+        Log.i(TAG, "backup zip: $n files")
+        return n
+    }
+
+    /** THE REPO-BACKUP IMPORT: the zip → the fresh repo dir → Git.open =
+     *  a real repository — the clone semantics. The origin is stripped
+     *  (the local-only: the remote = attachable later via Setup→Connect,
+     *  the history merging through sync). The flow = the load-existing's:
+     *  the seed → the card unlock → the stubs. A stale lock/index is
+     *  dropped (the zip zipped in lockstep, but the cheap insurance is
+     *  free). */
+    suspend fun importBackupZip(zip: File): Result {
+        val root = gitRoot()
+        if (root.exists()) root.deleteRecursively()
+        root.mkdirs()
+        try {
+            java.util.zip.ZipInputStream(zip.inputStream()).use { z ->
+                var e = z.nextEntry
+                while (e != null) {
+                    val f = File(root, e.name)
+                    val canon = f.canonicalPath
+                    if (canon != root.canonicalPath &&
+                        !canon.startsWith(root.canonicalPath + File.separator)) {
+                        throw java.io.IOException("zip slip: ${e.name}")
+                    }
+                    if (e.isDirectory) f.mkdirs()
+                    else {
+                        f.parentFile?.mkdirs()
+                        f.outputStream().use { z.copyTo(it) }
+                    }
+                    e = z.nextEntry
+                }
+            }
+            // The stale guards: the locks (the zip skipped them, but the
+            // belt) and a stale index (the JGit re-adds on the next write).
+            root.walkTopDown().filter { it.name.endsWith(".lock") }
+                .forEach { runCatching { it.delete() } }
+            File(root, ".git/index").delete()
+            // The origin strip: the import = the local-only; the remote =
+            // attachable later via the Setup's Connect.
+            org.eclipse.jgit.api.Git.open(root).use { git ->
+                git.repository.config.apply {
+                    unsetSection("remote", "origin")
+                }.save()
+            }
+            seedRecipientsFromRepo()
+            return unlock()
+        } catch (e: Exception) {
+            Log.w(TAG, "backup import failed: ${e.message}")
+            // The half-imported repo = cleaned so the retry is clean.
+            runCatching { root.deleteRecursively() }
+            return Result.Error("Backup import failed: ${e.message}")
+        }
+    }
 
     /** The repo's public-key material OKK could import (the sign/encrypt
      *  certs present on disk). */
@@ -2502,28 +2579,34 @@ object VaultSession {
         data class Error(val message: String) : DecryptEnvelope
     }
 
-    /** Decrypts an arbitrary vault file (USB restore path). */
+    /** Decrypts an arbitrary vault file (the USB/QRFT restore path) — the
+     *  CARD path (the PIN + the touch, in-process via YubiKit + BC; no
+     *  OpenKeyChain). The card is attached by definition: the import runs
+     *  at setup time. */
     suspend fun decryptEnvelope(file: File): DecryptEnvelope = withContext(Dispatchers.IO) {
         if (!file.exists()) return@withContext DecryptEnvelope.Error("File missing")
-        val plain = File(appContext.cacheDir, "restore-plain.json")
-        val client = sharedOpenPgpClient(appContext)
         try {
-            var reqData: Intent? = null
-            var guard = 0
-            while (guard++ < 2) {
-                when (val r = client.decryptVerify(file, plain, reqData)) {
-                    is OpenPgpClient.DecryptResult.Success ->
-                        return@withContext DecryptEnvelope.Ok(Envelope.fromJson(plain.readText()))
-                    is OpenPgpClient.DecryptResult.UserInteraction -> {
-                        val h = interactionHandler ?: return@withContext DecryptEnvelope.Error("Interaction needs the UI layer")
-                        reqData = h(r.pendingIntent)
-                    }
-                    is OpenPgpClient.DecryptResult.Error -> return@withContext DecryptEnvelope.Error("Decrypt failed (see logcat)")
-                }
+            DecryptEnvelope.Ok(Envelope.fromJson(String(vaultDecryptBytes(file.readBytes()))))
+        } catch (e: Exception) {
+            Log.w(TAG, "restore decrypt failed: ${e.message}")
+            DecryptEnvelope.Error("${e.javaClass.simpleName}: ${e.message}")
+        }
+    }
+
+    /** Adopts the recipients carried IN the vault file itself: the PKESK
+     *  packets name their recipients (the card's DEC key among them). The
+     *  local-only restores have no repo ledger — the file's own record =
+     *  the save targets, no OpenKeyChain, no repo needed. The ids are
+     *  UNSIGNED 64-bit (the PKESKs with the high bit set are common). */
+    fun adoptRecipientsFromVaultFile(file: File) {
+        runCatching {
+            val msg = com.offlinepass.app.vault.PgpMessageParser.parse(file.readBytes())
+            val ids = msg.pkesks.mapNotNull { it.keyId }.distinct()
+            if (ids.isNotEmpty()) {
+                setRecipientKeyIds(ids)
+                Log.i(TAG, "adopted " + ids.size + " recipient id(s) from the vault file's PKESKs")
+                loadPhase("recipient adopt (the file's PKESKs): " + ids.size + " id(s)")
             }
-            DecryptEnvelope.Error("Decrypt aborted after interaction retry")
-        } finally {
-            SecureWipe.file(plain)
         }
     }
 

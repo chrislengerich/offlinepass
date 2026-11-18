@@ -59,6 +59,7 @@ fun SetupChoiceScreen(
     onImportProton: (remote: String?, pat: String, uri: android.net.Uri) -> Unit,
     onLoadGitHub: (remote: String, emails: List<String>, pat: String) -> Unit,
     onLoadUsb: () -> Unit,
+    onLoadBackupZip: () -> Unit = {},
     onEnrollFromGithubKeys: () -> Unit = {},
     onSshSelfTest: () -> Unit = {},
     onEnrollYubikeySsh: (sshLine: String, subkeyId: String) -> Unit = { _, _ -> },
@@ -142,6 +143,10 @@ fun SetupChoiceScreen(
                     onClick = { onLoadUsb() },
                     modifier = Modifier.weight(1f)
                 ) { Text("USB file") }
+                OutlinedButton(
+                    onClick = { onLoadBackupZip() },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Backup zip") }
             }
 
             // 2. Sync-auth: the security key only (the card signs the SSH

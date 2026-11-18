@@ -504,6 +504,94 @@ class VaultSaveTransactionTest {
     }
 
     @Test
+    fun restoreAdoptsRecipientsFromVaultFilePkesks() = runBlocking {
+        // THE RECIPIENT ADOPTION: the vault file carries its recipients in
+        // its own PKESKs — the local-only restores have no repo ledger, so
+        // the file's own record = the save targets. The fixture = a REAL
+        // gpg message encrypted to TWO recipients, both ids high-bit-set
+        // (the unsigned-parse = the same class as the seed's).
+        val file = File(gitRoot(), "fixture-enc-two.gpg")
+        gitRoot().mkdirs()
+        file.writeBytes(javaClass.getResourceAsStream("/openpgp/fixture-enc-two.gpg")!!.readBytes())
+        VaultSession.adoptRecipientsFromVaultFile(file)
+        val ids = VaultSession.recipientKeyIds()
+        assertEquals("both recipients adopted", 2, ids.size)
+        assertTrue("the fixture key id adopted",
+            ids.contains(java.lang.Long.parseUnsignedLong("1EA759B8783363D8", 16)))
+        assertTrue("the second key id adopted",
+            ids.contains(java.lang.Long.parseUnsignedLong("4199727F7793732F", 16)))
+    }
+
+    @Test
+    fun backupZipRoundTripCloneSemantics() = runBlocking {
+        // THE BACKUP ZIP: the export = the whole repo (the .git + the
+        // worktree); the import = the clone semantics — Git.open opens a
+        // REAL repository, the history is preserved, the origin is
+        // stripped, and the unlock = the card path (the injected seam) →
+        // the stubs. The no-plaintext invariant: the zip carries no item
+        // JSON.
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        val r1 = VaultSession.save(listOf(item("One").apply { password = "p1" }))
+        assertTrue(r1 is VaultSession.Result.Success)
+        val r2 = VaultSession.save(listOf(item("One").apply { password = "p1" },
+            item("Two").apply { password = "p2" }))
+        assertTrue(r2 is VaultSession.Result.Success)
+        val commitsBefore = commitCount()
+
+        val zip = File(app.cacheDir, "backup.zip")
+        zip.delete()
+        val n = java.io.ByteArrayOutputStream().let { bos ->
+            val count = VaultSession.exportBackupZip(bos)
+            bos.toByteArray().also { bytes ->
+                java.util.zip.ZipInputStream(bytes.inputStream()).use { z ->
+                    var e = z.nextEntry
+                    while (e != null) {
+                        val content = z.readBytes().toString(Charsets.ISO_8859_1)
+                        assertFalse("no plaintext item JSON in the zip",
+                            content.contains("Secrets") && content.contains("password\":"))
+                        e = z.nextEntry
+                    }
+                }
+                zip.writeBytes(bytes)
+            }
+            count
+        }
+        assertTrue("the zip carries the repo", n > 3)
+
+        // The wipe + the import.
+        VaultSession.zero()
+        gitRoot().deleteRecursively()
+        val r = VaultSession.importBackupZip(zip)
+        assertTrue("expected Success, got $r", r is VaultSession.Result.Success)
+        assertEquals("the history preserved (the clone)", commitsBefore, commitCount())
+        // The origin stripped.
+        org.eclipse.jgit.api.Git.open(gitRoot()).use { git ->
+            assertNull("the origin removed (the local-only)",
+                git.repository.config.getString("remote", "origin", "url"))
+        }
+        // The unlock = the card path (the injected seam) → the stubs.
+        val items = (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
+        assertTrue("the items = the stubs after the import", items.all { !it.hasSecrets() })
+        assertTrue("the items carried over", items.any { it.name == "One" })
+    }
+
+    @Test
+    fun restoreDecryptUsesCardPathSeam() = runBlocking {
+        // The restore's decrypt = the vaultDecryptBytes seam (the card) —
+        // the OKK's decryptVerify = no longer in the path.
+        val file = File(gitRoot(), "restore.gpg")
+        gitRoot().mkdirs()
+        val plain = """{"rev":1,"items":[{"itemUuid":"u1","name":"R"}]}"""
+        file.writeBytes(java.util.Base64.getEncoder().encode(plain.toByteArray()))
+        when (val r = VaultSession.decryptEnvelope(file)) {
+            is VaultSession.DecryptEnvelope.Ok ->
+                assertTrue("the envelope parsed", r.env.rev == 1L)
+            else -> throw AssertionError("expected Ok, got $r")
+        }
+    }
+
+    @Test
     fun divergenceMergeDecryptsRemoteAndPreservesBothSides() = runBlocking {
         // THE REGRESSION TEST for the merge data-loss bug: the vault files
         // are ENCRYPTED — the merge used to feed the ciphertext to

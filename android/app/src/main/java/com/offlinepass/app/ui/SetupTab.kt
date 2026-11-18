@@ -49,6 +49,7 @@ fun SetupTabScreen(
     onScreenlockUnlockToggle: (Boolean) -> Unit = {},
     onLock: () -> Unit,
     onExportQrft: () -> Unit,
+    onExportBackupZip: () -> Unit = {},
     onImportQrft: () -> Unit,
     onPairDevice: () -> Unit = {},
     pairedDevices: List<com.offlinepass.app.vault.DeviceRecord> = emptyList(),
@@ -461,6 +462,9 @@ fun SetupTabScreen(
         HorizontalDivider()
 
         Text("QRFT transfer (phone ↔ phone, via camera)", style = MaterialTheme.typography.titleSmall)
+        Button(onClick = onExportBackupZip, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Export backup (zip — the vault + the keys + the history)")
+        }
         Button(onClick = onExportQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Export as QRFT (pick entries)")
         }

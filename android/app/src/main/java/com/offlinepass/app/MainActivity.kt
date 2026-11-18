@@ -334,6 +334,43 @@ class MainActivity : androidx.activity.ComponentActivity() {
             }
         }
 
+    /** The repo-backup zip import: the SAF-open → the staged file → the
+     *  import (the clone semantics: the .git included, the origin stripped,
+     *  the seed → the card unlock → the stubs). */
+    private val backupImportLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            lifecycleScope.launch {
+                val zip = File(cacheDir, "backup.zip")
+                runCatching {
+                    contentResolver.openInputStream(uri)?.use { ins ->
+                        zip.outputStream().use { ins.copyTo(it) }
+                    }
+                }.onFailure { status = "Backup read failed: ${it.message}"; return@launch }
+                screen = Screen.Search
+                status = when (val r = VaultSession.importBackupZip(zip)) {
+                    is VaultSession.Result.Success -> "Backup imported (rev ${VaultSession.currentRev()})."
+                    else -> "Backup: $r"
+                }
+            }
+        }
+
+    /** The repo-backup zip export: the SAF-create → the repo walk into one
+     *  zip (the .git = the signed history + the worktree; no plaintext). */
+    private val backupExportLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+            if (uri == null) return@registerForActivityResult
+            lifecycleScope.launch {
+                val n = contentResolver.openOutputStream(uri)?.use { out ->
+                    VaultSession.exportBackupZip(out)
+                } ?: 0
+                status = if (n > 0) "Backup exported ($n files)."
+                         else "Nothing to back up — no repo yet."
+                android.widget.Toast.makeText(this@MainActivity, status,
+                    android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+
     private val usbRestoreLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) return@registerForActivityResult
@@ -346,6 +383,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
             contentResolver.openInputStream(uri)?.use { ins ->
                 staged.outputStream().use { ins.copyTo(it) }
             }
+            // THE RECIPIENT ADOPTION: the vault file carries its recipients
+            // in its own PKESKs — adopted for the save targets (the
+            // local-only restores have no repo ledger; no OpenKeyChain).
+            VaultSession.adoptRecipientsFromVaultFile(staged)
             val restored: Envelope = run {
                 var env: VaultSession.DecryptEnvelope.Ok? = null
                 var guard = 0
@@ -887,6 +928,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 onRemoveRecipient = { id ->
                     VaultSession.setRecipientKeyIds(VaultSession.recipientKeyIds() - id)
                     status = "Recipient removed."
+                },
+                onLoadBackupZip = {
+                    backupImportLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
                 },
                 onNewVault = {
                     // New vaults are LOCAL-ONLY by design (the remote is
@@ -1590,6 +1634,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         else "Item encryption while in use OFF — sealed cache wiped."
                     },
                     onLock = { lockNow("") },
+                    onExportBackupZip = {
+                        backupExportLauncher.launch("offlinepass-backup.zip")
+                    },
                     onExportQrft = { screen = Screen.ExportPick },
                     onImportQrft = { cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA) },
                     onPairDevice = { pairCameraLauncher.launch(android.Manifest.permission.CAMERA) },
