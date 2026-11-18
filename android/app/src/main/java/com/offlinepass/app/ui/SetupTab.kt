@@ -192,7 +192,7 @@ fun SetupTabScreen(
             }
             var pat by remember { mutableStateOf("") }
             var auth by remember {
-                mutableStateOf(VaultSession.connectDraftAuth() ?: "ssh")
+                mutableStateOf(VaultSession.connectDraftAuth() ?: "card")
             }
             val isSsh = auth == "ssh"
             val built = if (isSsh) "git@github.com:$ownerRepo" else "https://github.com/$ownerRepo"
@@ -214,19 +214,42 @@ fun SetupTabScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilterChip(
                                 modifier = Modifier.weight(1f),
-                                selected = isSsh,
-                                onClick = { auth = "ssh" },
-                                label = { Text("Screenlock SSH key", maxLines = 1) }
+                                selected = auth == "card",
+                                onClick = { auth = "card" },
+                                label = { Text("Security key SSH", maxLines = 1) }
                             )
                             FilterChip(
                                 modifier = Modifier.weight(1f),
-                                selected = !isSsh,
+                                selected = isSsh,
+                                onClick = { auth = "ssh" },
+                                label = { Text("Screenlock SSH (deprecated)", maxLines = 1) }
+                            )
+                            FilterChip(
+                                modifier = Modifier.weight(1f),
+                                selected = auth == "pat",
                                 onClick = { auth = "pat" },
-                                label = { Text("PAT (HTTPS, deprecated)", maxLines = 1) }
+                                label = { Text("PAT (deprecated)", maxLines = 1) }
                             )
                         }
                         Text("Remote: $built", style = MaterialTheme.typography.bodySmall)
-                        if (isSsh) {
+                        if (auth == "card") {
+                            // THE SECURITY KEY = THE SSH AGENT: the card's
+                            // SSH line = already enrolled at the checklist's
+                            // step 1 — the sync = the PIN + the touch, no
+                            // deploy key, no token.
+                            if (VaultSession.yubikeySshLine() == null) {
+                                Text("The card's SSH line is not enrolled yet — " +
+                                    "run Get started → step 1 (Enroll from GitHub keys) first.",
+                                    style = MaterialTheme.typography.bodySmall)
+                            } else {
+                                Text("The auth = your security key's SSH line " +
+                                    "(already enrolled at the checklist's step 1 " +
+                                    "and published in the repo's authorized keys). " +
+                                    "Every sync = the PIN + the touch. No deploy " +
+                                    "key, no token, no screenlock key.",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                        } else if (isSsh) {
                             Text("1. Create & show the public key; scan it with the " +
                                 "offlinepass extension and Copy the key.",
                                 style = MaterialTheme.typography.bodySmall)
@@ -266,9 +289,12 @@ fun SetupTabScreen(
                     TextButton(
                         onClick = {
                             showConnect = false
-                            onConnectRemote(built.trim(), if (isSsh) "" else pat.trim())
+                            if (auth == "card") {
+                                VaultSession.setSshSyncMode(VaultSession.SSH_SYNC_YUBIKEY)
+                            }
+                            onConnectRemote(built.trim(), if (auth == "pat") pat.trim() else "")
                         },
-                        enabled = ownerRepoValid && (isSsh || pat.isNotBlank())
+                        enabled = ownerRepoValid && (auth != "pat" || pat.isNotBlank())
                     ) { Text("Connect") }
                 },
                 dismissButton = { TextButton(onClick = { showConnect = false }) { Text("Cancel") } }
