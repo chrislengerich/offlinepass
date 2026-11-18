@@ -21,3 +21,11 @@
 # would crash the same way on a minified build.
 -keep class com.jcraft.jsch.** { *; }
 -dontwarn com.jcraft.jsch.**
+
+# BouncyCastle (bcpg/bcprov): the card-crypto path uses the lightweight
+# (Bc*) operators — direct calls, no keeps needed. The jars reference
+# optional JDK classes; silence them. The bcpg 1.79 jars ship NO consumer
+# rules, and the OpenPGP framing (the SEIPD CFB, the MDC, the PKESKs) is
+# load-bearing for the vault's hot path — re-verify the decrypt on a
+# minified build if the BC version changes.
+-dontwarn org.bouncycastle.**
