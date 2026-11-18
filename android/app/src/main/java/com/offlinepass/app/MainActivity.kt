@@ -1744,6 +1744,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         status = "YubiKey SSH enrollment removed (screenlock mode active)."
                     },
                     onShowSshKey = { showSshKeyQr(Screen.Setup) },
+                    onEnrollFromGithubKeys = { enrollFromGithubKeys() },
                     onEnrollYubikeySsh = { line, subkeyId -> enrollYubikeySsh(line, subkeyId) },
                     onSshSelfTest = {
                         lifecycleScope.launch {

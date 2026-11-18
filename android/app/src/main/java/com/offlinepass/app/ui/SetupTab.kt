@@ -57,6 +57,7 @@ fun SetupTabScreen(
     onShowDeviceQr: (com.offlinepass.app.vault.DeviceRecord) -> Unit = {},
     onConnectRemote: (String, String) -> Unit = { _, _ -> },
     onShowSshKey: () -> Unit = {},
+    onEnrollFromGithubKeys: () -> Unit = {},
     onRotateSshKey: () -> Unit = {},
     onRemoveYubikeySsh: () -> Unit = {},
     onEnrollYubikeySsh: (String, String) -> Unit = { _, _ -> },
@@ -233,20 +234,32 @@ fun SetupTabScreen(
                         }
                         Text("Remote: $built", style = MaterialTheme.typography.bodySmall)
                         if (auth == "card") {
-                            // THE SECURITY KEY = THE SSH AGENT: the card's
-                            // SSH line = already enrolled at the checklist's
-                            // step 1 — the sync = the PIN + the touch, no
-                            // deploy key, no token.
+                            // THE SECURITY KEY = THE SSH AGENT: the line =
+                            // pulled from GitHub and matched to the card
+                            // (one touch — the SAME flow as the load-existing's
+                            // enrollment), so the remote is guaranteed to
+                            // accept the paired key. The connect = the sync's
+                            // auth = the card (the PIN + the touch).
                             if (VaultSession.yubikeySshLine() == null) {
-                                Text("The card's SSH line is not enrolled yet — " +
-                                    "run Get started → step 1 (Enroll from GitHub keys) first.",
+                                Text("One touch: the card's SSH line is pulled " +
+                                    "from your GitHub keys and matched to the " +
+                                    "attached card — the remote will accept the " +
+                                    "paired key (the same enrollment as the " +
+                                    "load-existing flow).",
                                     style = MaterialTheme.typography.bodySmall)
+                                Button(
+                                    onClick = {
+                                        VaultSession.saveConnectDraft(ownerRepo.trim(), "card")
+                                        onEnrollFromGithubKeys()
+                                    },
+                                    enabled = ownerRepoValid,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) { Text("Enroll from GitHub keys (one touch)") }
                             } else {
-                                Text("The auth = your security key's SSH line " +
-                                    "(already enrolled at the checklist's step 1 " +
-                                    "and published in the repo's authorized keys). " +
-                                    "Every sync = the PIN + the touch. No deploy " +
-                                    "key, no token, no screenlock key.",
+                                Text("✅ The auth = your card's SSH line " +
+                                    "(enrolled — published in the repo's " +
+                                    "authorized keys). Every sync = the PIN " +
+                                    "+ the touch.",
                                     style = MaterialTheme.typography.bodySmall)
                             }
                         } else if (isSsh) {
