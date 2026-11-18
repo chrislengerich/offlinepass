@@ -146,7 +146,7 @@ fun SetupChoiceScreen(
                 OutlinedButton(
                     onClick = { onLoadBackupZip() },
                     modifier = Modifier.weight(1f)
-                ) { Text("Backup zip") }
+                ) { Text("USB file") }
             }
 
             // 2. Sync-auth: the security key only (the card signs the SSH
