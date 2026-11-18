@@ -167,14 +167,9 @@ class VaultSaveTransactionTest {
         assertEquals("none", VaultSession.lastSaveRemoteState)
     }
 
-    @Test
-    fun stubSessionSaveNeverWritesEmptySecrets() = runBlocking {
-        // THE STUB-INVARIANT: after a stub-mode unlock, the in-memory list
-        // holds stubs (the secrets = in the sealed cache). A save must
-        // promote (the batch unseal) and merge the UI's edits — encrypting
-        // the stubs would WIPE every secret from the vault.
-        // The seal crypto seam: a software AES (the same pattern the
-        // production keystore implements).
+    /** The software seal crypto (the Robolectric-safe stand-in for the
+     *  keystore AES): the same seam the SealedVault tests use. */
+    private fun installSoftwareSealCrypto() {
         SealedVault.resetForTest(RuntimeEnvironment.getApplication())
         SealedVault.cryptoHook = object : SealedVault.SealCrypto {
             private val key = javax.crypto.spec.SecretKeySpec(
@@ -195,6 +190,15 @@ class VaultSaveTransactionTest {
                 return c.doFinal(ct)
             }
         }
+    }
+
+    @Test
+    fun stubSessionSaveNeverWritesEmptySecrets() = runBlocking {
+        // THE STUB-INVARIANT: after a stub-mode unlock, the in-memory list
+        // holds stubs (the secrets = in the sealed cache). A save must
+        // promote (the batch unseal) and merge the UI's edits — encrypting
+        // the stubs would WIPE every secret from the vault.
+        installSoftwareSealCrypto()
         VaultSession.setScreenlockUnlockEnabled(true)
         // The adopt with the screenlock on = the seal + the stub conversion:
         val seeded = item("Existing").apply {
@@ -225,6 +229,43 @@ class VaultSaveTransactionTest {
         assertTrue("the edited secret must be written", plain.contains("changed-secret"))
         assertFalse("the old secret must be replaced", plain.contains("real-secret"))
         assertFalse("no stubs may reach the vault", plain.contains("Existing\"}"))
+    }
+
+    @Test
+    fun stubEditClearedSecretsSurviveWithEditedUuid() = runBlocking {
+        // An edit that CLEARS all secrets must survive: the edited uuid
+        // rides the save, so the apply-diff replaces by uuid instead of
+        // letting the sealed base win over an all-empty (stub-looking) edit.
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        val seeded = item("Existing").apply { password = "real-secret" }
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf(seeded)
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        val edited = seeded.copy(password = "", note = "")
+        val items = (VaultSession.state as? VaultSession.State.Unlocked)?.items
+            ?.map { if (it.itemUuid == edited.itemUuid) edited else it } ?: emptyList()
+        val r = VaultSession.save(items, edited.itemUuid)
+        assertTrue("expected Success, got $r", r is VaultSession.Result.Success)
+        val plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertFalse("the cleared secret must be wiped", plain.contains("real-secret"))
+        assertTrue("the item itself must remain", plain.contains("Existing"))
+    }
+
+    @Test
+    fun stubAddSecretslessEntryAppendsWithUuid() = runBlocking {
+        // A brand-new entry with only URLs (no secrets) must append —
+        // the hasSecrets filter must not drop it when the uuid rides.
+        VaultSession.setScreenlockUnlockEnabled(true)
+        val added = item("UrlOnly").apply { password = "" }
+        val r = VaultSession.save(listOf(added), added.itemUuid)
+        assertTrue("expected Success, got $r", r is VaultSession.Result.Success)
+        val plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertTrue("the new entry must be in the vault", plain.contains("UrlOnly"))
     }
 
     @Test

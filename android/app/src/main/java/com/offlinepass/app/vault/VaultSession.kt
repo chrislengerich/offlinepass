@@ -657,6 +657,10 @@ object VaultSession {
         }
 
         // 4. The signing mode flips + the seal activates with the prompt.
+        // The seal needs the DECRYPTED items in memory — it happens here
+        // only when the session is unlocked; on a locked session it
+        // activates at the next unlock (never silently deferred without
+        // saying so).
         setCommitSigningMode(SIGNING_SCREENLOCK)
         setScreenlockUnlockEnabled(true)
         val items = (state as? State.Unlocked)?.items
@@ -668,11 +672,20 @@ object VaultSession {
                     "Seal the vault",
                     "The device lock encrypts the item secrets at rest")
             else true
-            if (gated) sealIfEnabled(items, env)
+            if (gated) {
+                sealIfEnabled(items, env)
+                return "Screenlock protection enrolled (security-key-signed " +
+                    "locally): commits now sign with the screenlock key, and " +
+                    "the item secrets are sealed at rest — effective immediately."
+            }
+            return "Screenlock protection enrolled (security-key-signed " +
+                "locally): commits now sign with the screenlock key. The " +
+                "screen-lock prompt was declined — the item secrets seal at " +
+                "your next unlock."
         }
-        return "Screenlock protection enrolled (security-key-signed locally): " +
-            "commits now sign with the screenlock key, and the item " +
-            "secrets are sealed at rest — effective immediately."
+        return "Screenlock protection enrolled (security-key-signed " +
+            "locally): commits now sign with the screenlock key. The item " +
+            "secrets seal at your next unlock (the key + the touch)."
     }
 
     /** Post-load signing-role resolution: the screenlock stays the local

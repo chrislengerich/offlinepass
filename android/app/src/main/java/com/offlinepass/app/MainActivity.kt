@@ -1296,7 +1296,15 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             lifecycleScope.launch {
                                 item.totpUri = uri
                                 item.modifyTime = nowSeconds()
-                                status = when (val r = saveLoop(unlockedItems())) {
+                                // The stub mode: the mutated revealed item
+                                // replaces its stub BY UUID + the edited
+                                // uuid rides the save (the apply-diff would
+                                // otherwise keep the sealed base and drop
+                                // the TOTP).
+                                val items = unlockedItems().map {
+                                    if (it.itemUuid == item.itemUuid) item else it
+                                }
+                                status = when (val r = saveLoop(items, item.itemUuid)) {
                                     VaultSession.Result.Success -> "TOTP enrolled."
                                     else -> "Save: $r"
                                 }
@@ -1317,7 +1325,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onSave = { item ->
                         lifecycleScope.launch {
                             item.modifyTime = nowSeconds()
-                            when (val r = saveLoop(unlockedItems() + item)) {
+                            // The new item's uuid rides the save: a
+                            // secrets-less entry (the URLs only) must append,
+                            // not fall to the stub-apply-diff's base-win.
+                            when (val r = saveLoop(unlockedItems() + item, item.itemUuid)) {
                                 VaultSession.Result.Success -> {
                                     // Back to the list in BOTH modes; the
                                     // toast says what reached where.
