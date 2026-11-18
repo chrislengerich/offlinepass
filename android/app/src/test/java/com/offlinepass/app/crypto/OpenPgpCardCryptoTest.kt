@@ -9,6 +9,7 @@ import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator
 import org.bouncycastle.openpgp.operator.jcajce.JcePBESecretKeyDecryptorBuilder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertArrayEquals
+import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.security.Security
@@ -64,8 +65,11 @@ class OpenPgpCardCryptoTest {
 
     @Test
     fun decryptsRealGpgFixtureToOriginalPlaintext() {
-        val plain = OpenPgpCardCrypto.decrypt(
-            resource("fixture-enc.gpg"), longArrayOf(fixtureKeyId), softwareCard("fixture-sec.asc", fixtureKeyId))
+        val plain = runBlocking {
+            OpenPgpCardCrypto.decrypt(
+                resource("fixture-enc.gpg"), longArrayOf(fixtureKeyId),
+                softwareCard("fixture-sec.asc", fixtureKeyId))
+        }
         assertEquals(String(resource("fixture-plain.txt")), String(plain))
     }
 
@@ -73,8 +77,11 @@ class OpenPgpCardCryptoTest {
     fun decryptsCompressedGpgFixture() {
         // gpg's default zlib compression — the SEIPD decrypt yields a
         // COMPRESSED packet, not a literal one.
-        val plain = OpenPgpCardCrypto.decrypt(
-            resource("fixture-enc-zlib.gpg"), longArrayOf(fixtureKeyId), softwareCard("fixture-sec.asc", fixtureKeyId))
+        val plain = runBlocking {
+            OpenPgpCardCrypto.decrypt(
+                resource("fixture-enc-zlib.gpg"), longArrayOf(fixtureKeyId),
+                softwareCard("fixture-sec.asc", fixtureKeyId))
+        }
         assertEquals(String(resource("fixture-plain.txt")), String(plain))
     }
 
@@ -82,8 +89,11 @@ class OpenPgpCardCryptoTest {
     fun picksTheCardPkeskAmongRecipients() {
         // Two recipients; the card's PKESK is SECOND in the packet order
         // (the second key's comes first) — the dispatch must try it.
-        val plain = OpenPgpCardCrypto.decrypt(
-            resource("fixture-enc-two.gpg"), longArrayOf(fixtureKeyId), softwareCard("fixture-sec.asc", fixtureKeyId))
+        val plain = runBlocking {
+            OpenPgpCardCrypto.decrypt(
+                resource("fixture-enc-two.gpg"), longArrayOf(fixtureKeyId),
+                softwareCard("fixture-sec.asc", fixtureKeyId))
+        }
         assertEquals(String(resource("fixture-plain.txt")), String(plain))
     }
 
@@ -93,8 +103,10 @@ class OpenPgpCardCryptoTest {
         // be a clean failure, never garbage plaintext.
         var failed = false
         try {
-            OpenPgpCardCrypto.decrypt(
-                resource("fixture-enc.gpg"), longArrayOf(secondKeyId), softwareCard("second-sec.asc", secondKeyId))
+            runBlocking {
+                OpenPgpCardCrypto.decrypt(
+                    resource("fixture-enc.gpg"), longArrayOf(secondKeyId), softwareCard("second-sec.asc", secondKeyId))
+            }
         } catch (e: Exception) {
             failed = true
         }
@@ -107,8 +119,10 @@ class OpenPgpCardCryptoTest {
         enc[enc.size - 5] = (enc[enc.size - 5].toInt() xor 1).toByte()
         var failed = false
         try {
-            OpenPgpCardCrypto.decrypt(
-                enc, longArrayOf(fixtureKeyId), softwareCard("fixture-sec.asc", fixtureKeyId))
+            runBlocking {
+                OpenPgpCardCrypto.decrypt(
+                    enc, longArrayOf(fixtureKeyId), softwareCard("fixture-sec.asc", fixtureKeyId))
+            }
         } catch (e: Exception) {
             failed = true
         }
@@ -121,8 +135,10 @@ class OpenPgpCardCryptoTest {
         assertEquals("both recipient keys must load", 2, recipients.size)
         val plain = "the vault envelope JSON — секрет, mot de passe ✅".toByteArray(Charsets.UTF_8)
         val env = OpenPgpCardCrypto.encryptToBytes(plain, "vault.json", recipients)
-        val back = OpenPgpCardCrypto.decrypt(
-            env, longArrayOf(fixtureKeyId), softwareCard("fixture-sec.asc", fixtureKeyId))
+        val back = runBlocking {
+            OpenPgpCardCrypto.decrypt(
+                env, longArrayOf(fixtureKeyId), softwareCard("fixture-sec.asc", fixtureKeyId))
+        }
         assertArrayEquals(plain, back)
     }
 
@@ -132,8 +148,10 @@ class OpenPgpCardCryptoTest {
         val recipients = recipientKeys("fixture-pub.asc", "second-pub.asc")
         val plain = "multi-recipient round trip".toByteArray(Charsets.UTF_8)
         val env = OpenPgpCardCrypto.encryptToBytes(plain, "vault.json", recipients)
-        val back = OpenPgpCardCrypto.decrypt(
-            env, longArrayOf(secondKeyId), softwareCard("second-sec.asc", secondKeyId))
+        val back = runBlocking {
+            OpenPgpCardCrypto.decrypt(
+                env, longArrayOf(secondKeyId), softwareCard("second-sec.asc", secondKeyId))
+        }
         assertArrayEquals(plain, back)
     }
 
@@ -141,8 +159,10 @@ class OpenPgpCardCryptoTest {
     fun emptyPlaintextRoundTrip() {
         val recipients = recipientKeys("fixture-pub.asc")
         val env = OpenPgpCardCrypto.encryptToBytes(ByteArray(0), "vault.json", recipients)
-        val back = OpenPgpCardCrypto.decrypt(
-            env, longArrayOf(fixtureKeyId), softwareCard("fixture-sec.asc", fixtureKeyId))
+        val back = runBlocking {
+            OpenPgpCardCrypto.decrypt(
+                env, longArrayOf(fixtureKeyId), softwareCard("fixture-sec.asc", fixtureKeyId))
+        }
         assertArrayEquals(ByteArray(0), back)
     }
 }

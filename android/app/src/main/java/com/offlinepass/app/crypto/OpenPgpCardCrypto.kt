@@ -1,23 +1,22 @@
 package com.offlinepass.app.crypto
 
+import org.bouncycastle.bcpg.PublicKeyEncSessionPacket
 import org.bouncycastle.openpgp.PGPCompressedData
+import org.bouncycastle.openpgp.PGPEncryptedDataGenerator
 import org.bouncycastle.openpgp.PGPEncryptedDataList
 import org.bouncycastle.openpgp.PGPException
 import org.bouncycastle.openpgp.PGPLiteralData
+import org.bouncycastle.openpgp.PGPLiteralDataGenerator
 import org.bouncycastle.openpgp.PGPObjectFactory
 import org.bouncycastle.openpgp.PGPPublicKey
 import org.bouncycastle.openpgp.PGPPublicKeyEncryptedData
 import org.bouncycastle.openpgp.PGPPublicKeyRing
+import org.bouncycastle.openpgp.PGPSessionKey
 import org.bouncycastle.openpgp.PGPUtil
-import org.bouncycastle.openpgp.operator.AbstractPublicKeyDataDecryptorFactory
-import org.bouncycastle.openpgp.operator.PGPDataDecryptor
 import org.bouncycastle.openpgp.operator.bc.BcPGPDataEncryptorBuilder
 import org.bouncycastle.openpgp.operator.bc.BcPublicKeyKeyEncryptionMethodGenerator
 import org.bouncycastle.openpgp.operator.bc.BcSessionKeyDataDecryptorFactory
 import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator
-import org.bouncycastle.openpgp.PGPEncryptedDataGenerator
-import org.bouncycastle.openpgp.PGPLiteralDataGenerator
-import org.bouncycastle.openpgp.PGPSessionKey
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.security.SecureRandom
@@ -26,9 +25,9 @@ import java.util.Date
 /**
  * The BC-backed OpenPGP crypto for the card path: the card (YubiKey or a
  * software stand-in) recovers the session key; BouncyCastle's bcpg does
- * ALL the OpenPGP framing — the PKESK parsing, the checksum confirm, the
- * SEIPD v1 OpenPGP-CFB, the MDC verify, the compressed/literal
- * unpacking, and the envelope construction. No hand-rolled CFB.
+ * ALL the OpenPGP framing — the SEIPD v1 OpenPGP-CFB, the MDC verify,
+ * the compressed/literal unpacking, and the envelope construction. No
+ * hand-rolled CFB.
  *
  * The seam: [decrypt] takes a `cardDecrypt` lambda (the raw PSO:DEC
  * contract — the PKESK's MPI value in, the PKCS#1 type-2 block out), so
@@ -36,74 +35,6 @@ import java.util.Date
  * the YubiKit card op.
  */
 object OpenPgpCardCrypto {
-
-    /**
-     * The PKESK → session-key seam: the card decrypts [secKeyData] (the
-     * PKESK's MPI value), the factory strips the PKCS#1 type-2 padding,
-     * verifies the RFC checksum (fast-fail for the multi-recipient
-     * dispatch — a non-matching card yields garbage, not a session key),
-     * and returns the recovered session data (algo || key || checksum).
-     * The SEIPD construction is delegated to BC's own
-     * [BcSessionKeyDataDecryptorFactory] — the same decryptor BC itself
-     * uses when the session key is already known.
-     */
-    class CardPublicKeyDecryptorFactory(
-        private val cardDecrypt: (ByteArray) -> ByteArray,
-    ) : AbstractPublicKeyDataDecryptorFactory() {
-
-        /** The PKESK's secKeyData arrives as the FULL MPI encoding (the
-         *  2-byte bit-length prefix + the value) for the v3/v4 packets,
-         *  and the 2-byte OCTET-count prefix for the v6 — the card wants
-         *  the bare value. Returns the value bytes only. */
-        private fun mpiValue(raw: ByteArray, pkeskVersion: Int): ByteArray {
-            if (raw.size <= 2) return raw
-            val prefix = ((raw[0].toInt() and 0xFF) shl 8) or (raw[1].toInt() and 0xFF)
-            val expected = if (pkeskVersion >= 6) prefix else (prefix + 7) / 8
-            return if (expected == raw.size - 2) raw.copyOfRange(2, raw.size) else raw
-        }
-
-        override fun recoverSessionData(
-            keyAlgorithm: Int,
-            secKeyData: Array<ByteArray>,
-            pkeskVersion: Int
-        ): ByteArray {
-            val m: ByteArray = try {
-                OpenPgpSeipd.stripType2(cardDecrypt(mpiValue(secKeyData[0], pkeskVersion)))
-            } catch (e: Exception) {
-                throw PGPException("the card decrypt failed: ${e.message}", e)
-            }
-            if (m.size < 4) throw PGPException("the recovered session data too short")
-            val checksum = ((m[m.size - 2].toInt() and 0xFF) shl 8) or
-                (m[m.size - 1].toInt() and 0xFF)
-            var sum = 0
-            for (i in 1 until m.size - 2) sum = (sum + (m[i].toInt() and 0xFF)) and 0xFFFF
-            if (sum != checksum) {
-                throw PGPException("the session key checksum mismatch — this PKESK is not the card's")
-            }
-            return m
-        }
-
-        override fun createDataDecryptor(
-            forEncryption: Boolean,
-            encAlgorithm: Int,
-            key: ByteArray
-        ): PGPDataDecryptor = BcSessionKeyDataDecryptorFactory(PGPSessionKey(encAlgorithm, key))
-            .createDataDecryptor(forEncryption, encAlgorithm, key)
-
-        // The v5/v6 AEAD overloads — unused on this path (the vault files
-        // are SEIPD v1), delegated to BC's own implementation.
-        override fun createDataDecryptor(
-            aeadEncData: org.bouncycastle.bcpg.AEADEncDataPacket,
-            sessionKey: PGPSessionKey
-        ): PGPDataDecryptor =
-            BcSessionKeyDataDecryptorFactory(sessionKey).createDataDecryptor(aeadEncData, sessionKey)
-
-        override fun createDataDecryptor(
-            integrityPacket: org.bouncycastle.bcpg.SymmetricEncIntegrityPacket,
-            sessionKey: PGPSessionKey
-        ): PGPDataDecryptor =
-            BcSessionKeyDataDecryptorFactory(sessionKey).createDataDecryptor(integrityPacket, sessionKey)
-    }
 
     /**
      * Decrypts an OpenPGP message (the armored or the binary) whose
@@ -115,10 +46,10 @@ object OpenPgpCardCrypto {
      * malformed padding) fails fast and the next candidate is tried; a
      * card with no matching PKESK at all fails cleanly.
      */
-    fun decrypt(
+    suspend fun decrypt(
         msgBytes: ByteArray,
         preferredCardKeyIds: LongArray = LongArray(0),
-        cardDecrypt: (ByteArray) -> ByteArray
+        cardDecrypt: suspend (ByteArray) -> ByteArray
     ): ByteArray {
         val decoder = PGPUtil.getDecoderStream(ByteArrayInputStream(msgBytes))
         val factory = PGPObjectFactory(decoder, JcaKeyFingerprintCalculator())
@@ -132,11 +63,17 @@ object OpenPgpCardCrypto {
             }
         if (pkesks.isEmpty()) throw PGPException("no PKESK in the message")
 
-        val cardFactory = CardPublicKeyDecryptorFactory(cardDecrypt)
         var lastError: Exception? = null
         for (pkesk in pkesks) {
             try {
-                val dataStream = pkesk.getDataStream(cardFactory)
+                // The card op OUTSIDE BC's factory machinery: the session
+                // key is recovered here (the checksum fast-fails the wrong
+                // PKESKs), then BC decrypts with the pre-supplied key —
+                // the same decryptor BC itself uses when the session key
+                // is already known.
+                val (algo, key) = recoverSessionKey(pkesk, cardDecrypt)
+                val dataStream = pkesk.getDataStream(
+                    BcSessionKeyDataDecryptorFactory(PGPSessionKey(algo, key)))
                 val plain = unpack(dataStream)
                 // The MDC verification: BC's verify() drains the stream and
                 // RETURNS the verdict (it does not throw) — a tampered
@@ -154,6 +91,57 @@ object OpenPgpCardCrypto {
         throw PGPException(
             "the card opens none of the ${pkesks.size} recipient(s): " +
                 (lastError?.message ?: "unknown"), lastError)
+    }
+
+    /**
+     * The PKESK → session-key recovery: the card decrypts the PKESK's MPI
+     * value, [OpenPgpSeipd.stripType2] strips the PKCS#1 type-2 padding,
+     * and the RFC checksum is verified here (the fast-fail for the
+     * multi-recipient dispatch — a non-matching card yields garbage, not
+     * a session key). Returns (algorithm, session key).
+     */
+    private suspend fun recoverSessionKey(
+        pkesk: PGPPublicKeyEncryptedData,
+        cardDecrypt: suspend (ByteArray) -> ByteArray
+    ): Pair<Int, ByteArray> {
+        val packet = pkeskKeyData(pkesk)
+        if (packet.version != 3) {
+            throw PGPException("unsupported PKESK version ${packet.version} (the vault uses v3)")
+        }
+        val m: ByteArray = try {
+            OpenPgpSeipd.stripType2(cardDecrypt(mpiValue(packet.encSessionKey[0], packet.version)))
+        } catch (e: Exception) {
+            throw PGPException("the card decrypt failed: ${e.message}", e)
+        }
+        if (m.size < 4) throw PGPException("the recovered session data too short")
+        val checksum = ((m[m.size - 2].toInt() and 0xFF) shl 8) or
+            (m[m.size - 1].toInt() and 0xFF)
+        var sum = 0
+        for (i in 1 until m.size - 2) sum = (sum + (m[i].toInt() and 0xFF)) and 0xFFFF
+        if (sum != checksum) {
+            throw PGPException("the session key checksum mismatch — this PKESK is not the card's")
+        }
+        return (m[0].toInt() and 0xFF) to m.copyOfRange(1, m.size - 2)
+    }
+
+    /** BC's PGPPublicKeyEncryptedData hides its packet; the package-private
+     *  field is reachable reflectively. The version + the secKeyData come
+     *  from it. */
+    private fun pkeskKeyData(pkesk: PGPPublicKeyEncryptedData): PublicKeyEncSessionPacket {
+        val field = PGPPublicKeyEncryptedData::class.java.getDeclaredField("keyData")
+        field.isAccessible = true
+        return field.get(pkesk) as PublicKeyEncSessionPacket
+    }
+
+    /** The PKESK's secKeyData arrives as the FULL MPI encoding (the
+     *  2-byte bit-length prefix + the value) for the v3/v4 packets, and
+     *  the 2-byte OCTET-count prefix for the v6 — the card wants the bare
+     *  value. Returns the value bytes only. */
+    private fun mpiValue(raw: ByteArray, pkeskVersion: Int): ByteArray {
+        if (raw.size <= 2) return raw
+        val prefix = ((raw[0].toInt() and 0xFF) shl 8) or (raw[1].toInt() and 0xFF)
+        val expected = if (pkeskVersion >= 6) prefix else (prefix + 7) / 8
+        return if (expected == raw.size - 2) raw.copyOfRange(2, raw.size) else raw
     }
 
     /** Walks the decrypted stream: the compressed packets recurse, the

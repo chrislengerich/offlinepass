@@ -79,6 +79,52 @@ object VaultSession {
      */
     internal var openPgpClientFactory: (Context) -> OpenPgpOps = { sharedOpenPgpClient(it) }
 
+    /**
+     * The vault ENVELOP seams — the hot-path crypto (the load decrypt +
+     * the save/merge encrypt). Production: the YubiKit card + BouncyCastle
+     * (no OpenKeyChain in the path). Tests override both to run the save
+     * transaction on the JVM without the card.
+     *
+     * The decrypt = the raw vault file → the plaintext JSON. The card op
+     * (the PIN verify + PSO:DEC) rides ONE USB connection; the touch
+     * prompt wraps the card op.
+     */
+    internal var vaultDecryptBytes: suspend (ByteArray) -> ByteArray = { bytes ->
+        val pin = yubikeyPin() ?: throw java.io.IOException("OpenPGP PIN cancelled")
+        val plain = com.offlinepass.app.crypto.YubiKitCardDecrypt.decryptEnvelopeBytes(
+            appContext, bytes, pin
+        ) { op -> withTouchPrompt { op() } }
+        yubikeyPinRemember(pin)
+        plain
+    }
+
+    /** The vault encrypt: the plaintext JSON → the OpenPGP ciphertext for
+     *  the repo's recipients (keys/encrypt/&lt;keyid&gt;.pub.asc). */
+    internal var vaultEncryptBytes: suspend (plain: ByteArray, repoRoot: File, keyIds: LongArray) -> ByteArray =
+        { plain, repoRoot, keyIds ->
+            com.offlinepass.app.crypto.OpenPgpCardCrypto.encryptToBytes(
+                plain, "10.gpg", loadRecipientKeysFor(repoRoot, keyIds))
+        }
+
+    /** Loads the recipients' public keys from the repo's armored files
+     *  (keys/encrypt/&lt;keyid&gt;.pub.asc; the legacy flat layout counts). */
+    private fun loadRecipientKeysFor(repoRoot: File, keyIds: LongArray): List<org.bouncycastle.openpgp.PGPPublicKey> {
+        val encryptDir = File(repoRoot, "keys/encrypt")
+        val keys = keyIds.flatMap { id ->
+            val f = File(encryptDir, "%016X.pub.asc".format(id))
+            val legacy = File(repoRoot, "keys/%016X.public.asc".format(id))
+            val file = when {
+                f.exists() -> f
+                legacy.exists() -> legacy
+                else -> throw java.io.IOException(
+                    "the recipient key 0x%016X is missing (keys/encrypt) — re-sync to materialize it".format(id))
+            }
+            com.offlinepass.app.crypto.OpenPgpCardCrypto.loadRecipientKeys(file.readBytes())
+        }
+        if (keys.isEmpty()) throw java.io.IOException("no usable recipient keys in keys/encrypt")
+        return keys
+    }
+
     /** The SHARED OpenKeyChain client: ONE instance whose binding persists
      *  for the process lifetime. The per-op clients unbound on close —
      *  OKK's process then died between ops, and every subsequent decrypt/
@@ -1038,8 +1084,10 @@ object VaultSession {
      * [Result.Interaction] by launching the PendingIntent and calling again.
      */
     /**
-     * LOCAL-ONLY operation: decrypts the on-disk vault via OpenKeyChain.
-     * No network — syncing happens explicitly (Sync now) or on save.
+     * LOCAL-ONLY operation: decrypts the on-disk vault with the security
+     * key (the card's DECRYPTION slot via YubiKit + BouncyCastle — no
+     * OpenKeyChain in the path). No network — syncing happens explicitly
+     * (Sync now) or on save.
      */
     suspend fun unlock(): Result {
         val cfg = config()
@@ -1048,50 +1096,23 @@ object VaultSession {
         if (!File(vaultFilePath()).exists()) {
             return Result.Error("No local vault — use the setup screen.")
         }
-        busy = "Decrypting vault… (touch your key)"
-        val plain = File(appContext.cacheDir, "vault-plain.json")
+        busy = "Decrypting vault… (PIN + touch your key)"
         try {
-            val client = sharedOpenPgpClient(appContext)
-            // OpenKeychain's interaction contract: after the user completes
-            // the prompt, retry with the RETURNED intent (it carries the
-            // call UUIDs that locate the cached crypto input).
-            var reqData: Intent? = null
-            var guard = 0
-            while (guard++ < 2) {
-                when (val r = client.decryptVerify(vaultFile(), plain, reqData)) {
-                    is OpenPgpClient.DecryptResult.Success -> {
-                        loadPhase("Decrypted — adopting ${plain.length()}B")
-                        val env = Envelope.fromJson(plain.readText())
-                        rev = env.rev
-                        loadedEnvelope = env
-                        state = State.Unlocked(env.items)
-                        sealIfEnabled(env.items, env)
-                        loadPhase("Vault loaded (${env.items.size} items, rev=${env.rev})")
-                        Log.i(TAG, "unlocked: ${env.items.size} items, rev=${env.rev}")
-                        return Result.Success
-                    }
-                    is OpenPgpClient.DecryptResult.UserInteraction -> {
-                        loadPhase("OKK demands its screen — launching it " +
-                            "(the API-allow or the decrypt confirm; touch the " +
-                            "card when OKK blinks it)")
-                        reqData = interactionHandler?.invoke(r.pendingIntent)
-                        loadPhase("OKK screen returned " +
-                            (if (reqData != null) "ok — retrying with its intent"
-                             else "CANCELED — nothing completed"))
-                        reqData ?: return Result.Error(
-                            "Interaction needs the UI layer")
-                    }
-                    is OpenPgpClient.DecryptResult.Error -> return Result.Error("Decrypt failed (see logcat)")
-                }
-            }
-            return Result.Error("Unlock aborted after interaction retry.")
+            loadPhase("Decrypting with the security key…")
+            val plainBytes = vaultDecryptBytes(vaultFile().readBytes())
+            loadPhase("Decrypted — adopting ${plainBytes.size}B")
+            val env = Envelope.fromJson(String(plainBytes))
+            rev = env.rev
+            loadedEnvelope = env
+            state = State.Unlocked(env.items)
+            sealIfEnabled(env.items, env)
+            loadPhase("Vault loaded (${env.items.size} items, rev=${env.rev})")
+            Log.i(TAG, "unlocked: ${env.items.size} items, rev=${env.rev}")
+            return Result.Success
         } catch (e: Exception) {
             Log.w(TAG, "unlock failed: ${e.message}")
             return Result.Error("${e.javaClass.simpleName}: ${e.message}")
         } finally {
-            // The decrypted copy never outlives the call: zeroed + deleted
-            // on every exit path (success, interaction, error, exception).
-            SecureWipe.file(plain)
             busy = null
         }
     }
@@ -1185,12 +1206,23 @@ object VaultSession {
                 }
 
                 try {
+                    // Materialize the recipients' armored public keys + ledger
+                    // into the repo BEFORE the encrypt — the BC envelope needs
+                    // the recipient files on disk — so git history records
+                    // exactly who can open each revision (design:
+                    // keys/encrypt/*.pub.asc + recipients.txt).
+                    val keysOk = materializeRecipientKeys(client, gitRoot(), keyIds)
+                    if (!keysOk) {
+                        return@withContext rollback("Some recipient key files missing — nothing saved")
+                    }
+
                     try {
                         plain.writeText(env.toJsonObject().toString())
                         target.parentFile?.mkdirs()
-                        if (!client.encryptTo(keyIds, plain, target)) {
-                            return@withContext rollback("Encrypt failed")
-                        }
+                        target.writeBytes(vaultEncryptBytes(
+                            plain.readText().toByteArray(Charsets.UTF_8), gitRoot(), keyIds))
+                    } catch (e: Exception) {
+                        return@withContext rollback("Encrypt failed: ${e.message}")
                     } finally {
                         // The pre-encrypt plaintext is zeroed + deleted as soon
                         // as the ciphertext exists.
@@ -1199,12 +1231,6 @@ object VaultSession {
                     rev = env.rev
                     loadedEnvelope = env
                     Log.i(TAG, "encrypted ${target.length()} bytes, rev=${env.rev}")
-
-                    // Materialize the recipients' armored public keys + ledger
-                    // into the repo, so git history records exactly who can open
-                    // each revision (design: keys/*.public.asc + recipients.txt).
-                    val keysOk = materializeRecipientKeys(client, gitRoot(), keyIds)
-                    if (!keysOk) syncStatus = "Some recipient key files missing (retried next save)"
 
                     // Commit signer: OpenKeyChain's signing key (default) OR
                     // the screenlock keystore key — exclusive paths. In
@@ -2059,11 +2085,25 @@ object VaultSession {
                     }
                     is VaultGitClient.Divergence.Diverged -> {
                         Log.i(TAG, "diverged: merging ${div.headId.take(7)} with ${div.remoteId.take(7)}")
+                        // The vault files are ENCRYPTED — decrypt before the
+                        // merge (the card, one touch for the remote side).
+                        // The previous code fed the ciphertext to
+                        // Envelope.fromJson, silently merged EMPTY envelopes
+                        // and wiped the vault on divergence.
                         val remoteEnv = git.readFileAt(root, "origin/main:$vaultRelPath")
-                            ?.let { b -> runCatching { Envelope.fromJson(String(b)) }.getOrNull() }
+                            ?.let { b ->
+                                runCatching { Envelope.fromJson(String(vaultDecryptBytes(b))) }
+                                    .onFailure { Log.w(TAG, "the remote vault decrypt failed: ${it.message}") }
+                                    .getOrNull()
+                            }
                             ?: Envelope(deviceId = cfg.deviceId)
-                        val localEnv = git.readFileAt(root, "HEAD:$vaultRelPath")
-                            ?.let { b -> runCatching { Envelope.fromJson(String(b)) }.getOrNull() }
+                        val localEnv = loadedEnvelope
+                            ?: git.readFileAt(root, "HEAD:$vaultRelPath")
+                                ?.let { b ->
+                                    runCatching { Envelope.fromJson(String(vaultDecryptBytes(b))) }
+                                        .onFailure { Log.w(TAG, "the local vault decrypt failed: ${it.message}") }
+                                        .getOrNull()
+                                }
                             ?: Envelope(deviceId = cfg.deviceId)
                         val merged = VaultMerge.unionMerge(localEnv, remoteEnv)
 
@@ -2073,14 +2113,16 @@ object VaultSession {
                         val client = sharedOpenPgpClient(appContext)
                         val keyIds = cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()
                         if (keyIds.isEmpty()) throw IllegalStateException("no recipients")
+                        // The recipients' armored files must be present for
+                        // the BC encrypt (the pulled repo carries them).
+                        materializeRecipientKeys(client, root, keyIds)
                         val plain = File(appContext.cacheDir, "merge-plain.json")
                         try {
                             plain.writeText(merged.toJsonObject().toString())
                             val target = File(root, vaultRelPath)
                             target.parentFile?.mkdirs()
-                            if (!client.encryptTo(keyIds, plain, target)) {
-                                throw IllegalStateException("encrypt during merge failed")
-                            }
+                            target.writeBytes(vaultEncryptBytes(
+                                plain.readText().toByteArray(Charsets.UTF_8), root, keyIds))
                         } finally {
                             SecureWipe.file(plain)
                         }
@@ -2118,14 +2160,16 @@ object VaultSession {
 
     /** Re-decrypts the on-disk vault file into the session (after a pull). */
     private suspend fun refreshFromVaultFile() {
-        when (val r = decryptEnvelope(vaultFile())) {
-            is VaultSession.DecryptEnvelope.Ok -> {
-                rev = r.env.rev
-                loadedEnvelope = r.env
-                state = State.Unlocked(r.env.items)
-                sealIfEnabled(r.env.items, r.env)
-            }
-            else -> Log.w(TAG, "post-pull decrypt failed")
+        // The pull happens with the key attached: decrypt via the card path
+        // (the same seam as unlock; no OpenKeyChain in the path).
+        try {
+            val env = Envelope.fromJson(String(vaultDecryptBytes(vaultFile().readBytes())))
+            rev = env.rev
+            loadedEnvelope = env
+            state = State.Unlocked(env.items)
+            sealIfEnabled(env.items, env)
+        } catch (e: Exception) {
+            Log.w(TAG, "post-pull decrypt failed: ${e.message}")
         }
     }
 
@@ -2133,8 +2177,9 @@ object VaultSession {
      * Writes the recipients' armored public keys (keys/<keyid>.public.asc)
      * and the recipients ledger (keys/recipients.txt) into the repo root —
      * committed with the vault, so git history records exactly which keys
-     * can open each revision. Best-effort: a failed fetch is retried on the
-     * next save; returns true when every key file is present.
+     * can open each revision. The BC envelope encrypt NEEDS these files on
+     * disk, so a missing fetch hard-fails the save (the caller rolls back);
+     * returns true when every key file is present.
      */
     private suspend fun materializeRecipientKeys(
         client: OpenPgpOps,

@@ -85,6 +85,13 @@ class VaultSaveTransactionTest {
     private val app: Application = RuntimeEnvironment.getApplication()
     private val fake = FakeOpenPgp()
 
+    // The vault crypto seams — captured BEFORE the injection (the object
+    // statics may carry state from a previous test class) and restored in
+    // @After. The fake "ciphertext" = base64 (reversible, so a decrypt
+    // round-trips; the bytes still change per rev).
+    private val prodEncrypt = VaultSession.vaultEncryptBytes
+    private val prodDecrypt = VaultSession.vaultDecryptBytes
+
     private fun vaultFile(): File = File(File(app.filesDir, "vault/repo"), "state/10.gpg")
     private fun gitRoot(): File = File(app.filesDir, "vault/repo")
 
@@ -124,6 +131,14 @@ class VaultSaveTransactionTest {
         File(app.filesDir, "vault").deleteRecursively()
         VaultSession.resetForTest(app)
         VaultSession.openPgpClientFactory = { fake }
+        VaultSession.vaultEncryptBytes = { plain, _, _ ->
+            if (fake.encryptThrows) throw IllegalStateException("encrypt IPC died")
+            if (!fake.encryptOk) throw java.io.IOException("encrypt failed")
+            java.util.Base64.getEncoder().encode(plain)
+        }
+        VaultSession.vaultDecryptBytes = { bytes ->
+            java.util.Base64.getDecoder().decode(bytes)
+        }
         // Cached recipient ids → the key-lookup loop is skipped (no
         // PendingIntents under test). Local-only by default.
         VaultSession.setRecipientKeyIds(listOf(FakeOpenPgp.KEY_ID))
@@ -133,6 +148,8 @@ class VaultSaveTransactionTest {
     @After
     fun tearDown() {
         VaultSession.openPgpClientFactory = { OpenPgpClient(it) }
+        VaultSession.vaultEncryptBytes = prodEncrypt
+        VaultSession.vaultDecryptBytes = prodDecrypt
     }
 
     // -- success ------------------------------------------------------------
@@ -286,7 +303,7 @@ class VaultSaveTransactionTest {
         val r = VaultSession.save(listOf(item("New")))
 
         assertTrue("expected Success (self-healed), got $r", r is VaultSession.Result.Success)
-        assertTrue("vault file updated", vaultFile().readText().startsWith("ciphertext:"))
+        assertTrue("vault file updated", String(java.util.Base64.getDecoder().decode(vaultFile().readBytes())).contains("\"items\""))
         assertNotNull("commit landed in the self-healed repo", headId())
         assertEquals("pending", VaultSession.lastSaveRemoteState)
         val state = VaultSession.state as VaultSession.State.Unlocked
@@ -303,7 +320,7 @@ class VaultSaveTransactionTest {
         val r = VaultSession.save(listOf(item("New")))
 
         assertTrue("expected Success, got $r", r is VaultSession.Result.Success)
-        assertTrue("vault file updated", vaultFile().readText().startsWith("ciphertext:"))
+        assertTrue("vault file updated", String(java.util.Base64.getDecoder().decode(vaultFile().readBytes())).contains("\"items\""))
         assertNotNull("commit landed", headId())
         assertEquals("pending", VaultSession.lastSaveRemoteState)
         val state = VaultSession.state as VaultSession.State.Unlocked
