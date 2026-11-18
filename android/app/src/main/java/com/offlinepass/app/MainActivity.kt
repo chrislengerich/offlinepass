@@ -897,6 +897,40 @@ class MainActivity : androidx.activity.ComponentActivity() {
             )
             return
         }
+        // The QRFT scanner has no session dependency (the camera + the
+        // WebView) — routed in EVERY state: the setup's Load row needs it
+        // while the vault is still NoConfig.
+        if (screen is Screen.QrftScan) {
+            QrftScanScreen(
+                onPayload = { name, payload ->
+                    Log.i(TAG, "QRFT received: $name")
+                    lifecycleScope.launch {
+                        // THE DUAL ROUTE: the Proton JSON export (the
+                        // plaintext entries) = the merge import; the vault
+                        // file (the OpenPGP ciphertext, the base64 in the
+                        // QRFT) = the staged file → the SAME restore path
+                        // as the USB.
+                        if (payload.trimStart().startsWith("{") ||
+                            payload.trimStart().startsWith("[")) {
+                            importQrftPayload(payload)
+                        } else {
+                            val staged = File(cacheDir, "qrft-import.gpg")
+                            try {
+                                staged.writeBytes(
+                                    java.util.Base64.getDecoder().decode(payload.trim()))
+                            } catch (e: IllegalArgumentException) {
+                                staged.writeText(payload)
+                            }
+                            VaultSession.adoptRecipientsFromVaultFile(staged)
+                            restoreLoop(android.net.Uri.parse(
+                                "file://" + staged.absolutePath))
+                        }
+                    }
+                },
+                onBack = { screen = Screen.SetupChoice }
+            )
+            return
+        }
         // The YubiKey touch prompt: every state — the card waits for a
         // touch during the auth/commit/enrollment ops; the dialog shows
         // and self-dismisses when the op completes (or fails).
@@ -1261,10 +1295,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 )
             }
             is VaultSession.State.Unlocked -> when (val s = screen) {
-                // QrftPayload is handled at the top of AppRouter (every state)
-                // and never reaches this branch; the explicit branch keeps the
-                // when exhaustive.
+                // QrftPayload/QrftScan are handled at the top of AppRouter
+                // (every state) and never reach this branch; the explicit
+                // branch keeps the when exhaustive.
                 is Screen.QrftPayload -> {}
+                is Screen.QrftScan -> {}
                 Screen.SetupChoice, Screen.Search -> SearchScreen(
                     items = unlockedItems(),
                     busy = VaultSession.busy,
@@ -1554,34 +1589,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             }
                         }
                     }
-                )
-                Screen.QrftScan -> QrftScanScreen(
-                    onPayload = { name, payload ->
-                        Log.i(TAG, "QRFT received: $name")
-                        lifecycleScope.launch {
-                            // THE DUAL ROUTE: the Proton JSON export (the
-                            // plaintext entries) = the merge import; the
-                            // vault file (the OpenPGP ciphertext, the
-                            // base64 in the QRFT) = the staged file → the
-                            // SAME restore path as the USB.
-                            if (payload.trimStart().startsWith("{") ||
-                                payload.trimStart().startsWith("[")) {
-                                importQrftPayload(payload)
-                            } else {
-                                val staged = File(cacheDir, "qrft-import.gpg")
-                                try {
-                                    staged.writeBytes(
-                                        java.util.Base64.getDecoder().decode(payload.trim()))
-                                } catch (e: IllegalArgumentException) {
-                                    staged.writeText(payload)
-                                }
-                                VaultSession.adoptRecipientsFromVaultFile(staged)
-                                restoreLoop(android.net.Uri.parse(
-                                    "file://" + staged.absolutePath))
-                            }
-                        }
-                    },
-                    onBack = { screen = Screen.SetupChoice }
                 )
                 Screen.PairScan -> PairScanScreen(
                     onRecord = { raw ->
