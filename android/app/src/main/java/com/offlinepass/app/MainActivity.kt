@@ -707,25 +707,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
     }
 
-    /** Asks ONCE per install for the battery-optimization exemption: this
-     *  ROM kills backgrounded apps, and OpenKeyChain's decrypt prompt
-     *  backgrounds us mid-load. A denied user can still grant via
-     *  Settings → Apps → Battery. */
-    private fun maybeRequestBatteryExemption() {
-        val pm = getSystemService(android.os.PowerManager::class.java)
-        if (pm.isIgnoringBatteryOptimizations(packageName)) return
-        if (VaultSession.batteryExemptionAsked()) return
-        VaultSession.setBatteryExemptionAsked()
-        runCatching {
-            startActivity(android.content.Intent(
-                android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                android.net.Uri.parse("package:$packageName")))
-            android.widget.Toast.makeText(this,
-                "Allow Unrestricted — the ROM kills offlinepass while " +
-                    "OpenKeyChain decrypts.", android.widget.Toast.LENGTH_LONG).show()
-        }
-    }
-
     /** The USB permission gate for the card ops: when a YubiKey is
      *  attached but not yet permitted, pop the system dialog and await
      *  the grant. Idempotent — a no-op when already granted. */
@@ -970,7 +951,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     VaultSession.configure(remote, emails)
                     if (pat.isNotBlank()) VaultSession.savePat(pat)
                     status = ""
-                    maybeRequestBatteryExemption()
                     lifecycleScope.launch {
                         // Persist the load screen's chosen sync-auth BEFORE
                         // the transport: the chip choice lived only in the
@@ -1543,6 +1523,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         packageManager.getPackageInfo(
                             com.offlinepass.app.crypto.OpenPgpClient.OPENKEYCHAIN_PACKAGE, 0)
                     }.isSuccess,
+                    sshAuthUseAut = VaultSession.sshAuthUseAut(),
+                    onSshAuthUseAut = { VaultSession.setSshAuthUseAut(it) },
                     onEnrollFromGithubKeys = { enrollFromGithubKeys() },
                     onConnectAndSync = { remote ->
                         lifecycleScope.launch {

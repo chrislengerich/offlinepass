@@ -235,6 +235,8 @@ fun GetStartedScreen(
     yubikeyEnrolled: Boolean,
     screenlockEnrolled: Boolean,
     okkInstalled: Boolean,
+    sshAuthUseAut: Boolean = false,
+    onSshAuthUseAut: (Boolean) -> Unit = {},
     onEnrollFromGithubKeys: () -> Unit,
     onConnectAndSync: (String) -> Unit,
     onEnrollScreenlock: () -> Unit,
@@ -273,6 +275,20 @@ fun GetStartedScreen(
         if (yubikeyEnrolled) {
             Text("✅ Enrolled — every sync authenticates with the card (PIN + touch).",
                 style = MaterialTheme.typography.bodySmall)
+            // The card slot: the SIG subkey (the default — the card pads the
+            // digest) vs the AUT subkey (the dedicated authentication key —
+            // the raw-RSA challenge, the caller pads; the transport is the
+            // experiment). The switch = the pref the cardSign reads.
+            androidx.compose.material3.ListItem(
+                headlineContent = { Text("Use the AUT key for SSH auth") },
+                supportingContent = { Text("The dedicated authentication subkey " +
+                    "(the raw-RSA challenge, the caller pads — the transport " +
+                    "experiment). Off = the SIG signing subkey.") },
+                trailingContent = {
+                    androidx.compose.material3.Switch(
+                        checked = sshAuthUseAut,
+                        onCheckedChange = onSshAuthUseAut)
+                })
         } else {
             Text("The card's SSH line must be on GitHub (an account key), then " +
                 "the app matches it against the card with one touch.",
