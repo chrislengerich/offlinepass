@@ -236,6 +236,31 @@ class VaultSaveTransactionTest {
     }
 
     @Test
+    fun seedParsesUnsignedHexIds() = runBlocking {
+        // THE UNSIGNED-PARSE REGRESSION: the ids with the high bit set (the
+        // card's own 0xF3E2… among them) overflow the signed Long —
+        // toLongOrNull(16) returned null for EVERY real key id on-device,
+        // seeding zero recipients and forcing the OKK lookup at the first
+        // save. parseUnsignedLong = the bit-correct form.
+        val highBitFile = "A367234D973E0E3E"      // the high bit set
+        val ledgerId = "F3E2A264FA4B09AB"          // the high bit set
+        gitRoot().mkdirs()
+        File(gitRoot(), "keys/encrypt").mkdirs()
+        File(gitRoot(), "keys/encrypt/$highBitFile.pub.asc").writeText("key 1\n")
+        File(gitRoot(), "keys/encrypt/recipients.txt").writeText(
+            "recipientKeyIds: 0x$ledgerId\n")
+        val ids = VaultSession.seedRecipientsFromRepo()
+        assertEquals(2, ids.size)
+        assertTrue("the high-bit file id must parse",
+            ids.contains(java.lang.Long.parseUnsignedLong(highBitFile, 16)))
+        assertTrue("the high-bit ledger id must parse",
+            ids.contains(java.lang.Long.parseUnsignedLong(ledgerId, 16)))
+        // The persisted form = the same prefs the save reads.
+        assertTrue(VaultSession.recipientKeyIds().contains(
+            java.lang.Long.parseUnsignedLong(ledgerId, 16)))
+    }
+
+    @Test
     fun promoteSealedSessionEndsInStubs() = runBlocking {
         // THE STUB-INVARIANT: even the promote (the batch unseal for the
         // write ops) must not leave the full items in memory — the session

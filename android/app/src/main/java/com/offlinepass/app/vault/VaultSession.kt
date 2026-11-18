@@ -1856,16 +1856,19 @@ object VaultSession {
         val encryptDir = File(gitRoot(), "keys/encrypt")
         val legacyDir = File(gitRoot(), "keys")
         val fromFiles = (encryptDir.listFiles { f -> f.name.endsWith(".pub.asc") }
-            ?.mapNotNull { f -> f.name.substringBefore(".").toLongOrNull(16) }
-            ?: emptyList()) + legacyDir.listFiles { f -> f.name.endsWith(".public.asc") }
-            ?.mapNotNull { f -> f.name.substringBefore(".").toLongOrNull(16) }
-            .orEmpty()
+            ?.mapNotNull { f ->
+                java.lang.Long.parseUnsignedLong(f.name.substringBefore("."), 16)
+            } ?: emptyList()) + legacyDir.listFiles { f -> f.name.endsWith(".public.asc") }
+            ?.mapNotNull { f ->
+                java.lang.Long.parseUnsignedLong(f.name.substringBefore("."), 16)
+            }.orEmpty()
         val fromLedger = runCatching {
             File(encryptDir, "recipients.txt").readText().lineSequence()
                 .firstOrNull { it.startsWith("recipientKeyIds:") }
                 ?.substringAfter(":")?.trim()
                 ?.split(" ")?.mapNotNull { t ->
-                    t.removePrefix("0x").removePrefix("0X").toLongOrNull(16)
+                    java.lang.Long.parseUnsignedLong(
+                        t.removePrefix("0x").removePrefix("0X"), 16)
                 }
         }.getOrNull().orEmpty()
         val ids = (fromFiles + fromLedger).distinct()

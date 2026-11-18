@@ -1266,6 +1266,53 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onSetup = { screen = Screen.Setup }
                 )
                 is Screen.Detail -> {
+                    // THE STUB MODEL: the revealed item wins over the stub
+                    // lookup (the reveal flow sets sealedReveal; the stub
+                    // only ever unseals here — a stub is never rendered).
+                    if (sealedReveal != null && sealedReveal!!.itemUuid == s.itemUuid) {
+                        EntryDetailScreen(
+                            item = sealedReveal!!,
+                            status = status,
+                            busy = VaultSession.busy,
+                            onBack = { sealedReveal = null; screen = Screen.Search },
+                            onExportQr = { encrypt -> exportQr(sealedReveal!!, encrypt) },
+                            pairedDevices = VaultSession.pairedDevices(),
+                            onSaveChanges = { edited ->
+                                lifecycleScope.launch {
+                                    edited.modifyTime = nowSeconds()
+                                    val items = unlockedItems().map {
+                                        if (it.itemUuid == edited.itemUuid) edited else it
+                                    }
+                                    status = when (val r = saveLoop(items, edited.itemUuid)) {
+                                        VaultSession.Result.Success -> "Saved (rev ${VaultSession.currentRev()})."
+                                        else -> "Save: $r"
+                                    }
+                                }
+                            },
+                            onEnrollTotp = { uri ->
+                                lifecycleScope.launch {
+                                    val mutated = sealedReveal!!
+                                    mutated.totpUri = uri
+                                    mutated.modifyTime = nowSeconds()
+                                    val items = unlockedItems().map {
+                                        if (it.itemUuid == mutated.itemUuid) mutated else it
+                                    }
+                                    status = when (val r = saveLoop(items, mutated.itemUuid)) {
+                                        VaultSession.Result.Success -> "TOTP enrolled."
+                                        else -> "Save: $r"
+                                    }
+                                }
+                            },
+                            onDelete = {
+                                lifecycleScope.launch {
+                                    status = when (val r = VaultSession.delete(sealedReveal!!)) {
+                                        VaultSession.Result.Success -> { screen = Screen.Search; "Deleted (tombstoned)." }
+                                        else -> "Delete: $r"
+                                    }
+                                }
+                            }
+                        )
+                    } else {
                     val item = currentDetailItem(s.itemUuid)
                     if (item == null) {
                         screen = Screen.Search
@@ -1382,6 +1429,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             }
                         }
                     )
+                    }
                 }
                 Screen.AddEntry -> AddEntryScreen(
                     onCancel = { screen = Screen.Search },
