@@ -1373,6 +1373,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     yubikeyEnrolled = VaultSession.yubikeySshLine() != null,
                     screenlockEnrolled = VaultSession.commitSigningMode() ==
                         VaultSession.SIGNING_SCREENLOCK,
+                    okkInstalled = runCatching {
+                        packageManager.getPackageInfo(
+                            com.offlinepass.app.crypto.OpenPgpClient.OPENKEYCHAIN_PACKAGE, 0)
+                    }.isSuccess,
                     onEnrollFromGithubKeys = { enrollFromGithubKeys() },
                     onConnectAndSync = { remote ->
                         lifecycleScope.launch {
@@ -1385,6 +1389,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onEnrollScreenlock = {
                         lifecycleScope.launch {
                             status = VaultSession.enrollScreenlockSigning(this@MainActivity)
+                        }
+                    },
+                    onImportToOkk = {
+                        lifecycleScope.launch {
+                            status = VaultSession.openOkkImportFromRepo(this@MainActivity)
                         }
                     },
                     onShowSshKey = { showSshKeyQr(Screen.GetStarted) },

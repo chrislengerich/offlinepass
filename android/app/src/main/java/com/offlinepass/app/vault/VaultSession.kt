@@ -1681,7 +1681,6 @@ object VaultSession {
      *  loaded vault carries its own recipients. No-op when ids already
      *  exist (never clobbers). Returns the effective ids. */
     fun seedRecipientsFromRepo(): List<Long> {
-        if (recipientKeyIds().isNotEmpty()) return recipientKeyIds()
         // The recipients live in keys/encrypt/<keyid>.pub.asc (the legacy
         // keys/<keyid>.public.asc counts for the pre-migration repos).
         val encryptDir = File(gitRoot(), "keys/encrypt")
@@ -1692,6 +1691,21 @@ object VaultSession {
             .ifEmpty { legacyDir.listFiles { f -> f.name.endsWith(".public.asc") }
                 ?.mapNotNull { f -> f.name.substringBefore(".").toLongOrNull(16) }
                 ?: emptyList() }
+        // The recipient LEDGER (keys/encrypt/recipients.txt) carries the
+        // recipient emails — adopt them so the Setup shows the vault's own
+        // recipients and saves work without OpenKeyChain ever being asked.
+        val ledgerEmails = runCatching {
+            File(encryptDir, "recipients.txt").readText().lineSequence()
+                .firstOrNull { it.startsWith("recipientEmails:") }
+                ?.substringAfter(":")?.trim()
+                ?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }
+        }.getOrNull().orEmpty()
+        if (ledgerEmails.isNotEmpty()) {
+            prefs().edit()
+                .putString("recipientEmails", ledgerEmails.joinToString(","))
+                .apply()
+            Log.i(TAG, "adopted " + ledgerEmails.size + " recipient email(s) from the vault ledger")
+        }
         if (ids.isNotEmpty()) {
             setRecipientKeyIds(ids)
             Log.i(TAG, "seeded " + ids.size + " recipient key id(s) from the repo's keys/")

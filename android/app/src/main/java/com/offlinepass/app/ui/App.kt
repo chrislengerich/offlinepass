@@ -234,9 +234,11 @@ fun GetStartedScreen(
     remoteAttached: Boolean,
     yubikeyEnrolled: Boolean,
     screenlockEnrolled: Boolean,
+    okkInstalled: Boolean,
     onEnrollFromGithubKeys: () -> Unit,
     onConnectAndSync: (String) -> Unit,
     onEnrollScreenlock: () -> Unit,
+    onImportToOkk: () -> Unit,
     onShowSshKey: () -> Unit,
     onDone: () -> Unit
 ) {
@@ -337,6 +339,25 @@ fun GetStartedScreen(
             }
             TextButton(onClick = onShowSshKey, enabled = busy == null) {
                 Text("Show the public key (to add on GitHub)")
+            }
+        }
+        HorizontalDivider()
+        // Step 4 = optional OpenKeyChain integration: offered ONLY when OKK
+        // is installed. The import stages the repo's key material (the
+        // sign + the encrypt public keys) into OKK — the redundancy for
+        // the legacy paths (the USB restore, the future re-imports), never
+        // required for the daily sync/save (the card does those).
+        if (okkInstalled) {
+            Text("4. OpenKeyChain (optional)",
+                style = MaterialTheme.typography.titleSmall)
+            Text("Import the vault's key material into OpenKeyChain — a " +
+                "backup decrypt/sign path for other apps and the USB " +
+                "restore. The daily flow (the card + the screenlock) " +
+                "never needs it.",
+                style = MaterialTheme.typography.bodySmall)
+            Button(onClick = onImportToOkk, enabled = busy == null,
+                modifier = Modifier.fillMaxWidth()) {
+                Text("Import keys into OpenKeyChain")
             }
         }
         HorizontalDivider()

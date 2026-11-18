@@ -290,7 +290,7 @@ fun SetupTabScreen(
         }
         HorizontalDivider()
 
-        Text("Recipients (from OpenKeyChain picker)", style = MaterialTheme.typography.titleSmall)
+        Text("Recipients (from the vault ledger; adds use OpenKeyChain)", style = MaterialTheme.typography.titleSmall)
         if (recipientIds.isEmpty()) {
             Text("(none — add one before saving)", style = MaterialTheme.typography.bodySmall)
         }
