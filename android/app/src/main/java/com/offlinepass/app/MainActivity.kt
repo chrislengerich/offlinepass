@@ -141,7 +141,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
         pendingSealedEdit = null
         afterUnlock = null
         entryGateDone = false
-        screen = Screen.Search
+        screen = if (File(VaultSession.vaultFilePath()).exists()) Screen.Search
+                 else Screen.SetupChoice
         status = statusMsg
         rescheduleAutoLock()
     }

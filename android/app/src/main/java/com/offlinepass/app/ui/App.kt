@@ -484,6 +484,12 @@ fun UnlockScreen(
             "Unlocking requires your hardware key (touch + PIN).",
             style = MaterialTheme.typography.bodyMedium
         )
+        // The stale-status hygiene: the locked screen's status = the real
+        // last error only; the stale "No vault on this device" (from the
+        // pre-create flows) never renders here.
+        if (status.isNotBlank() && !status.startsWith("No vault")) {
+            Text(status, style = MaterialTheme.typography.bodyMedium)
+        }
         Button(onClick = onUnlock, enabled = busy == null) {
             Text(busy ?: "Unlock")
         }
