@@ -592,6 +592,75 @@ class VaultSaveTransactionTest {
     }
 
     @Test
+    fun backupImportRefusesToWipeExistingVault() = runBlocking {
+        // THE GUARD: the import = a setup-time restore. An existing vault
+        // must never be silently wiped by an import — the honest error
+        // names the merge path, and the vault + the history survive.
+        val r1 = VaultSession.save(listOf(item("Keep").apply { password = "keep-me" }))
+        assertTrue(r1 is VaultSession.Result.Success)
+        val beforeCommits = commitCount()
+        val zip = File(app.cacheDir, "hostile-backup.zip")
+        java.util.zip.ZipOutputStream(zip.outputStream()).use { z ->
+            z.putNextEntry(java.util.zip.ZipEntry("state/10.gpg"))
+            z.write("evil".toByteArray()); z.closeEntry()
+            z.putNextEntry(java.util.zip.ZipEntry("keys/encrypt/DEAD.pub.asc"))
+            z.write("x".toByteArray()); z.closeEntry()
+        }
+        val r = VaultSession.importBackupZip(zip)
+        assertTrue("the import must refuse: $r", r is VaultSession.Result.Error)
+        assertTrue("the error must name the conflict", (r as VaultSession.Result.Error).message.contains("already exists"))
+        assertEquals("the history preserved", beforeCommits, commitCount())
+        val plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertTrue("the vault survives", plain.contains("keep-me"))
+    }
+
+
+
+    @Test
+    fun backupImportRejectsZipSlipAndCorruptZips() = runBlocking {
+        // The zip-slip: the "../" traversal entry = the throw + the clean.
+        val slip = File(app.cacheDir, "slip.zip")
+        java.util.zip.ZipOutputStream(slip.outputStream()).use { z ->
+            z.putNextEntry(java.util.zip.ZipEntry("../evil.txt"))
+            z.write("x".toByteArray()); z.closeEntry()
+        }
+        val slipResult = VaultSession.importBackupZip(slip)
+        assertTrue("the zip-slip must fail: $slipResult", slipResult is VaultSession.Result.Error)
+        assertFalse("nothing escapes the repo root",
+            File(app.filesDir, "evil.txt").exists())
+
+        // The corrupt zip: the garbage bytes = the clean failure.
+        val corrupt = File(app.cacheDir, "corrupt.zip")
+        corrupt.writeBytes("not a zip at all".toByteArray())
+        val corruptResult = VaultSession.importBackupZip(corrupt)
+        assertTrue("the corrupt zip must fail: $corruptResult", corruptResult is VaultSession.Result.Error)
+    }
+
+
+
+    @Test
+    fun stubModeDeleteTombsTonesAndPurges() = runBlocking {
+        // The delete in the stub mode: the tombstone recorded + the item
+        // gone from the vault (the save's purge honors the tombstones even
+        // with the stub base).
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        val victim = item("Victim").apply { password = "v" }
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 2
+            e.items = mutableListOf(item("Keeper").apply { password = "k" }, victim)
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        val r = VaultSession.delete(victim)
+        assertTrue("expected Success, got $r", r is VaultSession.Result.Success)
+        val plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertFalse("the victim purged from the vault", plain.contains("Victim"))
+        assertTrue("the keeper survives", plain.contains("Keeper"))
+    }
+
+    @Test
     fun divergenceMergeDecryptsRemoteAndPreservesBothSides() = runBlocking {
         // THE REGRESSION TEST for the merge data-loss bug: the vault files
         // are ENCRYPTED — the merge used to feed the ciphertext to

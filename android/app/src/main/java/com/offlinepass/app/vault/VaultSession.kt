@@ -541,7 +541,17 @@ object VaultSession {
      *  free). */
     suspend fun importBackupZip(zip: File): Result {
         val root = gitRoot()
-        if (root.exists()) root.deleteRecursively()
+        // THE GUARD: the import = a setup-time restore — an existing vault
+        // must never be silently wiped by an import. The merge path (the
+        // existing restore flow) covers the over-existing case.
+        if (File(root, org.eclipse.jgit.lib.Constants.DOT_GIT).exists() ||
+            File(vaultFilePath()).exists()) {
+            return Result.Error(
+                "A vault already exists on this device — the backup import " +
+                    "would overwrite it. Use a fresh install (or the USB " +
+                    "restore's merge) instead.")
+        }
+        root.deleteRecursively()
         root.mkdirs()
         try {
             java.util.zip.ZipInputStream(zip.inputStream()).use { z ->
@@ -1827,6 +1837,10 @@ object VaultSession {
             }
             if (items.isEmpty())
                 return Result.NeedsKeyDecrypt("Sealed cache unreadable — re-seal via the key unlock")
+            // The tombstones = carried across the promote: the batch
+            // unseal's new envelope resets them, and the stub-session's
+            // deletes must survive the re-seal.
+            val carriedTombstones = loadedEnvelope?.deletedItemUuids?.toList() ?: emptyList()
             val env = SealedVault.toEnvelope(items)
             rev = env.rev
             loadedEnvelope = env
@@ -1838,6 +1852,8 @@ object VaultSession {
             env.items = items.map { it.asStub() }.toMutableList()
             state = State.Unlocked(env.items)
             stubSession = true
+            env.deletedItemUuids = (carriedTombstones + env.deletedItemUuids)
+                .distinct().toMutableSet()
             Log.i(TAG, "promoted sealed session (stubs): ${env.items.size} items, rev=${env.rev}")
             Result.Success
         } catch (e: Exception) {
