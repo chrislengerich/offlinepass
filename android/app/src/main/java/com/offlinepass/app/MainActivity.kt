@@ -961,10 +961,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 onPickRecipients = { lifecycleScope.launch { pickRecipientsUntilDone() } },
                 onAddCardRecipient = {
                     lifecycleScope.launch {
+                        if (!ensureUsbPermission()) {
+                            status = "No security key attached or permission denied."
+                            return@launch
+                        }
                         status = when (val r = VaultSession.addCardRecipient()) {
-                            VaultSession.Result.Success -> "The card added as a recipient — " +
-                                "the first save encrypts to it."
-                            else -> "Add card: $r"
+                            VaultSession.Result.Success -> "The security key added as a " +
+                                "recipient — the first save encrypts to it."
+                            else -> "Add key: $r"
                         }
                     }
                 },
@@ -986,15 +990,20 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         // Auto-add it — the first save encrypts to the card
                         // with zero OKK-picker friction. The extra recipients
                         // = the Setup's picker later.
+                        if (!ensureUsbPermission()) {
+                            status = "No security key attached or permission denied — " +
+                                "add a recipient in Setup before saving."
+                            return@launch
+                        }
                         val decId = runCatching {
                             com.offlinepass.app.crypto.YubiKitCardDecrypt
                                 .decKeyId(applicationContext)
                         }.getOrNull()
                         if (decId != null) {
                             VaultSession.setRecipientKeyIds(listOf(decId))
-                            status = "The card's key added as the first recipient."
+                            status = "The security key's key added as the first recipient."
                         } else {
-                            status = "The card not readable — add a recipient " +
+                            status = "The security key not readable — add a recipient " +
                                 "in Setup before saving."
                         }
                         // Adopt the empty envelope as the unlocked session

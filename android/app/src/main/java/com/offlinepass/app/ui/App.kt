@@ -227,7 +227,7 @@ private fun RecipientsEditor(
     // self-check gates it). The OKK picker = the secondary (the
     // third-party keys).
     Button(onClick = onAddCardRecipient, enabled = true, modifier = Modifier.fillMaxWidth()) {
-        Text("Add recipient from card")
+        Text("Add recipient from security key")
     }
     TextButton(onClick = onPickRecipients, enabled = true, modifier = Modifier.fillMaxWidth()) {
         Text("Add recipient from OpenKeyChain")
