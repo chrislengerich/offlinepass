@@ -1008,12 +1008,20 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         }
                         // Adopt the empty envelope as the unlocked session
                         // (the state must leave NoConfig or the Setup screen
-                        // keeps rendering), then Search. The vault file
-                        // persists on first save (git-init there).
+                        // keeps rendering). The card = the attached → the
+                        // commit signing = the card's SIG slot (the OKK's
+                        // legacy mode would fail: the card's ENCRYPTION key
+                        // cannot sign).
                         VaultSession.adopt(Envelope(rev = 0, deviceId = VaultSession.deviceId()))
-                        screen = Screen.Search
-                        status = "Local-only vault ready — Add entry to begin." +
-                            if (decId != null) " The card's key = the first recipient." else ""
+                        if (decId != null) {
+                            VaultSession.setCommitSigningMode(VaultSession.SIGNING_YUBIKEY)
+                        }
+                        // The onboarding checklist = the SAME as the
+                        // load-existing flow: the SSH enroll, the remote, the
+                        // screenlock enrollment (the at-rest seal).
+                        screen = Screen.GetStarted
+                        status = "Local-only vault created — the onboarding checklist:" +
+                            (if (decId != null) " the card's key = the first recipient." else "")
                     }
                 },
                 onImportProton = { remote, pat, uri ->

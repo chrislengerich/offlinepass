@@ -303,10 +303,21 @@ fun GetStartedScreen(
                         onEnrollFromGithubKeys()
                     }
                 },
-                enabled = busy == null,
+                enabled = busy == null &&
+                    VaultSession.connectDraftOwnerRepo()?.contains("/") == true,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Enroll from GitHub keys (one touch)")
+            }
+            if (VaultSession.connectDraftOwnerRepo()?.contains("/") != true) {
+                // The local-only vault: no remote = no username to derive —
+                // the SSH enroll happens when the remote is attached (the
+                // sync = the remote's flow); the screenlock + the keys are
+                // fully functional without it.
+                Text("No remote attached yet — the SSH enrollment happens " +
+                    "when you attach one (Setup → Connect remote). The " +
+                    "screenlock and the key material work without it.",
+                    style = MaterialTheme.typography.bodySmall)
             }
         }
         HorizontalDivider()
