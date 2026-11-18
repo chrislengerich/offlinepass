@@ -311,19 +311,17 @@ fun GetStartedScreen(
             Text("✅ Remote attached — the key material is published in the repo.",
                 style = MaterialTheme.typography.bodySmall)
         } else {
-            Text("The first sync commits meta/devices.json + keys/ — the repo " +
-                "becomes the offline keyring for new devices. Uses the " +
-                "repository from step 0.",
+            // The local-only vault (the USB/QRFT/backup-zip restores, the
+            // new-vault): no remote configured — the draft is absent, so
+            // there is nothing to one-tap here. The attach = the Setup's
+            // Connect flow when the user wants the cloud copy; the history
+            // merges through sync (the local repo = a real git repo).
+            Text("The vault is local-only — it works fully offline and the " +
+                "secrets are safe without any remote. When you want the " +
+                "cloud copy: Setup → \"Connect remote\". The first sync " +
+                "publishes the key material (the offline keyring for new " +
+                "devices) and the history merges.",
                 style = MaterialTheme.typography.bodySmall)
-            Button(
-                onClick = {
-                    val draft = VaultSession.connectDraftOwnerRepo() ?: ""
-                    if (draft.isNotBlank()) onConnectAndSync("git@github.com:$draft")
-                },
-                enabled = busy == null &&
-                    !VaultSession.connectDraftOwnerRepo().isNullOrBlank(),
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Connect & sync") }
         }
         HorizontalDivider()
 
