@@ -252,25 +252,9 @@ fun GetStartedScreen(
         Text("Every step is skippable and stays available in Settings.",
             style = MaterialTheme.typography.bodySmall)
 
-        // The owner/repo FIRST — the enrollment's username derives from it
-        // (a fresh new-vault user has a blank remote draft otherwise).
-        Text("0. GitHub repository (owner/repo)", style = MaterialTheme.typography.titleSmall)
-        var ownerRepo by remember { mutableStateOf(VaultSession.connectDraftOwnerRepo() ?: "") }
-        androidx.compose.material3.OutlinedTextField(
-            value = ownerRepo, onValueChange = { ownerRepo = it },
-            label = { Text("owner/repo") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth())
-        Button(
-            onClick = {
-                VaultSession.saveConnectDraft(ownerRepo.trim(), "ssh")
-                VaultSession.loadRemoteState.value = "git@github.com:$ownerRepo"
-            },
-            enabled = busy == null && ownerRepo.contains("/") &&
-                !ownerRepo.startsWith("/") && !ownerRepo.endsWith("/"),
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Use this repository") }
-        HorizontalDivider()
-
+        // The owner/repo is NOT asked here: the load-existing flow configures
+        // the remote and seeds the connect draft (the enrollment's username
+        // derives from it). This screen = the post-load checklist.
         Text("1. Security key (SSH auth)", style = MaterialTheme.typography.titleSmall)
         if (yubikeyEnrolled) {
             Text("✅ Enrolled — every sync authenticates with the card (PIN + touch).",
@@ -298,7 +282,9 @@ fun GetStartedScreen(
                     // Commit the field FIRST: the enrollment derives the
                     // username from the draft — a stale draft enrolled the
                     // wrong user's keys.
-                    val draft = ownerRepo.trim()
+                    // The draft = seeded by the load flow (the configured
+                    // remote); the enrollment derives the username from it.
+                    val draft = VaultSession.connectDraftOwnerRepo() ?: ""
                     if (draft.contains("/") && !draft.startsWith("/") &&
                         !draft.endsWith("/")
                     ) {
@@ -307,8 +293,7 @@ fun GetStartedScreen(
                         onEnrollFromGithubKeys()
                     }
                 },
-                enabled = busy == null && ownerRepo.contains("/") &&
-                    !ownerRepo.startsWith("/") && !ownerRepo.endsWith("/"),
+                enabled = busy == null,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Enroll from GitHub keys (one touch)")
@@ -330,8 +315,8 @@ fun GetStartedScreen(
                     val draft = VaultSession.connectDraftOwnerRepo() ?: ""
                     if (draft.isNotBlank()) onConnectAndSync("git@github.com:$draft")
                 },
-                enabled = busy == null && ownerRepo.contains("/") &&
-                    !ownerRepo.startsWith("/") && !ownerRepo.endsWith("/"),
+                enabled = busy == null &&
+                    !VaultSession.connectDraftOwnerRepo().isNullOrBlank(),
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Connect & sync") }
         }

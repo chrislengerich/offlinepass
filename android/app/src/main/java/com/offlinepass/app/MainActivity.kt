@@ -950,6 +950,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 onLoadGitHub = { remote, emails, pat ->
                     VaultSession.configure(remote, emails)
                     if (pat.isNotBlank()) VaultSession.savePat(pat)
+                    // The remote = configured — seed the connect draft so
+                    // the GetStarted's enrollment derives the username and
+                    // the owner/repo field is never asked for again.
+                    VaultSession.seedConnectDraftFromRemote()
                     status = ""
                     lifecycleScope.launch {
                         // Persist the load screen's chosen sync-auth BEFORE

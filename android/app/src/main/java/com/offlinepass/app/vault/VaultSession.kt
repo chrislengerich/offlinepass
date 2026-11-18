@@ -2042,6 +2042,23 @@ object VaultSession {
         return SshSelfTest(false, "aborted after interaction retries")
     }
 
+    /** Seeds the connect draft from the CONFIGURED remote — the
+     *  load-existing flow sets the remote (and this draft) so the
+     *  enrollment's username derives from it; the GetStarted screen
+     *  never asks for the owner/repo again. */
+    fun seedConnectDraftFromRemote() {
+        val remote = config()?.remoteUrl ?: return
+        val trimmed = remote.trim().removeSuffix(".git").trimEnd('/')
+        val ownerRepo = when {
+            trimmed.startsWith("git@") -> trimmed.substringAfter(':')
+            trimmed.contains("://") ->
+                trimmed.substringAfter("//").substringAfter('/')
+            else -> trimmed
+        }.takeIf { it.contains('/') && it.isNotBlank() } ?: return
+        saveConnectDraft(ownerRepo, "ssh")
+        Log.i(TAG, "connect draft seeded from the remote: $ownerRepo")
+    }
+
     fun saveConnectDraft(ownerRepo: String, auth: String) {
         prefs().edit()
             .putString("connectDraftOwnerRepo", ownerRepo)
