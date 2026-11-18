@@ -27,11 +27,11 @@ class OpenPgpPinRejected(message: String, cause: Throwable? = null) :
  * UIF): [touch] wraps the card op in the router's touch prompt.
  *
  * THE OP ORDER IS LOAD-BEARING: the public-key reads run BEFORE the PIN
- * verify. The OpenPGP card's GENERATE ASYMMETRIC family (INS 0x47 — what
- * the public-key read uses) is observed to invalidate the PW1 verify
- * state: with the verify FIRST, the PSO:DEC failed with APDU 0x6982
- * ("security status not satisfied") despite the verify's own 9000, on a
- * card whose DEC slot is RSA-4096 (a 512-byte command payload). Verifying
+ * verify, and the verify itself uses the "extended" flavor (YubiKit's
+ * `verifyUserPin(pin, true)`, P2=0x82): with the plain signature-only
+ * flavor (P2=0x81) the verify returns 9000 but PSO:DEC answers APDU
+ * 0x6982 "security status not satisfied" — measured on-device on a card
+ * whose DEC slot is RSA-4096 (a 512-byte command payload). Verifying
  * LAST makes the PSO:DEC the very next command after the 9000.
  *
  * Why direct: OpenKeyChain's remote API decrypt works but costs an app
@@ -93,10 +93,14 @@ object YubiKitCardDecrypt {
                 }
                 log("yubikit-decrypt: DEC key id 0x%016X, modulus $modulusLen bytes".format(decKeyId))
                 Log.i(TAG, "yubikit: DEC key id 0x%016X, modulus $modulusLen bytes".format(decKeyId))
-                // THE VERIFY = THE LAST CARD OP BEFORE PSO:DEC (see the
-                // class doc: the public-key read clears the PW1 state).
+                // THE VERIFY = THE "EXTENDED" FLAVOR: with extended=false
+                // YubiKit verifies PW1 for SIGNATURE USE ONLY (P2=0x81) —
+                // the PSO:DEC then fails with 0x6982 despite the verify's
+                // own 9000. extended=true = P2=0x82 = the decrypt-capable
+                // verify (the sign is then NOT allowed in this session —
+                // the sign runs in its own session, fine).
                 try {
-                    session.verifyUserPin(pin, false)
+                    session.verifyUserPin(pin, true)
                 } catch (e: com.yubico.yubikit.core.application.InvalidPinException) {
                     val left = runCatching { session.pinStatus.attemptsUser }.getOrDefault(-1)
                     val msg = if (left >= 0) "wrong OpenPGP PIN — $left attempt(s) left before the key locks"
@@ -105,8 +109,8 @@ object YubiKitCardDecrypt {
                     Log.w(TAG, "yubikit: $msg")
                     throw OpenPgpPinRejected(msg, e)
                 }
-                log("yubikit-decrypt: PIN verified — PSO:DEC next")
-                Log.i(TAG, "yubikit: PIN verified — PSO:DEC next ($modulusLen-byte command)")
+                log("yubikit-decrypt: PIN verified (extended) — PSO:DEC next")
+                Log.i(TAG, "yubikit: PIN verified (extended) — PSO:DEC next ($modulusLen-byte command)")
                 val plain = OpenPgpCardCrypto.decrypt(msgBytes, longArrayOf(decKeyId)) { mpiValue ->
                     val padded = ByteArray(modulusLen) { 0 }
                     mpiValue.copyInto(padded, modulusLen - mpiValue.size)
