@@ -1273,6 +1273,73 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     val item = currentDetailItem(s.itemUuid)
                     if (item == null) {
                         screen = Screen.Search
+                    } else if (VaultSession.screenlockUnlockEnabled() && !item.hasSecrets()) {
+                        // THE STUB MODEL: the back-nav/deep-link detail = a
+                        // stub — the unseal via the reveal gate BEFORE any
+                        // render/export (a stub export = empty secrets).
+                        var revealedItem by androidx.compose.runtime.remember(s.itemUuid) {
+                            androidx.compose.runtime.mutableStateOf<ProtonItem?>(null)
+                        }
+                        androidx.compose.runtime.LaunchedEffect(s.itemUuid) {
+                            when (val r = VaultSession.revealSealed(s.itemUuid, item.displayName)) {
+                                is VaultSession.Result.Revealed -> revealedItem = r.item
+                                is VaultSession.Result.NeedsKeyDecrypt -> {
+                                    afterUnlock = { screen = Screen.Search }
+                                    unlockLoop()
+                                }
+                                is VaultSession.Result.Error -> {
+                                    sealedToast(r.message)
+                                    screen = Screen.Search
+                                }
+                                else -> {}
+                            }
+                        }
+                        if (revealedItem == null) {
+                            androidx.compose.material3.Text(
+                                "Unlocking the item (the screen lock)…",
+                                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium)
+                        } else EntryDetailScreen(
+                            item = revealedItem!!,
+                            status = status,
+                            busy = VaultSession.busy,
+                            onBack = { screen = Screen.Search },
+                            onExportQr = { encrypt -> exportQr(revealedItem!!, encrypt) },
+                            pairedDevices = VaultSession.pairedDevices(),
+                            onSaveChanges = { edited ->
+                                lifecycleScope.launch {
+                                    edited.modifyTime = nowSeconds()
+                                    val items = unlockedItems().map {
+                                        if (it.itemUuid == edited.itemUuid) edited else it
+                                    }
+                                    status = when (val r = saveLoop(items, edited.itemUuid)) {
+                                        VaultSession.Result.Success -> "Saved (rev ${VaultSession.currentRev()})."
+                                        else -> "Save: $r"
+                                    }
+                                }
+                            },
+                            onEnrollTotp = { uri ->
+                                lifecycleScope.launch {
+                                    val mutated = revealedItem!!
+                                    mutated.totpUri = uri
+                                    mutated.modifyTime = nowSeconds()
+                                    val items = unlockedItems().map {
+                                        if (it.itemUuid == mutated.itemUuid) mutated else it
+                                    }
+                                    status = when (val r = saveLoop(items, mutated.itemUuid)) {
+                                        VaultSession.Result.Success -> "TOTP enrolled."
+                                        else -> "Save: $r"
+                                    }
+                                }
+                            },
+                            onDelete = {
+                                lifecycleScope.launch {
+                                    status = when (val r = VaultSession.delete(revealedItem!!)) {
+                                        VaultSession.Result.Success -> { screen = Screen.Search; "Deleted (tombstoned)." }
+                                        else -> "Delete: $r"
+                                    }
+                                }
+                            }
+                        )
                     } else EntryDetailScreen(
                         item = item,
                         status = status,

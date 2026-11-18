@@ -1465,6 +1465,17 @@ object VaultSession {
                         syncStatus = "Committed locally (rev ${env.rev}, no remote)"
                     }
                     sealIfEnabled(items, env)
+                    // THE STUB MODEL: the save's batch unseal brought the
+                    // full items into memory — re-stub immediately (the
+                    // seal's closure captured the full list, so this is
+                    // race-safe). Without this, every save re-opens the
+                    // ungated-browsing hole the stub model exists to close.
+                    if (screenlockUnlockEnabled()) {
+                        val stubs = items.map { it.asStub() }
+                        env.items = stubs.toMutableList()
+                        state = State.Unlocked(stubs)
+                        stubSession = true
+                    }
                     Result.Success
                 } catch (e: Exception) {
                     // Anything throwing inside the transaction window rolls
@@ -1674,9 +1685,15 @@ object VaultSession {
             val env = SealedVault.toEnvelope(items)
             rev = env.rev
             loadedEnvelope = env
-            state = State.Unlocked(items)
-            stubSession = false
-            Log.i(TAG, "promoted sealed session: ${items.size} items, rev=${env.rev}")
+            // THE STUB MODEL: the promote = the full items for the
+            // immediate write ops (the save/edit ride the auth window) —
+            // but the browsing must stay gated, so the session re-stubs
+            // (the secrets = in the cache; the detail = the unseal; the
+            // save's apply-diff = the stub mode).
+            env.items = items.map { it.asStub() }.toMutableList()
+            state = State.Unlocked(env.items)
+            stubSession = true
+            Log.i(TAG, "promoted sealed session (stubs): ${env.items.size} items, rev=${env.rev}")
             Result.Success
         } catch (e: Exception) {
             if (SealedVault.isKeyMismatch(e)) return Result.NeedsKeyDecrypt("Seal key regenerated")

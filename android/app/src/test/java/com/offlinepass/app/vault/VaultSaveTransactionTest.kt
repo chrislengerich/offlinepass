@@ -229,6 +229,32 @@ class VaultSaveTransactionTest {
         assertTrue("the edited secret must be written", plain.contains("changed-secret"))
         assertFalse("the old secret must be replaced", plain.contains("real-secret"))
         assertFalse("no stubs may reach the vault", plain.contains("Existing\"}"))
+        // THE RE-STUB: the save's batch unseal must not leave the full
+        // items in memory — the secrets return to the sealed cache.
+        val after = (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
+        assertTrue("the session must re-stub after the save", after.all { !it.hasSecrets() })
+    }
+
+    @Test
+    fun promoteSealedSessionEndsInStubs() = runBlocking {
+        // THE STUB-INVARIANT: even the promote (the batch unseal for the
+        // write ops) must not leave the full items in memory — the session
+        // re-stubs (the secrets = in the sealed cache).
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        val seeded = item("Existing").apply { password = "real-secret" }
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf(seeded)
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        val r = VaultSession.promoteSealedSession()
+        assertTrue("expected Success, got $r", r is VaultSession.Result.Success)
+        val after = (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
+        assertTrue("the promote must end in stubs", after.all { !it.hasSecrets() })
+        assertEquals("the identity fields survive", "Existing", after.firstOrNull()?.name)
     }
 
     @Test
