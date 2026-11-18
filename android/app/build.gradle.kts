@@ -128,8 +128,18 @@ dependencies {
     implementation("com.github.mwiede:jsch:0.2.17")
     // Direct OpenPGP-applet access (the card's AUTH slot) — the SSH auth
     // backend for card-resident keys; OpenKeyChain's remote API returns
-    // UNSUPPORTED_ACTION for card signing.
-    implementation("com.yubico.yubikit:openpgp:3.0.0")
+    // UNSUPPORTED_ACTION for card signing. 3.3.0: the smartcard transport
+    // rewrite — ExtendedApduProcessor (the extended APDU with the command-
+    // chaining fallback) replaces 3.0.0's raw extended send; the RSA-4096
+    // DEC slot's 512-byte PSO:DEC rides it.
+    // MIXED 3.3.0/3.0.0: the core 3.3.0 = the transport rewrite
+    // (ExtendedApduProcessor — the extended APDU with the chaining
+    // fallback) and is PURE JAVA; the openpgp 3.3.0 = pure Java too.
+    // The android artifact 3.3.0 = the only Kotlin-2.2-compiled one
+    // (unreadable by our Kotlin 1.9.22 toolchain) — the 3.0.0 android =
+    // Kotlin-1.9 and binary-compatible (the SmartCardConnection
+    // interface = byte-identical across the versions, verified).
+    implementation("com.yubico.yubikit:openpgp:3.3.0")
     implementation("com.yubico.yubikit:android:3.0.0")
 
     // Testing (offlinecam pattern)
