@@ -1238,6 +1238,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                     item.itemUuid, item.displayName)) {
                                     is VaultSession.Result.Revealed -> {
                                         sealedReveal = r.item
+                                        // NAVIGATE: the reveal succeeded —
+                                        // without this the screen stays on
+                                        // the list and the item "doesn't open"
+                                        // (the prompt was shown, the unseal
+                                        // ran, nothing appeared).
+                                        screen = Screen.Detail(item.itemUuid)
                                         status = ""
                                     }
                                     is VaultSession.Result.NeedsKeyDecrypt -> {
