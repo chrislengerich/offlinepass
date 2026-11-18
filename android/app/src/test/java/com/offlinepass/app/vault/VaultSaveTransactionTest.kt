@@ -592,6 +592,58 @@ class VaultSaveTransactionTest {
     }
 
     @Test
+    fun emptyVaultCreateEnrollSaveWritesVaultAndStubs() = runBlocking {
+        // THE EMPTY-VAULT EDGE: the new vault = the empty sealed cache
+        // (the enroll seals zero items) bound to the not-yet-written vault
+        // file — the save's promote fails on the zero items, but the save
+        // must PROCEED (the vault written, the cache populated with the
+        // real items, the session re-stubbed) instead of failing and
+        // stranding the entries in memory (the lock lost them).
+        installSoftwareSealCrypto()
+        VaultSession.configure(null, emptyList())
+        VaultSession.setScreenlockUnlockEnabled(true)
+        VaultSession.setCommitSigningMode(VaultSession.SIGNING_SCREENLOCK)
+        VaultSession.keystoreSignerHook = { "FAKE-ECDSA".toByteArray() }
+        // The adopt = the EMPTY envelope (the new-vault's) — the stub
+        // conversion runs (the screenlock on) → the stubSession = true,
+        // the cache = sealed with the zero items.
+        VaultSession.adopt(Envelope(rev = 0, deviceId = "t"))
+        val stubs = (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
+        assertTrue("the stub session (the empty items)", stubs.isEmpty())
+        assertEquals("the cache = sealed-empty",
+            0, SealedVault.manifestItems().size)
+
+        // The repo = git-init'd AT CREATION (the early fix): the .git
+        // exists before the first save.
+        VaultSession.initLocalRepo()
+        assertTrue("the repo git-init'd at creation",
+            File(VaultSession.gitRootPath(), ".git").exists())
+
+        // The user's first save: the entries added in the UI (the full
+        // items — the session = the empty-stub semantics).
+        val entries = listOf(item("First").apply { password = "first-secret" })
+        val r = VaultSession.save(entries)
+        assertTrue("expected Success, got $r", r is VaultSession.Result.Success)
+
+        // The vault file = written WITH the real secrets (the no-plaintext
+        // fake = the reversible).
+        val plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertTrue("the secrets written", plain.contains("first-secret"))
+        // The cache = populated with the real items; the session = re-stubbed.
+        assertEquals("the cache populated", 1, SealedVault.manifestItems().size)
+        val after = (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
+        assertTrue("the session re-stubbed", after.all { !it.hasSecrets() })
+        assertEquals("the item carried", "First", after.firstOrNull()?.name)
+        // The subsequent save = the normal stub flow (the promote works now).
+        val r2 = VaultSession.save(listOf(
+            item("First").apply { password = "first-secret" },
+            item("Second").apply { password = "second-secret" }))
+        assertTrue("the second save = the normal stub flow", r2 is VaultSession.Result.Success)
+        val plain2 = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertTrue(plain2.contains("second-secret"))
+    }
+
+    @Test
     fun backupImportRefusesToWipeExistingVault() = runBlocking {
         // THE GUARD: the import = a setup-time restore. An existing vault
         // must never be silently wiped by an import — the honest error

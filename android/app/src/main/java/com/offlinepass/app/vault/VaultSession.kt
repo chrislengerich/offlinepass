@@ -1369,8 +1369,20 @@ object VaultSession {
                 // missing/stale) must fail the save honestly.
                 val wasStub = stubSession
                 if (!promoteIfStub()) {
-                    return@withContext Result.Error(
-                        "The sealed cache is missing or stale — re-unlock with the key, then save")
+                    // THE EMPTY-VAULT EDGE: a newly created vault seals an
+                    // EMPTY cache (no items yet) bound to the not-yet-written
+                    // vault file — the promote fails on the zero items while
+                    // the session is already in full-session semantics (the
+                    // screenlock enrolled AFTER the adopt). Proceed: the UI's
+                    // items = the full, the vault gets written, and the
+                    // re-seal populates the cache. The genuinely-stale cache
+                    // (the real items sealed) still fails the save honestly.
+                    if (SealedVault.manifestItems().isEmpty()) {
+                        Log.i(TAG, "save: the empty-cache edge — proceeding with the full session")
+                    } else {
+                        return@withContext Result.Error(
+                            "The sealed cache is missing or stale — re-unlock with the key, then save")
+                    }
                 }
                 val env = (loadedEnvelope ?: Envelope(deviceId = cfg.deviceId)).also { e ->
                     e.rev = rev + 1
@@ -2699,6 +2711,17 @@ object VaultSession {
                 loadPhase("recipient adopt (the file's PKESKs): " + ids.size + " id(s)")
             }
         }
+    }
+
+    /** THE NEW VAULT's repo = git-init'd at creation (the early fix): the
+     *  structure = ready the moment the vault exists — the save = the
+     *  commit only, and the empty-file sha binds the fresh sealed cache
+     *  consistently. */
+    fun initLocalRepo() {
+        runCatching {
+            com.offlinepass.app.vault.VaultGitClient().gitInit(gitRoot())
+            Log.i(TAG, "the local repo git-init'd at creation")
+        }.onFailure { Log.w(TAG, "gitInit at creation: ${it.message}") }
     }
 
     /** Adopts an already-decrypted envelope as the unlocked session —

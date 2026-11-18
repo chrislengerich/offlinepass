@@ -1014,6 +1014,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         // legacy mode would fail: the card's ENCRYPTION key
                         // cannot sign).
                         VaultSession.adopt(Envelope(rev = 0, deviceId = VaultSession.deviceId()))
+                        // THE REPO = GIT-INIT'D AT CREATION (fixing early,
+                        // not altering later): the structure = ready the
+                        // moment the vault exists — the save = the commit
+                        // only, and the empty-file sha binds the fresh
+                        // sealed cache consistently.
+                        VaultSession.initLocalRepo()
                         if (decId != null) {
                             VaultSession.setCommitSigningMode(VaultSession.SIGNING_YUBIKEY)
                         }
