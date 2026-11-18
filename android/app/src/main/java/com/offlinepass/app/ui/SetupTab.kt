@@ -276,25 +276,41 @@ fun SetupTabScreen(
         }
 
         // Sync state lives directly with its button.
-        if (cfg?.remoteUrl != null) {
+        // The commit summaries = the LOCAL-ONLY too (the git history = on-device).
+        val commits = VaultSession.recentCommits()
+        if (commits.isNotEmpty()) {
+            Text(
+                if (cfg?.remoteUrl != null) "Sync: ${VaultSession.syncStatus ?: "not synced this session"}"
+                else "Local-only vault (no remote attached)",
+                style = MaterialTheme.typography.bodySmall
+            )
+            if (cfg?.remoteUrl != null) {
+                Button(onClick = onTestSync, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+                    Text("Sync now (fetch/push)")
+                }
+            }
+            Text("Recent commits:", style = MaterialTheme.typography.labelSmall)
+            commits.forEach { c ->
+                Text(
+                    c,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1
+                )
+            }
+            if (cfg?.remoteUrl != null) {
+                Button(
+                    onClick = { confirmDialog = "repo" },
+                    enabled = busy == null,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Reset local repo (wipe + re-clone)") }
+            }
+        } else if (cfg?.remoteUrl != null) {
             Text(
                 "Sync: ${VaultSession.syncStatus ?: "not synced this session"}",
                 style = MaterialTheme.typography.bodySmall
             )
             Button(onClick = onTestSync, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
                 Text("Sync now (fetch/push)")
-            }
-            // The local main's last commits — the git-log style history.
-            val commits = VaultSession.recentCommits()
-            if (commits.isNotEmpty()) {
-                Text("Recent commits:", style = MaterialTheme.typography.labelSmall)
-                commits.forEach { c ->
-                    Text(
-                        c,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1
-                    )
-                }
             }
             Button(
                 onClick = { confirmDialog = "repo" },
