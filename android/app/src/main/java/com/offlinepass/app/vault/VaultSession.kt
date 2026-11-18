@@ -2191,6 +2191,81 @@ object VaultSession {
     }
 
     /** Deletes with a tombstone (survives merges/syncs). */
+    /** Adds the ATTACHED CARD as a vault recipient — no OpenKeyChain. The
+     *  DEC slot's raw public key + the card's own creation time = a v4
+     *  public-key packet (OpenPgpCardCrypto.recipientKeyFromRaw); the
+     *  SELF-CHECK = the constructed fingerprint must equal the card's
+     *  reported one (a wrong time or an applet quirk = the loud failure,
+     *  never a recipient nobody can decrypt). The recipients += the id,
+     *  the armored record lands in keys/encrypt/, and the save re-encrypts
+     *  so the card's PKESK rides the next envelope. */
+    suspend fun addCardRecipient(): Result {
+        val device = com.offlinepass.app.crypto.YubiKitSshAuth.findDevice(appContext)
+            ?: return Result.Error("No YubiKey connected — attach the card to add it as a recipient")
+        val usbManager = appContext.getSystemService(Context.USB_SERVICE)
+            as? android.hardware.usb.UsbManager
+            ?: return Result.Error("USB service unavailable")
+        if (!usbManager.hasPermission(device)) {
+            return Result.Error("USB permission not granted for the YubiKey")
+        }
+        val connection = com.yubico.yubikit.android.transport.usb.UsbYubiKeyDevice(
+            usbManager, device).openConnection(
+            com.yubico.yubikit.core.smartcard.SmartCardConnection::class.java)
+        try {
+            val session = com.yubico.yubikit.openpgp.OpenPgpSession(
+                connection as com.yubico.yubikit.core.smartcard.SmartCardConnection)
+            try {
+                val decFp = session.applicationRelatedData.discretionary
+                    .getFingerprint(com.yubico.yubikit.openpgp.KeyRef.DEC)
+                if (decFp == null || decFp.size < 20) {
+                    return Result.Error("The card reports no DECRYPTION fingerprint (an empty slot?)")
+                }
+                val decId = (12 until 20).fold(0L) { acc, k ->
+                    (acc shl 8) or (decFp[k].toLong() and 0xFF)
+                }
+                val pub = session.getPublicKey(com.yubico.yubikit.openpgp.KeyRef.DEC)
+                val rsa = pub as? com.yubico.yubikit.core.keys.PublicKeyValues.Rsa
+                    ?: return Result.Error("The DECRYPTION slot is not RSA — only RSA cards can be added without OpenKeyChain")
+                val creationSecs = session.applicationRelatedData.discretionary
+                    .getGenerationTime(com.yubico.yubikit.openpgp.KeyRef.DEC)
+                // THE SELF-CHECK: the constructed packet's fingerprint must
+                // equal the card's reported one.
+                val pubKey = com.offlinepass.app.crypto.OpenPgpCardCrypto.recipientKeyFromRaw(
+                    rsa.modulus, rsa.publicExponent, creationSecs)
+                if (!pubKey.fingerprint.contentEquals(decFp)) {
+                    Log.w(TAG, "addCardRecipient: the fingerprint mismatch " +
+                        "(constructed ${pubKey.fingerprint?.joinToString("") { "%02x".format(it) }})")
+                    return Result.Error("The constructed key does not match the card's fingerprint " +
+                        "— refusing to add a recipient the card may not decrypt")
+                }
+                // The recipients += the card's id; the armored record = the
+                // repo's.
+                val ids = (recipientKeyIds() + decId).distinct()
+                setRecipientKeyIds(ids)
+                val f = File(keysEncryptDir(), "%016X.pub.asc".format(decId))
+                f.parentFile?.mkdirs()
+                f.writeText(com.offlinepass.app.crypto.OpenPgpCardCrypto.armoredKey(pubKey))
+                // The save re-encrypts: the card's PKESK rides the next
+                // envelope (the promote-if-stub covers the stub session).
+                if (state is State.Unlocked) {
+                    when (val r = save(unlockedSessionItems())) {
+                        is Result.Error -> return r
+                        else -> {}
+                    }
+                }
+                return Result.Success
+            } finally {
+                session.close()
+            }
+        } finally {
+            runCatching { connection.close() }
+        }
+    }
+
+    /** The unlocked session's item list (the stubs) — the save's input. */
+    private fun unlockedSessionItems(): List<ProtonItem> =
+        (state as? State.Unlocked)?.items ?: emptyList()
+
     suspend fun delete(item: ProtonItem): Result {
         loadedEnvelope?.deletedItemUuids?.add(item.itemUuid)
         val remaining = (state as? State.Unlocked)?.items

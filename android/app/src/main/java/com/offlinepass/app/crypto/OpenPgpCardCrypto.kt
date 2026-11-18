@@ -171,6 +171,33 @@ object OpenPgpCardCrypto {
                 (lastError?.message ?: "unknown"), lastError)
     }
 
+    /** Builds a v4 RSA public-key packet from the RAW key material — the
+     *  card's DEC slot exposes only the (n, e); the creation time rides
+     *  the card's own DO (the seconds). The fingerprint = computed over
+     *  the packet — identical to the card's reported one when the time
+     *  matches (the OpenPGP v4 fingerprint = over version|algo|time|n|e). */
+    fun recipientKeyFromRaw(
+        modulus: java.math.BigInteger,
+        exponent: java.math.BigInteger,
+        creationSecs: Int
+    ): PGPPublicKey {
+        val packet = org.bouncycastle.bcpg.PublicKeyPacket(
+            org.bouncycastle.bcpg.PublicKeyAlgorithmTags.RSA_GENERAL,
+            java.util.Date(creationSecs * 1000L),
+            org.bouncycastle.bcpg.RSAPublicBCPGKey(modulus, exponent))
+        return PGPPublicKey(packet, JcaKeyFingerprintCalculator())
+    }
+
+    /** The armored (the ASCII-armored public-key packet) form of a key —
+     *  the repo's record of a recipient. */
+    fun armoredKey(key: PGPPublicKey): String {
+        val out = java.io.ByteArrayOutputStream()
+        org.bouncycastle.bcpg.ArmoredOutputStream(out).use { a ->
+            a.write(key.encoded)
+        }
+        return out.toString(Charsets.ISO_8859_1.name())
+    }
+
     /** Walks the decrypted stream: the compressed packets recurse, the
      *  literal packet yields the content. Returns the plaintext bytes. */
     internal fun unpack(dataStream: java.io.InputStream): ByteArray {

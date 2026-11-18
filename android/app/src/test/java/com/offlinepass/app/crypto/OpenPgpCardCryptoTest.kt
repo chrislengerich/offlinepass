@@ -212,4 +212,64 @@ class OpenPgpCardCryptoTest {
         }
         assertArrayEquals(ByteArray(0), back)
     }
+
+    @Test
+    fun constructedPacketFingerprintMatchesParsedCert() {
+        // THE SELF-CHECK'S ORACLE: a v4 public-key packet built from the
+        // raw (n, e) + the creation time must carry the SAME fingerprint
+        // as the BC's parse of the REAL armored cert (the gpg-produced
+        // fixture) — the same (version, algo, time, n, e) = the same fp.
+        // The mismatch = the feature's loud-failure gate never fires.
+        val decoded = PGPUtil.getDecoderStream(resource("fixture-pub.asc").inputStream())
+        val ring = PGPObjectFactory(decoded, JcaKeyFingerprintCalculator()).nextObject()
+                as org.bouncycastle.openpgp.PGPPublicKeyRing
+        val parsed = ring.getPublicKey()
+        val rsa = parsed.getPublicKeyPacket().key as org.bouncycastle.bcpg.RSAPublicBCPGKey
+        val built = OpenPgpCardCrypto.recipientKeyFromRaw(
+            rsa.modulus, rsa.publicExponent, (parsed.creationTime.time / 1000).toInt())
+        assertEquals("the fingerprint must match the parsed cert",
+            java.lang.Long.parseUnsignedLong(parsed.fingerprint.let { fp ->
+                fp.joinToString("") { "%02x".format(it) }.takeLast(16)
+            }, 16), built.keyID)
+        assertArrayEquals("the v4 fingerprint bytes must match",
+            parsed.fingerprint, built.fingerprint)
+    }
+
+    @Test
+    fun constructedRecipientRoundTripsThroughVaultEncrypt() {
+        // The raw-key-constructed recipient = a REAL recipient: the vault
+        // encrypt adds its PKESK, the matching private key decrypts.
+        val decoded = PGPUtil.getDecoderStream(resource("fixture-sec.asc").inputStream())
+        val ring = PGPObjectFactory(decoded, JcaKeyFingerprintCalculator()).nextObject()
+                as PGPSecretKeyRing
+        val sk = ring.getSecretKey(fixtureKeyId.toLong())!!
+        val parsedPub = sk.publicKey
+        val rsa = parsedPub.publicKeyPacket.key as org.bouncycastle.bcpg.RSAPublicBCPGKey
+        val built = OpenPgpCardCrypto.recipientKeyFromRaw(
+            rsa.modulus, rsa.publicExponent, (parsedPub.creationTime.time / 1000).toInt())
+        val plain = "the card-as-recipient round trip".toByteArray(Charsets.UTF_8)
+        val env = OpenPgpCardCrypto.encryptToBytes(plain, "vault.json", listOf(built))
+        val back = runBlocking {
+            OpenPgpCardCrypto.decrypt(
+                env, longArrayOf(fixtureKeyId), softwareCard("fixture-sec.asc", fixtureKeyId))
+        }
+        assertArrayEquals(plain, back)
+    }
+
+    @Test
+    fun wrongCreationTimeBreaksFingerprint() {
+        // The gate: a wrong creation time = a DIFFERENT fingerprint — the
+        // flow's self-check must refuse such a key (tested at the unit
+        // level; the flow wires it to the loud failure).
+        val decoded = PGPUtil.getDecoderStream(resource("fixture-pub.asc").inputStream())
+        val ring = PGPObjectFactory(decoded, JcaKeyFingerprintCalculator()).nextObject()
+                as org.bouncycastle.openpgp.PGPPublicKeyRing
+        val parsed = ring.getPublicKey()
+        val rsa = parsed.publicKeyPacket.key as org.bouncycastle.bcpg.RSAPublicBCPGKey
+        val wrong = OpenPgpCardCrypto.recipientKeyFromRaw(
+            rsa.modulus, rsa.publicExponent, (parsed.creationTime.time / 1000).toInt() + 3600)
+        assertTrue("the wrong time = a different fingerprint",
+            !wrong.fingerprint.contentEquals(parsed.fingerprint))
+    }
+
 }
