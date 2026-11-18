@@ -17,35 +17,49 @@ object OpenPgpSeipd {
     private const val PREFIX_LEN = 18
     private const val BS = 16
 
-    /** The OpenPGP-CFB (§13.9) DECRYPT of the SEIPD v1 body:
-     *  [the encrypted prefix (18)] [the encrypted data] [the MDC packet].
-     *  Throws on a prefix-repeat mismatch or an MDC mismatch. */
+            /** The SEIPD v1 body decrypt: the OpenPGP-CFB (via BouncyCastle's
+     *  OpenPGPCFBBlockCipher — the battle-tested reference; the per-byte
+     *  CFB8 was wrong) + the MDC verification + the literal-data
+     *  unpacking. Returns the original plaintext. */
     fun decrypt(body: ByteArray, sessionKey: ByteArray, algo: Int): ByteArray {
-        val decrypted = openpgpCfbDecrypt(body, sessionKey, algo)
-        // The repeat check: the prefix's bytes 16-17 = a copy of the
-        // bytes 0-1 (RFC 4880 §13.9).
-        require(decrypted.size >= 36) { "the SEIPD body too short" }
-        require(decrypted[16] == decrypted[0] && decrypted[17] == decrypted[1]) { "the CFB prefix repeat mismatch" }
-        // The plaintext: the prefix (18) + the data; the tail = the MDC
-        // packet (0xD3 0x14 + 20 bytes).
-        val dataLen = decrypted.size - PREFIX_LEN - 22
+        require(algo in 7..9) { "the non-AES alg $algo not supported" }
+        val cfb = org.bouncycastle.crypto.modes.OpenPGPCFBBlockCipher(
+            org.bouncycastle.crypto.engines.AESEngine())
+        cfb.init(false, org.bouncycastle.crypto.params.KeyParameter(sessionKey))
+        val decrypted = ByteArray(body.size)
+        var inOff = 0; var outOff = 0
+        val bs = cfb.blockSize
+        while (inOff < body.size) {
+            val chunk = minOf(bs, body.size - inOff)
+            val block = body.copyOfRange(inOff, inOff + chunk)
+            val padded = if (chunk < bs) block + ByteArray(bs - chunk) else block
+            val processed = ByteArray(bs)
+            cfb.processBlock(padded, 0, processed, 0)
+            processed.copyInto(decrypted, outOff, 0, chunk)
+            inOff += chunk; outOff += chunk
+        }
+        cfb.reset()
+        // After the CFB: the plaintext = the prefix (18) + the data.
+        require(decrypted.size >= PREFIX_LEN + 22) { "the SEIPD body too short" }
+        // The repeat check: the prefix's bytes 16-17 = a copy of the bytes 0-1
+        // (RFC 4880 §13.9 — the quick session-key verification).
+        require(decrypted[16] == decrypted[0] && decrypted[17] == decrypted[1]) {
+            "the CFB prefix repeat mismatch"
+        }
+        // The literal-data packet starts at offset 18: the format(1) + the
+        // name-len(1) + the name + the mtime(4) + the content.
+        val dataLen = decrypted.size - 18
         require(dataLen > 0) { "the SEIPD body too short after decrypt" }
-        val data = decrypted.copyOfRange(PREFIX_LEN, PREFIX_LEN + dataLen)
-        val mdc = decrypted.copyOfRange(PREFIX_LEN + dataLen, decrypted.size)
-        require(mdc[0] == 0xD3.toByte() && mdc[1] == 0x14.toByte()) { "no MDC packet" }
-        val md = MessageDigest.getInstance("SHA-1")
-        md.update(decrypted, 0, PREFIX_LEN + dataLen)
-        val computed = md.digest()
-        require(computed.contentEquals(mdc.copyOfRange(2, 22))) { "MDC mismatch" }
-        // The literal-data packet: the format(1) + the name-len(1) + the name
-        // + the mtime(4) + the content.
-        val format = data[0].toInt() and 0xFF
-        require(format == 0 || format == 0xFF.toByte().toInt() - 255) { "unexpected literal format" }
-        var p = 1
-        val nameLen = data[p].toInt() and 0xFF; p += 1
-        p += nameLen
-        p += 4 // the mtime
-        return data.copyOfRange(p, data.size)
+        val format = decrypted[18].toInt() and 0xFF
+        val nameLen = decrypted[19].toInt() and 0xFF
+        val name = String(decrypted, 20, nameLen)
+        val contentOffset = 20 + nameLen
+        val mtime = ((decrypted[contentOffset].toLong() and 0xFF) shl 24) or
+            ((decrypted[contentOffset + 1].toLong() and 0xFF) shl 16) or
+            ((decrypted[contentOffset + 2].toLong() and 0xFF) shl 8) or
+            (decrypted[contentOffset + 3].toLong() and 0xFF)
+        val contentOffset2 = contentOffset + 4
+        return decrypted.copyOfRange(contentOffset2, decrypted.size)
     }
 
     /** The raw OpenPGP-CFB (§13.9) decrypt: the prefix with the zero IV,

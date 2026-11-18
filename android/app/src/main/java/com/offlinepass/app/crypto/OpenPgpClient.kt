@@ -334,7 +334,7 @@ class OpenPgpClient(private val context: Context) : OpenPgpOps {
             }
         } catch (e: Exception) {
             Log.w(TAG, "OpenPGP call failed: ${e.message}")
-            errorResult()
+            throw e  // the caller (execute) handles the rebind
         }
     }
 

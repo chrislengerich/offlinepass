@@ -52,18 +52,32 @@ class OpenPgpSeipdFixtureTest {
         decryptFn
     }
 
+    /** The KNOWN session key (from gpg --show-session-key): isolates the
+     *  CFB from the PKESK decrypt. */
+    private val knownSessionKey = org.bouncycastle.util.encoders.Hex.decodeStrict(
+        "4526B823540086687CFB3CC1BEC5A4E00E51F15F6FA70C3871697978916416A1")
+
+    @Test
+    fun cfbDecryptWithKnownSessionKey() {
+        val enc = resource("fixture-enc.gpg")
+        val msg = com.offlinepass.app.vault.PgpMessageParser.parse(enc)
+        // The SEIPD body decrypts with the known session key.
+        val plain = OpenPgpSeipd.decrypt(msg.seipdBody!!, knownSessionKey, 9)
+        val expected = resource("fixture-plain.txt")
+        assertEquals(String(expected), String(plain))
+    }
+
     @Test
     fun decryptsRealGpgFixtureToOriginalPlaintext() {
         val enc = resource("fixture-enc.gpg")
         val msg = com.offlinepass.app.vault.PgpMessageParser.parse(enc)
         val pkesk = msg.pkesks.single()
-        // The card decrypts the PKESK's MPI VALUE (the 2-byte MPI prefix stripped).
         val mpiValue = pkesk.encryptedSessionKey.copyOfRange(2, pkesk.encryptedSessionKey.size)
         val block = cardDecrypt(mpiValue)
-        // The type-2 strip → the alg + the session key (the RFC checksum verified).
         val (algo, sessionKey) = com.offlinepass.app.vault.PgpMessageParser
             .sessionKeyFromPkeskValue(OpenPgpSeipd.stripType2(block))
-        // The SEIPD: the OpenPGP-CFB + the MDC → the literal → the plaintext.
+        // The session key must match the known one.
+        org.junit.Assert.assertArrayEquals(knownSessionKey, sessionKey)
         val plain = OpenPgpSeipd.decrypt(msg.seipdBody!!, sessionKey, algo)
         val expected = resource("fixture-plain.txt")
         assertEquals(String(expected), String(plain))

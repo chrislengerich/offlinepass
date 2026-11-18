@@ -143,9 +143,11 @@ dependencies {
     // never packaged). slf4j-simple surfaces the server's auth decisions.
     testImplementation("org.apache.sshd:sshd-core:2.12.1")
     testImplementation("org.slf4j:slf4j-simple:2.0.13")
-    // The real OpenPGP verifier for the commit-signature builder tests
-    // (BouncyCastle's PGP implementation — JVM tests only, never packaged).
-    testImplementation("org.bouncycastle:bcpg-jdk18on:1.79")
+    // The OpenPGP framing for the card decrypt + the envelope encrypt
+    // (the SEIPD CFB, the MDC, the literal/compressed, the PKESKs) via
+    // the PublicKeyDataDecryptorFactory seam — the card recovers the
+    // session key, BC does everything else.
+    implementation("org.bouncycastle:bcpg-jdk18on:1.79")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
