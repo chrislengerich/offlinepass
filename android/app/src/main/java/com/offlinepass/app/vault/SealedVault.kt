@@ -155,6 +155,15 @@ object SealedVault {
      * the old cache becomes un-decryptable, which the staleness flow
      * absorbs.
      */
+    /** The blocking variant: the save's re-seal = AWAITED (the post-save
+     *  re-stub must not race the cache write — a tap right after the save
+     *  would read the stale cache and demand the card per item). The same
+     *  mutex, the same call — just awaited by the caller. */
+    suspend fun sealNowAwait(items: List<ProtonItem>, env: Envelope, vaultFile: File) =
+        withContext(Dispatchers.IO) {
+            sealMutex.withLock { sealNow(items, env, vaultFile) }
+        }
+
     private fun ensureAesKey(): javax.crypto.SecretKey? {
         return try {
             val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

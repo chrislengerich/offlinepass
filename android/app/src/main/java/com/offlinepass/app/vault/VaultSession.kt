@@ -719,6 +719,13 @@ object VaultSession {
             else true
             if (gated) {
                 sealIfEnabled(items, env)
+                // THE STUB MODEL: the enrollment happened while the load
+                // session was full (the screenlock was OFF at the unlock —
+                // the stub conversion never ran) — convert NOW: the secrets
+                // = in the sealed cache (just written) + the vault file.
+                env.items = items.map { it.asStub() }.toMutableList()
+                state = State.Unlocked(env.items)
+                stubSession = true
                 return "Screenlock protection enrolled (security-key-signed " +
                     "locally): commits now sign with the screenlock key, and " +
                     "the item secrets are sealed at rest — effective immediately."
@@ -1296,6 +1303,8 @@ object VaultSession {
                 val client = openPgpClientFactory(appContext)
 
                 var keyIds = cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()
+                loadPhase("save: keyIds = " + keyIds.size + " (the prefs" +
+                    (if (keyIds.isEmpty()) " — EMPTY, the lookup will run" else "") + ")")
                 var lookupReqData: Intent? = null
                 var lookupGuard = 0
                 while (keyIds.isEmpty() && cfg.recipientEmails.isNotEmpty() && lookupGuard++ < 2) {
@@ -1511,11 +1520,13 @@ object VaultSession {
                     }
                     sealIfEnabled(items, env)
                     // THE STUB MODEL: the save's batch unseal brought the
-                    // full items into memory — re-stub immediately (the
-                    // seal's closure captured the full list, so this is
-                    // race-safe). Without this, every save re-opens the
-                    // ungated-browsing hole the stub model exists to close.
+                    // full items into memory — re-seal AWAITED (the async
+                    // seal would race the re-stub: a tap right after the
+                    // save would read the stale cache and demand the card
+                    // per item), then re-stub immediately. The seal's
+                    // closure captured the full list, so this is race-safe.
                     if (screenlockUnlockEnabled()) {
+                        SealedVault.sealNowAwait(items, env, File(vaultFilePath()))
                         val stubs = items.map { it.asStub() }
                         env.items = stubs.toMutableList()
                         state = State.Unlocked(stubs)
@@ -1816,16 +1827,27 @@ object VaultSession {
      *  loaded vault carries its own recipients. No-op when ids already
      *  exist (never clobbers). Returns the effective ids. */
     fun seedRecipientsFromRepo(): List<Long> {
-        // The recipients live in keys/encrypt/<keyid>.pub.asc (the legacy
-        // keys/<keyid>.public.asc counts for the pre-migration repos).
+        // The recipient key ids = THREE sources merged: the modern file
+        // names (keys/encrypt/<KEYID>.pub.asc), the legacy flat layout
+        // (keys/<KEYID>.public.asc), and the LEDGER's recipientKeyIds line
+        // (the repo's own canonical record — the file names alone failed
+        // to parse on-device once, and the ledger saved the session).
         val encryptDir = File(gitRoot(), "keys/encrypt")
         val legacyDir = File(gitRoot(), "keys")
-        val ids = (encryptDir.listFiles { f -> f.name.endsWith(".pub.asc") }
+        val fromFiles = (encryptDir.listFiles { f -> f.name.endsWith(".pub.asc") }
             ?.mapNotNull { f -> f.name.substringBefore(".").toLongOrNull(16) }
-            ?: emptyList())
-            .ifEmpty { legacyDir.listFiles { f -> f.name.endsWith(".public.asc") }
-                ?.mapNotNull { f -> f.name.substringBefore(".").toLongOrNull(16) }
-                ?: emptyList() }
+            ?: emptyList()) + legacyDir.listFiles { f -> f.name.endsWith(".public.asc") }
+            ?.mapNotNull { f -> f.name.substringBefore(".").toLongOrNull(16) }
+            .orEmpty()
+        val fromLedger = runCatching {
+            File(encryptDir, "recipients.txt").readText().lineSequence()
+                .firstOrNull { it.startsWith("recipientKeyIds:") }
+                ?.substringAfter(":")?.trim()
+                ?.split(" ")?.mapNotNull { t ->
+                    t.removePrefix("0x").removePrefix("0X").toLongOrNull(16)
+                }
+        }.getOrNull().orEmpty()
+        val ids = (fromFiles + fromLedger).distinct()
         // The recipient LEDGER (keys/encrypt/recipients.txt) carries the
         // recipient emails — adopt them so the Setup shows the vault's own
         // recipients and saves work without OpenKeyChain ever being asked.
@@ -1843,8 +1865,14 @@ object VaultSession {
         }
         if (ids.isNotEmpty()) {
             setRecipientKeyIds(ids)
-            Log.i(TAG, "seeded " + ids.size + " recipient key id(s) from the repo's keys/")
+            Log.i(TAG, "seeded " + ids.size + " recipient key id(s) " +
+                "(the files: " + fromFiles.size + ", the ledger: " + fromLedger.size + ")")
         }
+        // THE OUTCOME ON THE FILE CHANNEL: the save's recipient lookup =
+        // the OpenKeyChain picker when the ids are empty — this breadcrumb
+        // answers WHY without the logcat (the ROM's logd is unreliable).
+        loadPhase("recipient seed: " + ids.size + " id(s) (the files: " +
+            fromFiles.size + ", the ledger: " + fromLedger.size + ")")
         return ids
     }
 
