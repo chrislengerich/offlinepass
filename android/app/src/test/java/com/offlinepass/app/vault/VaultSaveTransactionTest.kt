@@ -168,6 +168,66 @@ class VaultSaveTransactionTest {
     }
 
     @Test
+    fun stubSessionSaveNeverWritesEmptySecrets() = runBlocking {
+        // THE STUB-INVARIANT: after a stub-mode unlock, the in-memory list
+        // holds stubs (the secrets = in the sealed cache). A save must
+        // promote (the batch unseal) and merge the UI's edits — encrypting
+        // the stubs would WIPE every secret from the vault.
+        // The seal crypto seam: a software AES (the same pattern the
+        // production keystore implements).
+        SealedVault.resetForTest(RuntimeEnvironment.getApplication())
+        SealedVault.cryptoHook = object : SealedVault.SealCrypto {
+            private val key = javax.crypto.spec.SecretKeySpec(
+                ByteArray(32) { (it * 7 + 3).toByte() }, "AES")
+            override fun seal(plain: ByteArray, aad: ByteArray): Pair<ByteArray, ByteArray> {
+                val iv = ByteArray(12).also { java.security.SecureRandom().nextBytes(it) }
+                val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+                c.init(javax.crypto.Cipher.ENCRYPT_MODE, key,
+                    javax.crypto.spec.GCMParameterSpec(128, iv))
+                c.updateAAD(aad)
+                return iv to c.doFinal(plain)
+            }
+            override fun unseal(iv: ByteArray, ct: ByteArray, aad: ByteArray): ByteArray {
+                val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+                c.init(javax.crypto.Cipher.DECRYPT_MODE, key,
+                    javax.crypto.spec.GCMParameterSpec(128, iv))
+                c.updateAAD(aad)
+                return c.doFinal(ct)
+            }
+        }
+        VaultSession.setScreenlockUnlockEnabled(true)
+        // The adopt with the screenlock on = the seal + the stub conversion:
+        val seeded = item("Existing").apply {
+            password = "real-secret"
+            note = "real-note"
+        }
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf(seeded)
+        })
+        // The seal is async (the SealedVault scope): await it before the
+        // save's promote (the production race window is human-speed; the
+        // test is not).
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        val stateItems = (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
+        assertTrue("the session must hold stubs", stateItems.all { !it.hasSecrets() })
+
+        // The UI's save = the stubs + the edited full item (the SAME uuid —
+        // the edit flow replaces by uuid; the secrets set):
+        val edited = seeded.copy(password = "changed-secret")
+        val r = VaultSession.save(listOf(edited))
+        assertTrue("expected Success, got $r", r is VaultSession.Result.Success)
+        // The vault file must carry the REAL secrets (the base64 fake = the
+        // reversible stand-in): the batch unseal's base + the edited replace.
+        val plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertTrue("the edited secret must be written", plain.contains("changed-secret"))
+        assertFalse("the old secret must be replaced", plain.contains("real-secret"))
+        assertFalse("no stubs may reach the vault", plain.contains("Existing\"}"))
+    }
+
+    @Test
     fun secondSaveBumpsRevAndCommit() = runBlocking {
         VaultSession.save(listOf(item("A")))
         val head1 = headId()

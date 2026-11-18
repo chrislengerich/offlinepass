@@ -914,6 +914,21 @@ object VaultSession {
     /** The envelope as loaded (tombstones + unknown fields preserved through saves). */
     private var loadedEnvelope: Envelope? = null
 
+    /** THE STUB MODEL: true when the in-memory items are stubs (the
+     *  secrets live in the sealed cache + the vault file). Every path
+     *  that needs the real secrets (the save, the merge, the autofill's
+     *  unlocked branch) must promote — the batch unseal — first. */
+    private var stubSession = false
+
+    /** Promotes a stub session to the full items via the sealed cache
+     *  (silent inside the auth window; one screen-lock press otherwise).
+     *  Returns false when the cache is missing/stale — the caller must
+     *  fail honestly rather than proceed with stubs. */
+    private suspend fun promoteIfStub(): Boolean {
+        if (!stubSession) return true
+        return promoteSealedSession() == Result.Success
+    }
+
     fun init(context: Context) {
         if (::appContext.isInitialized) return
         appContext = context.applicationContext
@@ -929,6 +944,7 @@ object VaultSession {
         appContext = context.applicationContext
         rev = 0
         loadedEnvelope = null
+        stubSession = false
         state = if (File(vaultFilePath()).exists()) State.Locked else State.NoConfig
         pendingPush = false
         lastSaveRemoteState = "none"
@@ -1136,6 +1152,18 @@ object VaultSession {
             loadedEnvelope = env
             state = State.Unlocked(env.items)
             sealIfEnabled(env.items, env)
+            // THE STUB MODEL: with the screenlock enrolled, the secrets
+            // now live in the sealed cache (just written) and the vault
+            // file (the card) — the session keeps only the identity
+            // fields; the item detail = the unseal, the save = the batch
+            // unseal. Without the screenlock the session stays full
+            // (no gate possible — unchanged legacy behavior).
+            if (screenlockUnlockEnabled()) {
+                env.items = env.items.map { it.asStub() }.toMutableList()
+                state = State.Unlocked(env.items)
+                stubSession = true
+                loadPhase("Secrets sealed — the session holds ${env.items.size} stubs")
+            }
             loadPhase("Vault loaded (${env.items.size} items, rev=${env.rev})")
             Log.i(TAG, "unlocked: ${env.items.size} items, rev=${env.rev}")
             return Result.Success
@@ -1164,14 +1192,45 @@ object VaultSession {
      * Once a commit lands the change is durable; a push failure only marks
      * the sync pending (the repo — local first — is the source of trust).
      */
-    suspend fun save(items: List<ProtonItem>): Result {
+    suspend fun save(items: List<ProtonItem>, editedUuid: String? = null): Result {
         val cfg = config() ?: return Result.Error("No config")
         busy = "Encrypting…"
         try {
             return withContext(Dispatchers.IO) {
+                // THE STUB-INVARIANT: the in-memory list = the stubs (the
+                // secrets live in the sealed cache). Encrypting stubs would
+                // wipe every secret — promote (the batch unseal, silent
+                // inside the auth window, one screen-lock press otherwise)
+                // before touching the envelope. A failed promote (the cache
+                // missing/stale) must fail the save honestly.
+                val wasStub = stubSession
+                if (!promoteIfStub()) {
+                    return@withContext Result.Error(
+                        "The sealed cache is missing or stale — re-unlock with the key, then save")
+                }
                 val env = (loadedEnvelope ?: Envelope(deviceId = cfg.deviceId)).also { e ->
                     e.rev = rev + 1
-                    e.items = items.toMutableList()
+                    if (wasStub) {
+                        // The apply-diff (the stub mode only): the UI's list
+                        // = the stubs + the edited full items. The sealed
+                        // base wins for the stubs; the edited = the item
+                        // whose secrets are set OR the explicitly-edited
+                        // uuid (covers a cleared-to-empty edit); the new
+                        // items append. Never the stubs themselves.
+                        val base = e.items
+                        val applied = base.map { baseItem ->
+                            items.firstOrNull { it.itemUuid == baseItem.itemUuid }
+                                ?.takeIf {
+                                    it.hasSecrets() || it.itemUuid == editedUuid
+                                } ?: baseItem
+                        } + items.filter { ui ->
+                            (ui.hasSecrets() || ui.itemUuid == editedUuid) &&
+                                base.none { it.itemUuid == ui.itemUuid }
+                        }
+                        e.items = applied.toMutableList()
+                    } else {
+                        e.items = items.toMutableList()
+                    }
                 }
                 // Purge tombstoned entries for good.
                 env.items.removeAll { it.itemUuid in env.deletedItemUuids }
@@ -1603,6 +1662,7 @@ object VaultSession {
             rev = env.rev
             loadedEnvelope = env
             state = State.Unlocked(items)
+            stubSession = false
             Log.i(TAG, "promoted sealed session: ${items.size} items, rev=${env.rev}")
             Result.Success
         } catch (e: Exception) {
@@ -2142,6 +2202,13 @@ object VaultSession {
                         // The previous code fed the ciphertext to
                         // Envelope.fromJson, silently merged EMPTY envelopes
                         // and wiped the vault on divergence.
+                        // THE STUB-INVARIANT: the local side must be the
+                        // full items (the stubs would merge empty) — the
+                        // batch unseal inside the sync's flow.
+                        if (!promoteIfStub()) {
+                            return@withContext Result.Error(
+                                "The merge needs the sealed cache — re-unlock with the key")
+                        }
                         val remoteEnv = git.readFileAt(root, "origin/main:$vaultRelPath")
                             ?.let { b ->
                                 runCatching { Envelope.fromJson(String(vaultDecryptBytes(b))) }
@@ -2220,6 +2287,13 @@ object VaultSession {
             loadedEnvelope = env
             state = State.Unlocked(env.items)
             sealIfEnabled(env.items, env)
+            // The stub model (see unlock) — the same conversion when the
+            // screenlock is enrolled.
+            if (screenlockUnlockEnabled()) {
+                env.items = env.items.map { it.asStub() }.toMutableList()
+                state = State.Unlocked(env.items)
+                stubSession = true
+            }
         } catch (e: Exception) {
             // The repo pulled but the session could not adopt it — say so
             // loudly: saving on top of a stale session invites a divergence
@@ -2313,6 +2387,12 @@ object VaultSession {
         loadedEnvelope = env
         state = State.Unlocked(env.items)
         sealIfEnabled(env.items, env)
+        // The stub model (see unlock).
+        if (screenlockUnlockEnabled()) {
+            env.items = env.items.map { it.asStub() }.toMutableList()
+            state = State.Unlocked(env.items)
+            stubSession = true
+        }
     }
 
     /**
@@ -2331,6 +2411,7 @@ object VaultSession {
         loadedEnvelope?.extraFields?.clear()
         loadedEnvelope = null
         rev = 0
+        stubSession = false
         if (state is State.Unlocked) state = State.Locked
         if (!::appContext.isInitialized) return
         val cache = appContext.cacheDir

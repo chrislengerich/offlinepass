@@ -36,6 +36,15 @@ data class ProtonItem(
 
     val identity: String get() = username.ifBlank { email }
 
+    /** THE STUB MODEL: the secrets (the password/note/totpUri) are zeroed —
+     *  they live in the sealed cache (the screenlock key) and the vault
+     *  file (the card). The identity/search fields stay plaintext. */
+    fun asStub(): ProtonItem = copy(password = "", note = "", totpUri = "")
+
+    /** The secrets are present (a full/edited item, not a stub). */
+    fun hasSecrets(): Boolean =
+        password.isNotEmpty() || note.isNotEmpty() || totpUri.isNotEmpty()
+
     /** Human-readable last-modified stamp for list/detail rows. */
     val modifyTimeText: String
         get() {

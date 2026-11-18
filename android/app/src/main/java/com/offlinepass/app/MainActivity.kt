@@ -273,10 +273,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
         status = "Unlock aborted after interaction retry."
     }
 
-    private suspend fun saveLoop(items: List<ProtonItem>): VaultSession.Result {
+    private suspend fun saveLoop(
+        items: List<ProtonItem>,
+        editedUuid: String? = null
+    ): VaultSession.Result {
         var guard = 0
         while (guard++ < 2) {
-            when (val r = VaultSession.save(items)) {
+            when (val r = VaultSession.save(items, editedUuid)) {
                 is VaultSession.Result.Interaction -> { launchInteraction(r.pendingIntent); awaitInteraction() }
                 else -> return r
             }
@@ -1227,7 +1230,42 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     busy = VaultSession.busy,
                     query = searchQuery,
                     onQueryChange = { searchQuery = it },
-                    onOpen = { item -> screen = Screen.Detail(item.itemUuid) },
+                    // The stub model: the click = the SAME screenlock gate +
+                    // per-item unseal the sealed mode uses. A stale seal
+                    // falls back to the key unlock, then the auto-reveal.
+                    onOpen = { item ->
+                        if (VaultSession.screenlockUnlockEnabled() &&
+                            com.offlinepass.app.vault.SealedVault.hasCache()
+                        ) {
+                            lifecycleScope.launch {
+                                when (val r = VaultSession.revealSealed(
+                                    item.itemUuid, item.displayName)) {
+                                    is VaultSession.Result.Revealed -> {
+                                        sealedReveal = r.item
+                                        status = ""
+                                    }
+                                    is VaultSession.Result.NeedsKeyDecrypt -> {
+                                        val uuid = item.itemUuid
+                                        afterUnlock = {
+                                            lifecycleScope.launch {
+                                                when (val rr = VaultSession.revealSealed(
+                                                    uuid, item.displayName)) {
+                                                    is VaultSession.Result.Revealed -> {
+                                                        sealedReveal = rr.item
+                                                        screen = Screen.Detail(uuid)
+                                                    }
+                                                    else -> screen = Screen.Search
+                                                }
+                                            }
+                                        }
+                                        unlockLoop()
+                                    }
+                                    is VaultSession.Result.Error -> sealedToast(r.message)
+                                    else -> {}
+                                }
+                            }
+                        } else screen = Screen.Detail(item.itemUuid)
+                    },
                     onAdd = { screen = Screen.AddEntry },
                     onSetup = { screen = Screen.Setup }
                 )
@@ -1248,7 +1286,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                 val items = unlockedItems().map {
                                     if (it.itemUuid == edited.itemUuid) edited else it
                                 }
-                                status = when (val r = saveLoop(items)) {
+                                status = when (val r = saveLoop(items, edited.itemUuid)) {
                                     VaultSession.Result.Success -> "Saved (rev ${VaultSession.currentRev()})."
                                     else -> "Save: $r"
                                 }

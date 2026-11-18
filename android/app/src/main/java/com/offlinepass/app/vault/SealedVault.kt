@@ -92,6 +92,7 @@ object SealedVault {
      *  pristine defaults for [context] and wipe the on-disk cache. */
     internal fun resetForTest(context: Context) {
         appContext = context.applicationContext
+        cryptoHook = null
         cacheFile().delete()
     }
 

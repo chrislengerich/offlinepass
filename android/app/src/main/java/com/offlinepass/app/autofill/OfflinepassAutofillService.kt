@@ -49,12 +49,12 @@ class OfflinepassAutofillService : AutofillService() {
         }
 
         val response = when {
-            VaultSession.state is VaultSession.State.Unlocked -> unlockedResponse(fields)
-            // Sealed: the autofill picker = the SAME manifest the locked
-            // screen shows; tapping = the SAME screenlock gate as the item
-            // view → the targeted single-item unseal → the fill.
+            // The sealed/stub states: the targeted single-item unseal (the
+            // screenlock gate) — the stub session's memory holds no secrets,
+            // so the unseal branch must win over the unlocked branch.
             VaultSession.screenlockUnlockEnabled() &&
                 SealedVault.manifestItems().isNotEmpty() -> sealedResponse(fields)
+            VaultSession.state is VaultSession.State.Unlocked -> unlockedResponse(fields)
             else -> lockedResponse(fields)
         }
         callback.onSuccess(response)
