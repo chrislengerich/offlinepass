@@ -134,21 +134,6 @@ fun SetupTabScreen(
                 style = MaterialTheme.typography.bodySmall
             )
         }
-        // THE SLOT = THE ENROLLED LINE's (no toggle): the GitHub
-        // enrollment proved one slot's key against the owner's key list
-        // and recorded WHICH slot answers the handshakes. Re-run Enroll
-        // after a slot swap; the self-test names the live key.
-        androidx.compose.material3.ListItem(
-            headlineContent = {
-                Text(if (VaultSession.sshAuthUseAut())
-                    "SSH auth: the AUTH slot's key (the enrolled line)"
-                else "SSH auth: the SIGNATURE slot's key (the enrolled line)")
-            },
-            supportingContent = {
-                Text("The GitHub match selects the slot — no toggle. " +
-                    "The slot swap is a desktop step: scripts/yubikey_ec_auth_key.sh.")
-            })
-
         // Sync state lives directly with its button.
         // The commit summaries = the LOCAL-ONLY too (the git history = on-device).
         val commits = VaultSession.recentCommits()
