@@ -21,7 +21,7 @@ fun SetupTabScreen(
     onBack: () -> Unit,
     onTestSync: () -> Unit,
     onResetRepo: () -> Unit,
-    onUsbSave: () -> Unit,
+    onExportRepoQrft: () -> Unit = {},
     onUsbRestore: () -> Unit,
     onEnableAutofill: () -> Unit,
     onForget: () -> Unit,
@@ -359,8 +359,11 @@ fun SetupTabScreen(
         HorizontalDivider()
 
         Text("USB offline copies", style = MaterialTheme.typography.titleSmall)
-        Button(onClick = onUsbSave, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Save vault snapshot to USB/file")
+        // The USB export = the WHOLE REPO (the git-state clone — the vault
+        // + the keys + the signed history; the repo export supersedes the
+        // vault-snapshot).
+        Button(onClick = onExportBackupZip, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Export whole repo (USB)")
         }
         Button(onClick = onUsbRestore, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Restore vault from USB/file (merge)")
@@ -368,11 +371,8 @@ fun SetupTabScreen(
         HorizontalDivider()
 
         Text("QRFT transfer (phone ↔ phone, via camera)", style = MaterialTheme.typography.titleSmall)
-        // The USB export = the WHOLE REPO (the git-state clone: the vault +
-        // the keys + the signed history) — the backup/restore. The QRFT =
-        // the picked entries only (the transfer format).
-        Button(onClick = onExportBackupZip, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Export whole repo (USB)")
+        Button(onClick = onExportRepoQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Export repo as QRFT")
         }
 
         Button(onClick = onImportQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {

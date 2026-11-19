@@ -1728,7 +1728,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             }
                         }
                     },
-                    onUsbSave = { usbSaveLauncher.launch("offlinepass-vault-rev${VaultSession.currentRev()}.gpg") },
                     onUsbRestore = { usbRestoreLauncher.launch(arrayOf("application/octet-stream")) },
                     onEnableAutofill = { requestAutofillService() },
                     screenLockOn = VaultSession.screenLockOn,
