@@ -2148,20 +2148,18 @@ object VaultSession {
         if (config()?.remoteUrl == null) return ""
         val div = runCatching { VaultGitClient().headVsRemote(gitRoot()) }
             .getOrElse { return "The local repo state could not be read (${it.message?.take(60)})." }
-        val tail = "Unpushed vault state is re-applied automatically if the vault is unlocked."
+        val tail = "Resetting wipes local commits."
         return when (div) {
             is VaultGitClient.Divergence.UpToDate ->
                 "The local clone matches the remote as of the last fetch — nothing unpushed."
             is VaultGitClient.Divergence.AheadOnly ->
-                "WARNING: the local clone has UNPUSHED commits (ahead of the remote). " +
-                    "Resetting wipes them; $tail"
+                "WARNING: the local clone has UNPUSHED commits (ahead of the remote). " + tail
             is VaultGitClient.Divergence.BehindOnly ->
                 "The local clone is BEHIND the remote (the remote has newer commits, " +
                     "as of the last fetch). Resetting takes the remote's newer state."
             is VaultGitClient.Divergence.Diverged ->
                 "WARNING: the local clone and the remote have DIVERGED (both have " +
-                    "commits the other lacks, as of the last fetch). Resetting takes the " +
-                    "remote's side; local-only commits are lost. $tail"
+                    "commits the other lacks, as of the last fetch). " + tail
         }
     }
 
