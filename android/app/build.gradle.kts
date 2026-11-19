@@ -11,8 +11,8 @@ android {
         applicationId = "com.offlinepass.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "0.10.2"
+        versionCode = 6
+        versionName = "0.10.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

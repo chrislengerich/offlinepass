@@ -74,3 +74,65 @@ file channel), find the slow step, then: the precomputed session snapshot
 1 = the quick verify + fix; 2 = the audit + the removal (the sync = the
 YubiKit only); 3 = the small feature; 4 = the profile then the fix.
 All four = one branch, the commits per item.
+
+---
+
+# The autofill era: landed + parked (from the 2026-11-19 session)
+
+## Landed (the feature/aut-key → main merge, released as v0.10.3)
+
+- **The autofill service**: the layered fill response (the sealed
+  manifest datasets + the app fallback), the dataset-ID matching, the
+  reveal (the store → the framework's re-invoked onFillRequest), the
+  generate chip, the save flow, the crash guards (the service never
+  throws into the framework).
+- **The save flow (the user's shape)**: the platform's save dialog =
+  the ONE question (onSaveRequest fires only AFTER its confirm) → the
+  armed intent → the screenlock → the upsert → the toast. For the
+  username-less generated logins (the platform's save event = the
+  user-typed-delta only — an all-autofilled submission fires NOTHING):
+  the SILENT tray trigger (the LOW importance, no banner) → its tap =
+  the bottom card (yes/no) → the screenlock → the upsert.
+- **The upsert = the SITE + USERNAME key** (the user's ask): the same
+  origin AND the same (possibly empty) username = the update (the full
+  item from loadedEnvelope — the state's items = the stubs post-promote,
+  asStub strips the password/note/totp — the update base MUST be the
+  full item); anything else = the append.
+- **The save-pipeline hardening**: the seal-of-stubs clobber root (the
+  loadedEnvelope NEVER carries stubs; the tail seals env.items), the
+  modifyTime apply-diff + the explicit-edit tie, saveSealed's
+  now-stamp + the uuid, the tombstones carried across the promote, the
+  sync merge = the per-item modifyTime.
+- **The EC (ECC) AUT path**: the EC P-256 auth-key generation on the
+  card (in-app), the dual-slot enrollment (the AUT-first/SIG-fallthrough
+  slot discovery, the recorded yubikeySshSlot), the EC SIG/EC auth +
+  the commit sigs, the repo-QRFT export/import + the PK route.
+- **The RSA-4096 AUT over USB = the named dead end**: the 0x6581
+  (no extended APDUs over USB, no INS-0x88 chaining) — the EC path =
+  the answer; don't revisit.
+- The keystore-window hardening: the reveal's unseal retry (the
+  gate→unseal window lag on this ROM), the auth activity's opaque theme
+  (the translucent broke the framework's post-auth fill).
+- The test harness: the `autofilltest` module (the login/signup forms,
+  the captured-values toast/log).
+
+## Parked
+
+- **DEC/EC (the card-backed decryption key)**: the ECDH PSO:DEC path +
+  the card-backed BC factory + the re-encrypt-on-swap. The scoping:
+  the seal envelope's recipients = the card's DEC pubkey (the
+  KDF=the ECDH tunnel); the unseal = PSO:DEC on the card (the PIN/touch
+  = the existing prompts); the re-encrypt-on-swap = the recipient
+  rotation at the card swap (the QRFT/sync pairing needs the new DEC
+  pubkey enrollment first). Blocks: the YubiKit DEC support surface
+  (the same extended-APDU question as the RSA AUT — probe EC DEC first).
+- **The legacy OKK signer deletion** (the workplan item 2) — the sync =
+  the YubiKit only.
+- **The pin-prompt hardening** — the OpenPGP PIN surfaces = the
+  per-activity dialogs now (the MainActivity + the autofill's auth
+  activity); consolidate.
+- **The Setup slowness** (the workplan item 4) — the breadcrumbs, then
+  the precomputed session snapshot.
+- **The TUI side (offlinepass.py)** — the user's to schedule: the
+  sealed-manifest/autofill-era format changes are Android-only so far;
+  the TUI reads the same repo.

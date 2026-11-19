@@ -90,15 +90,25 @@ cmd_build() {
 ## offlinepass v$VERSION
 
 ### Android (com.offlinepass.app)
-- **Encrypt individual items while in use (experimental toggle)** — the
-  locked app stays fully searchable (names/usernames/URLs from a
-  device-local sealed manifest; never synced), and tapping an entry
-  reveals it after one screen-lock prompt; editing saves ride the
-  existing screenlock commit signer
-- **Screen-lock toggle now governs the whole app**: entry gate at app
-  open / after the idle timeout, plus **idle auto-lock** with a
-  configurable minutes field (default 5) — everything zeroed back to
-  encrypted-at-rest
+- **Autofill (new)** — offlinepass is now an Android autofill service:
+  entry suggestions from the device-local sealed manifest (fully
+  searchable while the app is locked; never synced), one-tap fill behind
+  the screen-lock prompt
+- **Autofill generate & save** — the ⚡ chip generates a strong password
+  and fills it into the form after one screen-lock prompt; saving a
+  login goes through the platform's save dialog (or the silent tray
+  trigger for username-less generated logins) → one screenlock → the
+  entry is **upserted by site + username**: the same site and username =
+  the password update (the entry's notes/other fields preserved), a new
+  username at the same site = a new entry; the entry's URL is
+  pre-populated from the site origin
+- **EC (ECC) YubiKey auth keys** — generate an EC P-256 auth key on the
+  card from Setup (the RSA-4096-over-USB path is a hardware dead end);
+  the enrolled slot is shown in Setup and used for the GitHub
+  enrollment's SSH discovery
+- Save-pipeline hardening: sealed-save clobber fixes (the stub base vs
+  the full envelope), modifyTime-based conflict resolution, per-item
+  tombstones surviving the sealed-session promotion
 - Sync-auth options: screenlock SSH key (default, deploy-key least
   privilege), YubiKey OpenPGP SSH, HTTPS+PAT (deprecated)
 - Screenlock commit signing (keystore-gated, public key published to
