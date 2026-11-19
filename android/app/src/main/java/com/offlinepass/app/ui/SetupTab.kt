@@ -527,7 +527,7 @@ fun SetupTabScreen(
         Text(
             "1. Back up first: Backups → USB → Export.\n" +
                 "2. Clear the app's data: Android Settings → Apps → offlinepass → " +
-                "Clear data (uninstall/reinstall does NOT work — keep to Clear data).\n" +
+                "Clear data.\n" +
                 "3. Reopen: the first-run screen appears — Load existing → " +
                 "Share vault → USB → Import (or scan the QRFT) and unlock.",
             style = MaterialTheme.typography.bodySmall
