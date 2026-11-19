@@ -3005,12 +3005,24 @@ object VaultSession {
     }
 
     /** THIS device's armored public key (the first permanent recipient —
-     *  the owner's), fetched through the SHARED OpenKeyChain client so the
-     *  service binding persists (per-op clients re-pay OKK's 5-20s cold
-     *  start). Returns (armored, keyId) or null. The interaction (the
-     *  key-access prompt) loops through the UI handler like every fetch. */
+     *  the owner's). PRIMARY PATH: read the repo's materialized key file
+     *  (keys/encrypt/&lt;keyid&gt;.pub.asc) — no OpenKeyChain, no interaction,
+     *  instant. FALLBACK: the SHARED OpenKeyChain client (the binding
+     *  persists; per-op clients re-pay OKK's 5-20s cold start), used when
+     *  the repo has not materialized the key yet. Returns (armored, keyId)
+     *  or null. */
     suspend fun devicePublicKeyArmored(): Pair<String, Long>? {
         val keyId = recipientKeyIds().firstOrNull() ?: return null
+        // The repo file first — the same material OKK would return, minus
+        // the whole IPC round-trip.
+        for (rel in listOf("keys/encrypt/%016X.pub.asc".format(keyId),
+                           "keys/%016X.public.asc".format(keyId))) {
+            val f = File(gitRoot(), rel)
+            if (f.exists()) {
+                val armored = f.readText()
+                if (armored.contains("BEGIN PGP PUBLIC KEY BLOCK")) return armored to keyId
+            }
+        }
         val client = sharedOpenPgpClient(appContext)
         var reqData: Intent? = null
         var guard = 0
