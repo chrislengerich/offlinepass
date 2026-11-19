@@ -90,12 +90,53 @@ class AutofillAuthActivity : ComponentActivity() {
                     finish()
                 }
                 MODE_SAVE -> {
+                    val origin = name?.takeIf { it.isNotBlank() } ?: "Login"
+                    if (intent.getBooleanExtra(EXTRA_CONFIRMED, false)) {
+                        // THE PLATFORM'S SAVE DIALOG = THE ONE QUESTION
+                        // (the user tapped its Save — onSaveRequest fires
+                        // only AFTER that confirmation). This launch =
+                        // THE SCREENLOCK ONLY: the gate → the insert →
+                        // the toast. No card — the card would be the
+                        // SECOND question.
+                        val gate = ScreenlockGate.promptGate(
+                            this@AutofillAuthActivity,
+                            "Unlock offlinepass",
+                            "The device lock authorizes saving the login")
+                        if (!gate) {
+                            Log.i(TAG, "the confirmed save's gate declined")
+                            Toast.makeText(this@AutofillAuthActivity,
+                                "Not saved — the screen lock declined",
+                                Toast.LENGTH_LONG).show()
+                            setResult(RESULT_OK)
+                            finish()
+                            return@launch
+                        }
+                        val r = insertAutofill(
+                            origin,
+                            intent.getStringExtra(EXTRA_USERNAME) ?: "",
+                            intent.getStringExtra(EXTRA_PASSWORD) ?: "")
+                        when (r) {
+                            VaultSession.Result.Success -> {
+                                Log.i(TAG, "the confirmed save: Saved ✓ " +
+                                    "(rev ${VaultSession.currentRev()})")
+                                Toast.makeText(this@AutofillAuthActivity,
+                                    "Saved ✓", Toast.LENGTH_LONG).show()
+                            }
+                            else -> {
+                                Log.w(TAG, "the confirmed save FAILED: $r")
+                                Toast.makeText(this@AutofillAuthActivity,
+                                    "The save failed — $r", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                        setResult(RESULT_OK)
+                        finish()
+                        return@launch
+                    }
                     // THE BOTTOM CARD = THE QUESTION: yes/no over the form
                     // (the bottom gravity, ~a quarter up), the outside tap
                     // = the no. [Save] = the screenlock gate → the INSERT
                     // (the URL from the origin, the username optional).
-                    // Launched BY THE FRAMEWORK from onSaveRequest (the
-                    // typed logins) or from the silent tray trigger (the
+                    // Launched from the silent tray trigger (the
                     // generated-password logins — the platform's save
                     // event = the user-typed-delta only, so the question
                     // must be ours for those).
@@ -103,7 +144,6 @@ class AutofillAuthActivity : ComponentActivity() {
                     window.setLayout(
                         android.view.WindowManager.LayoutParams.MATCH_PARENT,
                         android.view.WindowManager.LayoutParams.WRAP_CONTENT)
-                    val origin = name?.takeIf { it.isNotBlank() } ?: "Login"
                     val card = LinearLayout(this@AutofillAuthActivity).apply {
                         orientation = LinearLayout.VERTICAL
                         setPadding(56, 44, 56, 44)
@@ -157,18 +197,10 @@ class AutofillAuthActivity : ComponentActivity() {
                                     finish()
                                     return@launch
                                 }
-                                val item = ProtonItem(
-                                    name = origin,
-                                    username = intent.getStringExtra(EXTRA_USERNAME) ?: "",
-                                    urls = if (origin.contains('.') && !origin.contains(' '))
-                                        listOf("https://$origin") else emptyList(),
-                                    password = intent.getStringExtra(EXTRA_PASSWORD) ?: "")
-                                val r = try {
-                                    VaultSession.addSealed(item.copy(modifyTime = 0))
-                                } catch (e: Exception) {
-                                    VaultSession.Result.Error(
-                                        "${e.javaClass.simpleName}: ${e.message}")
-                                }
+                                val r = insertAutofill(
+                                    origin,
+                                    intent.getStringExtra(EXTRA_USERNAME) ?: "",
+                                    intent.getStringExtra(EXTRA_PASSWORD) ?: "")
                                 when (r) {
                                     VaultSession.Result.Success -> {
                                         Log.i(TAG, "the card save: Saved ✓ " +
@@ -292,6 +324,37 @@ class AutofillAuthActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * THE INSERT for the autofill's save paths: the registry dedup first
+     * (the platform's confirmed save and the card's Save can both arrive
+     * for one generated password — only one insert), then addSealed, then
+     * the registry mark + the silent trigger's cancellation.
+     */
+    private suspend fun insertAutofill(
+        origin: String, username: String, password: String
+    ): VaultSession.Result {
+        if (AutofillSaveOffer.isSaved(password)) {
+            Log.i(TAG, "insertAutofill: already saved this session — the ack")
+            return VaultSession.Result.Success
+        }
+        val item = ProtonItem(
+            name = origin,
+            username = username,
+            urls = if (origin.contains('.') && !origin.contains(' '))
+                listOf("https://$origin") else emptyList(),
+            password = password)
+        val r = try {
+            VaultSession.addSealed(item.copy(modifyTime = 0))
+        } catch (e: Exception) {
+            VaultSession.Result.Error("${e.javaClass.simpleName}: ${e.message}")
+        }
+        if (r == VaultSession.Result.Success) {
+            AutofillSaveOffer.markSaved(password)
+            AutofillSaveOffer.cancelTrigger(this)
+        }
+        return r
+    }
+
     companion object {
         private const val TAG = "OfflinepassAutofill"
         const val EXTRA_UUID = "uuid"
@@ -299,6 +362,7 @@ class AutofillAuthActivity : ComponentActivity() {
         const val EXTRA_MODE = "mode"
         const val EXTRA_USERNAME = "username"
         const val EXTRA_PASSWORD = "password"
+        const val EXTRA_CONFIRMED = "confirmed"
         const val MODE_REVEAL = "reveal"
         const val MODE_GENERATE = "generate"
         const val MODE_SAVE = "save"

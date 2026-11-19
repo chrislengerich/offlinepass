@@ -101,24 +101,18 @@ class OfflinepassAutofillService : AutofillService() {
             return
         }
         val origin = fields?.webDomain ?: fields?.appPackage ?: "the login"
-        // THE GENERATED PASSWORD: the silent tray trigger is already
-        // pending (posted at the generate) — its tap = the bottom card.
-        // Here we only refresh the trigger's username (the user typed it
-        // after the generate) and ack the framework — no second question,
-        // no duplicate entry.
-        if (AutofillRevealStore.peek()?.password == pw) {
-            AutofillSaveOffer.postSilentTrigger(
-                applicationContext, origin, fields?.usernameValue, pw)
-            Log.i(TAG, "onSaveRequest: the generated password — " +
-                "the silent trigger refreshed (username=${!fields?.usernameValue.isNullOrBlank()})")
-            callback.onSuccess()
-            return
-        }
-        // THE TYPED LOGIN (not from the generate): the framework launches
-        // the SAVE-mode bottom card DIRECTLY over the form (the armed
-        // intent) — the yes = the screenlock → the insert.
+        // THE CONFIRMED SAVE: onSaveRequest fires only AFTER the user
+        // tapped Save on the platform's own dialog (the measured
+        // sequence: the dialog → the confirm → this callback) — the
+        // dialog WAS the one question. So the armed intent = THE
+        // SCREENLOCK ONLY (the CONFIRMED flag skips the card) → the
+        // insert. For the generated password the silent tray trigger is
+        // cancelled (the save is happening here; the registry guards the
+        // double insert if the card's Save also lands).
+        AutofillSaveOffer.cancelTrigger(applicationContext)
         val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
             .putExtra(AutofillAuthActivity.EXTRA_MODE, AutofillAuthActivity.MODE_SAVE)
+            .putExtra(AutofillAuthActivity.EXTRA_CONFIRMED, true)
             .putExtra(AutofillAuthActivity.EXTRA_NAME, origin)
             .putExtra(AutofillAuthActivity.EXTRA_USERNAME, fields?.usernameValue ?: "")
             .putExtra(AutofillAuthActivity.EXTRA_PASSWORD, pw)
@@ -127,8 +121,9 @@ class OfflinepassAutofillService : AutofillService() {
             appContext(), 500, intent,
             android.app.PendingIntent.FLAG_IMMUTABLE or
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT)
-        Log.i(TAG, "onSaveRequest: the card armed for $origin " +
-            "(username=${!fields?.usernameValue.isNullOrBlank()})")
+        Log.i(TAG, "onSaveRequest: the confirmed save armed for $origin " +
+            "(username=${!fields?.usernameValue.isNullOrBlank()}, generated=" +
+            "${AutofillRevealStore.peek()?.password == pw})")
         callback.onSuccess(pi.intentSender)
     }
 
