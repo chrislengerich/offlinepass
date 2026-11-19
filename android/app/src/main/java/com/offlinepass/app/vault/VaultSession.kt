@@ -2131,6 +2131,17 @@ object VaultSession {
     fun gitRootPath(): String = gitRoot().absolutePath
     fun currentRev(): Long = rev
 
+    /** The local HEAD's short commit hash (front 7, like the Recent
+     *  commits list) — empty when there is no repo yet. */
+    fun headCommitShort(): String = runCatching {
+        if (!File(gitRoot(), org.eclipse.jgit.lib.Constants.DOT_GIT).exists())
+            return@runCatching ""
+        org.eclipse.jgit.api.Git.open(gitRoot()).use { git ->
+            git.repository.exactRef(org.eclipse.jgit.lib.Constants.HEAD)
+                ?.objectId?.name?.take(7) ?: ""
+        }
+    }.getOrDefault("")
+
     // -- paired paste devices (Chrome extension; Plan 2) ---------------------
 
     fun pairedDevices(): List<DeviceRecord> = loadedEnvelope?.devices ?: emptyList()

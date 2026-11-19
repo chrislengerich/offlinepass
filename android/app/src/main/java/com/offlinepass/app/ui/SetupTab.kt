@@ -101,7 +101,14 @@ fun SetupTabScreen(
             Text("Setup", style = MaterialTheme.typography.titleLarge)
         }
         Text("Remote: ${cfg?.remoteUrl ?: "(none — local-only)"}")
-        Text("Device: ${cfg?.deviceId?.take(8) ?: "-"}   Rev: ${VaultSession.currentRev()}")
+        // The head hash is read straight from the repo — the same front-7
+        // the Recent commits list shows (NOT the device id, which looks
+        // deceptively like a commit hash).
+        Text(
+            "Commit: ${VaultSession.headCommitShort()}   Rev: ${VaultSession.currentRev()}   " +
+                "Device id: ${cfg?.deviceId?.take(8) ?: "-"}",
+            style = MaterialTheme.typography.bodySmall
+        )
 
         // Local-only vault: offer to attach a remote (git-synced backup +
         // cross-device sync) without touching the local history.
