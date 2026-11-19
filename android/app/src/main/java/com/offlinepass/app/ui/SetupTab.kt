@@ -63,6 +63,7 @@ fun SetupTabScreen(
     onRemoveDevice: (String) -> Unit = {},
     tempRecipientLabel: String? = null,
     onScanTempRecipient: () -> Unit = {},
+    onShowDeviceKey: () -> Unit = {},
     onExportTempUsb: () -> Unit = {},
     onExportTempQrft: () -> Unit = {}
 ) {
@@ -206,32 +207,44 @@ fun SetupTabScreen(
         }
         HorizontalDivider()
 
-        // ONE-OFF HANDOFF: a scanned key lives in the session only — it is
-        // appended to the export's recipient set (the permanent recipients
-        // stay first) and never written to the repo's keys/ or config.
+        // THE SHARE SECTION: how a vault moves between people. A scanned
+        // key lives in the session only — appended to the export's
+        // recipient set (the permanent recipients stay first) and never
+        // written to the repo's keys/ or config. "Show key" publishes this
+        // device's own public key as a QRFT for the other side to scan.
         Text("Share", style = MaterialTheme.typography.titleSmall)
+
+        Text("Recipients", style = MaterialTheme.typography.labelLarge)
         Text(
-            if (tempRecipientLabel == null) "(none scanned — scan a recipient's public key)"
-            else "Scanned: $tempRecipientLabel",
+            if (tempRecipientLabel == null) "(no scanned key — exports go to the permanent recipients only)"
+            else "Scanned: $tempRecipientLabel (session only; exports include it)",
             style = MaterialTheme.typography.bodySmall
         )
         Button(onClick = onScanTempRecipient, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Scan recipient key (QRFT)")
+            Text("Scan key")
         }
+        Button(onClick = onShowDeviceKey, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Show key")
+        }
+
+        Text("USB", style = MaterialTheme.typography.labelLarge)
         Button(onClick = onExportTempUsb, enabled = busy == null,
             modifier = Modifier.fillMaxWidth()) {
-            Text("Export vault to USB (recipients + scanned)")
-        }
-        Button(onClick = onExportTempQrft, enabled = busy == null,
-            modifier = Modifier.fillMaxWidth()) {
-            Text("Export vault as QRFT (recipients + scanned)")
+            Text("Export")
         }
         Button(onClick = onUsbRestore, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Import from USB/file (merge)")
+            Text("Import")
+        }
+
+        Text("QRFT", style = MaterialTheme.typography.labelLarge)
+        Button(onClick = onExportTempQrft, enabled = busy == null,
+            modifier = Modifier.fillMaxWidth()) {
+            Text("Export")
         }
         Button(onClick = onImportQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Import from QRFT (scan)")
+            Text("Import")
         }
+
         HorizontalDivider()
         Text("This device", style = MaterialTheme.typography.titleSmall)
         var deviceNameInput by androidx.compose.runtime.remember {
@@ -362,17 +375,16 @@ fun SetupTabScreen(
         HorizontalDivider()
 
         Text("Backups", style = MaterialTheme.typography.titleSmall)
-        // The USB export = the WHOLE REPO (the git-state clone — the vault
-        // + the keys + the signed history; the repo export supersedes the
-        // vault-snapshot).
+        // The backup exports carry the WHOLE REPO (the git-state clone —
+        // the vault + the keys + the signed history); the repo export
+        // supersedes the vault-snapshot. The imports live in Share.
+        Text("USB", style = MaterialTheme.typography.labelLarge)
         Button(onClick = onExportBackupZip, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Export backup")
+            Text("Export")
         }
-        HorizontalDivider()
-
-        Text("QRFT transfer (phone ↔ phone, via camera)", style = MaterialTheme.typography.titleSmall)
+        Text("QRFT", style = MaterialTheme.typography.labelLarge)
         Button(onClick = onExportRepoQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Export repo as QRFT")
+            Text("Export")
         }
 
         HorizontalDivider()
@@ -413,7 +425,7 @@ fun SetupTabScreen(
             Text(if (autofillEnabled) "Autofill: enabled (re-open settings)" else "Enable autofill service")
         }
         HorizontalDivider()
-        Text("Screen lock (optional)", style = MaterialTheme.typography.titleSmall)
+        Text("Idle lock and encryption at rest", style = MaterialTheme.typography.titleSmall)
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,

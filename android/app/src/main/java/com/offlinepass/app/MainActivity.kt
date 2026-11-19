@@ -1970,6 +1970,48 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onScanTempRecipient = {
                         cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
                     },
+                    onShowDeviceKey = {
+                        lifecycleScope.launch {
+                            // THIS device's public key = the first permanent
+                            // recipient (the owner's key). Fetched from
+                            // OpenKeyChain (the interaction looped) and
+                            // published as a QRFT the other phone scans —
+                            // it becomes a session-scoped temporary
+                            // recipient THERE, symmetric with Scan key.
+                            val keyId = VaultSession.recipientKeyIds().firstOrNull()
+                            if (keyId == null) {
+                                status = "No recipient key — unlock + load the vault first."
+                                return@launch
+                            }
+                            val client = com.offlinepass.app.crypto.OpenPgpClient(applicationContext)
+                            var req: Intent? = null
+                            var guard = 0
+                            var armored: String? = null
+                            while (guard++ < 3 && armored == null) {
+                                when (val r = client.fetchPublicKeyArmored(keyId, req)) {
+                                    is com.offlinepass.app.crypto.OpenPgpClient.PublicKey.Success ->
+                                        armored = r.armored
+                                    is com.offlinepass.app.crypto.OpenPgpClient.PublicKey.UserInteraction -> {
+                                        launchInteraction(r.pendingIntent)
+                                        req = awaitInteraction()
+                                    }
+                                    else -> break
+                                }
+                            }
+                            if (armored == null) {
+                                status = "Could not fetch this device's public key from OpenKeyChain."
+                                return@launch
+                            }
+                            val label = VaultSession.config()?.recipientEmails?.firstOrNull()
+                                ?: "0x%016X".format(keyId)
+                            val payload = org.json.JSONObject()
+                                .put("type", "offlinepass-pubkey")
+                                .put("armored", armored)
+                                .put("label", label)
+                            sshKeyBackScreen = screen
+                            screen = Screen.QrftPayload(payload.toString())
+                        }
+                    },
                     onExportTempUsb = {
                         lifecycleScope.launch {
                             try {
