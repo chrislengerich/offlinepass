@@ -666,17 +666,39 @@ class MainActivity : androidx.activity.ComponentActivity() {
      *  the copy/paste loop is in-app) and the Setup's show button. */
     private var githubAuthKeyDialog by androidx.compose.runtime.mutableStateOf<String?>(null)
 
+    /** The line the copy-to-GitHub dialog carries: the AUTH slot's key
+     *  unless the enrolled line already IS the AUTH key (then the SIG's
+     *  — the slot NOT yet covered by GitHub is the one worth adding).
+     *  Unauthenticated reads only. */
+    private suspend fun unenrolledSlotLine(): String? {
+        val enrolled = VaultSession.yubikeySshLine()?.let {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    com.offlinepass.app.crypto.PgpSshBridge.fingerprintOf(it)
+                }.getOrNull()
+            }
+        }
+        val autLine = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                com.offlinepass.app.crypto.YubiKitSshAuth.slotSshLine(applicationContext, true)
+            }.getOrNull()
+        }
+        val autFp = autLine?.let {
+            runCatching { com.offlinepass.app.crypto.PgpSshBridge.fingerprintOf(it) }.getOrNull()
+        }
+        if (autLine != null && autFp != null && autFp != enrolled) return autLine
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                com.offlinepass.app.crypto.YubiKitSshAuth.slotSshLine(applicationContext, false)
+            }.getOrNull()
+        }
+    }
+
     /** Reads the ACTIVE slot's SSH line (no PIN, no touch) and opens the
      *  copy-to-GitHub dialog. */
     private fun showGithubAuthKey() {
         lifecycleScope.launch {
-            val line = kotlinx.coroutines.withContext(
-                kotlinx.coroutines.Dispatchers.IO) {
-                runCatching {
-                    com.offlinepass.app.crypto.YubiKitSshAuth.slotSshLine(
-                        applicationContext, VaultSession.sshAuthUseAut())
-                }.getOrNull()
-            }
+            val line = unenrolledSlotLine()
             if (line == null) {
                 status = "No security key connected (or USB permission missing)."
             } else {
@@ -846,21 +868,18 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         com.offlinepass.app.crypto.GithubKeysEnrollment.fetchKeyLines(user)
                     }
                 },
-                cardIdentity = {
+                cardIdentity = { useAut ->
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                         ensureUsbPermission()
-                        // The identity = the TRANSPORT's slot (the AUT
-                        // setting): the enrolled line must be the key that
-                        // signs the handshakes — enrolling the SIG slot's
-                        // line while the transport is set to AUT guarantees
-                        // the server's sig-verify can never pass.
+                        // The identity = the slot the flow is PROVING (the
+                        // discovery tries AUTH then SIGNATURE): the enrolled
+                        // line must be the key that signs the handshakes.
                         val id = com.offlinepass.app.crypto.YubiKitSshAuth
-                            .signingKeyIdentity(applicationContext,
-                                useAut = VaultSession.sshAuthUseAut())
+                            .signingKeyIdentity(applicationContext, useAut)
                         id.keyId to id.fingerprint
                     }
                 },
-                cardSign = { nonce ->
+                cardSign = { useAut, nonce ->
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                         ensureUsbPermission()
                         val pin = VaultSession.yubikeyPin()
@@ -869,29 +888,24 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             .digestInfo("SHA-256", nonce)
                         val sig = VaultSession.withTouchPrompt {
                             com.offlinepass.app.crypto.YubiKitSshAuth.sign(
-                                applicationContext, pin, digestInfo,
-                                useAut = VaultSession.sshAuthUseAut())
+                                applicationContext, pin, digestInfo, useAut = useAut)
                         }
                         VaultSession.yubikeyPinRemember(pin)  // cache-on-success
                         sig
                     }
                 },
-                enroll = { line, keyId ->
+                enroll = { line, keyId, slot ->
                     val idHex = "%016X".format(keyId)
                     VaultSession.setYubikeySsh(line, idHex)
+                    VaultSession.setYubikeySshSlot(slot)
                     VaultSession.loadSshLineState.value = line
                     VaultSession.loadSubkeyIdState.value = idHex
                 })
             // THE NO-MATCH LOOP CLOSER: the desktop gpg command is gone —
-            // the key itself + the copy/paste steps, in-app.
+            // the key itself + the copy/paste steps, in-app (the line =
+            // the slot GitHub doesn't cover yet).
             if (status.startsWith("No GitHub key")) {
-                val line = kotlinx.coroutines.withContext(
-                    kotlinx.coroutines.Dispatchers.IO) {
-                    runCatching {
-                        com.offlinepass.app.crypto.YubiKitSshAuth.slotSshLine(
-                            applicationContext, VaultSession.sshAuthUseAut())
-                    }.getOrNull()
-                }
+                val line = unenrolledSlotLine()
                 if (line != null) githubAuthKeyDialog = line
             }
         }
@@ -1800,8 +1814,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         packageManager.getPackageInfo(
                             com.offlinepass.app.crypto.OpenPgpClient.OPENKEYCHAIN_PACKAGE, 0)
                     }.isSuccess,
-                    sshAuthUseAut = VaultSession.sshAuthUseAut(),
-                    onSshAuthUseAut = { VaultSession.setSshAuthUseAut(it) },
                     onEnrollFromGithubKeys = { enrollFromGithubKeys() },
                     onConnectAndSync = { remote ->
                         lifecycleScope.launch {

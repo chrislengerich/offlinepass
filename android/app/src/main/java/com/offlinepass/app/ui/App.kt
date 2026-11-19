@@ -249,8 +249,6 @@ fun GetStartedScreen(
     yubikeyEnrolled: Boolean,
     screenlockEnrolled: Boolean,
     okkInstalled: Boolean,
-    sshAuthUseAut: Boolean = false,
-    onSshAuthUseAut: (Boolean) -> Unit = {},
     onEnrollFromGithubKeys: () -> Unit,
     onConnectAndSync: (String) -> Unit,
     onEnrollScreenlock: () -> Unit,
@@ -304,24 +302,11 @@ fun GetStartedScreen(
                     style = MaterialTheme.typography.bodySmall)
                 null -> {}
             }
-            // The card slot: the SIG subkey (the default — the card pads the
-            // digest) vs the AUT subkey (the dedicated authentication key —
-            // the raw-RSA challenge, the caller pads; the transport is the
-            // experiment). The switch = the pref the cardSign reads.
-            // The local state: the switch flips INSTANTLY (the prefs alone
-            // don't trigger a recomposition — the user's report: the toggle
-            // "doesn't engage").
-            var autOn by remember { mutableStateOf(sshAuthUseAut) }
-            androidx.compose.material3.ListItem(
-                headlineContent = { Text("Use the AUT key for SSH auth") },
-                supportingContent = { Text("The dedicated authentication subkey " +
-                    "(the raw-RSA challenge, the caller pads — the transport " +
-                    "experiment). Off = the SIG signing subkey.") },
-                trailingContent = {
-                    androidx.compose.material3.Switch(
-                        checked = autOn,
-                        onCheckedChange = { autOn = it; onSshAuthUseAut(it) })
-                })
+            // THE SLOT = THE ENROLLED LINE's (no toggle): the GitHub
+            // match records which slot answers the handshakes.
+            Text("The GitHub match selects the transport's slot — no " +
+                "toggle. Re-run Enroll after a slot swap.",
+                style = MaterialTheme.typography.bodySmall)
         } else {
             Text("The card's SSH line must be on GitHub (an account key), then " +
                 "the app matches it against the card with one touch.",

@@ -181,16 +181,16 @@ object VaultSession {
     fun sshSyncMode(): String =
         prefs().getString("sshSyncMode", null) ?: SSH_SYNC_YUBIKEY
 
-    /** The SSH auth's card slot: false = the SIG subkey (the default —
-     *  the card pads the digest itself), true = the AUT subkey (the
-     *  dedicated authentication key — the raw-RSA INTERNAL AUTHENTICATE,
-     *  the caller pads the block to the modulus; the RSA-4096's 512-byte
-     *  command = the long-command transport experiment). Static tests
-     *  prove the wire compatibility (AutKeyPathTest); the on-device
-     *  self-test measures the transport before this goes default. */
-    fun sshAuthUseAut(): Boolean = prefs().getBoolean("sshAuthUseAut", true)
-    fun setSshAuthUseAut(on: Boolean) {
-        prefs().edit().putBoolean("sshAuthUseAut", on).apply()
+    /** THE SSH-AUTH SLOT = THE ENROLLED LINE's — no toggle. The GitHub
+     *  enrollment proves a slot's key against the owner's key list and
+     *  records WHICH slot matched; the transport, the self-test and the
+     *  dialogs all follow the record. Default = SIG (the legacy
+     *  enrollment's line is the SIG subkey's — the old boolean's AUT
+     *  default would send an RSA-4096 AUTH key into the named 0x6581
+     *  dead end). */
+    fun sshAuthUseAut(): Boolean = prefs().getString("yubikeySshSlot", "SIG") == "AUT"
+    fun setYubikeySshSlot(slot: String) {
+        prefs().edit().putString("yubikeySshSlot", slot).apply()
     }
 
     /** DEPRECATED for the SCREENLOCK value: the screenlock is no longer an
@@ -1089,7 +1089,7 @@ object VaultSession {
                         .generateEcAuthKey(appContext, adminPin)
                 }
                 "EC auth key generated on the security key — re-run Enroll " +
-                    "with the AUTH slot setting on."
+                    "(the GitHub match will select the AUTH slot)."
             } catch (e: Exception) {
                 "The EC key generation failed: ${e.message}"
             }

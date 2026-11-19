@@ -149,36 +149,20 @@ fun SetupTabScreen(
                 style = MaterialTheme.typography.bodySmall
             )
         }
-        // The SSH-auth slot: the SIG (the default was the old) vs the AUT
-        // (the dedicated authentication key — the transport experiment).
-        // The display = the SETTING-aware: the AUT's on = the AUT slot's
-        // id (the card's AUT fingerprint's low half — the unauthenticated
-        // read, the card attached); the off = the SIG's (the enrolled one).
-        val autOn = VaultSession.sshAuthUseAut()
-        val displayedSubkeyId = if (autOn) VaultSession.cardDecIdForDisplay() else null
+        // THE SLOT = THE ENROLLED LINE's (no toggle): the GitHub
+        // enrollment proved one slot's key against the owner's key list
+        // and recorded WHICH slot answers the handshakes. Re-run Enroll
+        // after a slot swap; the self-test names the live key.
         androidx.compose.material3.ListItem(
             headlineContent = {
-                Text(if (autOn) "SSH auth: the AUT key (the dedicated authentication subkey)"
-                     else "SSH auth: the SIG key (the signing subkey)")
+                Text(if (VaultSession.sshAuthUseAut())
+                    "SSH auth: the AUTH slot's key (the enrolled line)"
+                else "SSH auth: the SIGNATURE slot's key (the enrolled line)")
             },
             supportingContent = {
-                androidx.compose.foundation.layout.Column {
-                    Text(if (autOn)
-                        "The raw-RSA challenge, the caller pads — the 512-byte " +
-                        "transport experiment."
-                    else
-                        "Off = the SIG signing subkey answers the SSH handshake " +
-                        "(the card pads the digest).")
-                    displayedSubkeyId?.let { id ->
-                        Text("id 0x%016X".format(id),
-                            style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            },
-            trailingContent = {
-                androidx.compose.material3.Switch(
-                    checked = autOn,
-                    onCheckedChange = { VaultSession.setSshAuthUseAut(it) })
+                Text("The GitHub match selects the slot — no toggle. " +
+                    "Generate an EC auth key + re-run Enroll to move the " +
+                    "transport to the AUTH slot.")
             })
 
         // Sync state lives directly with its button.

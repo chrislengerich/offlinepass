@@ -93,14 +93,19 @@ object GithubKeysEnrollment {
 
     /** The full enrollment orchestration with injected dependencies — the
      *  same flow the UI drives, fully stub-able in tests:
-     *  fetch → card identity (no touch) → the card signs (ONE touch) →
-     *  the match → enroll. Returns the user-facing status. */
+     *  fetch → the SLOT DISCOVERY (the AUT slot first — the dedicated
+     *  auth key; a transport failure like the RSA-4096 0x6581 dead end
+     *  or a match-miss falls through to the SIG slot) → the nonce proof
+     *  (ONE touch per attempted slot) → the match → enroll WITH the
+     *  matched slot. THE GITHUB INFO SELECTS THE SLOT — no user toggle:
+     *  the enrolled line names the slot that signs the handshakes.
+     *  Returns the user-facing status. */
     suspend fun enroll(
         remote: String,
         fetchLines: suspend (String) -> List<String>,
-        cardIdentity: suspend () -> Pair<Long, ByteArray>,
-        cardSign: suspend (ByteArray) -> ByteArray,
-        enroll: (String, Long) -> Unit,
+        cardIdentity: suspend (useAut: Boolean) -> Pair<Long, ByteArray>,
+        cardSign: suspend (useAut: Boolean, nonce: ByteArray) -> ByteArray,
+        enroll: (String, Long, String) -> Unit,
     ): String {
         val user = parseUsername(remote.trim())
             ?: return "The remote does not name a GitHub user — " +
@@ -111,23 +116,35 @@ object GithubKeysEnrollment {
             return "Fetching github.com/$user.keys failed: ${e.message}"
         }
         if (lines.isEmpty()) return "No SSH keys registered on GitHub for $user."
-        val (keyId, fingerprint) = try {
-            cardIdentity()
-        } catch (e: Exception) {
-            return "Reading the card identity failed: ${e.message}"
-        }
         val nonce = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
-        val rawSig = try {
-            cardSign(nonce)
-        } catch (e: Exception) {
-            return "The card could not prove the key: ${e.message}"
+        var lastError: String? = null
+        var anySig = false
+        for ((useAut, slotName) in listOf(true to "AUTH", false to "SIGNATURE")) {
+            val (keyId, fingerprint) = try {
+                cardIdentity(useAut)
+            } catch (e: Exception) {
+                lastError = e.message
+                continue
+            }
+            val rawSig = try {
+                cardSign(useAut, nonce)
+            } catch (e: Exception) {
+                lastError = e.message
+                continue
+            }
+            anySig = true
+            val matched = match(lines, nonce, rawSig)
+            if (matched != null) {
+                enroll(matched, keyId, slotName)
+                return "Enrolled the $slotName-slot key 0x%016X (verified against " +
+                    "$user's GitHub keys). The transport follows the enrolled key.".format(keyId)
+            }
         }
-        val matched = match(lines, nonce, rawSig)
-            ?: return "No GitHub key of $user matches this security key — " +
-                "add the key's SSH line at github.com/settings/keys " +
-                "(New SSH key → Authentication key), then re-run Enroll."
-        enroll(matched, keyId)
-        return "Enrolled the card's key 0x%016X (verified against $user's GitHub " +
-            "keys). Ready to load.".format(keyId)
+        // Both slots exhausted: a GitHub-coverage gap or a card failure —
+        // name which.
+        return if (!anySig && lastError != null) "The card could not prove a key: $lastError"
+        else "No GitHub key of $user matches this security key — " +
+            "add the key's SSH line at github.com/settings/keys " +
+            "(New SSH key → Authentication key), then re-run Enroll."
     }
 }
