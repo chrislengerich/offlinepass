@@ -940,16 +940,34 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             payload.trimStart().startsWith("[")) {
                             importQrftPayload(payload)
                         } else {
-                            val staged = File(cacheDir, "qrft-import.gpg")
-                            try {
-                                staged.writeBytes(
-                                    java.util.Base64.getDecoder().decode(payload.trim()))
+                            // THE THIRD ROUTE: the repo-backup zip (the
+                            // QRFT repo-export = the same zip as the USB)
+                            // — the magic-byte sniff after the base64
+                            // decode ("PK\x03\x04") = the clone-semantics
+                            // import; the vault .gpg = the restore path.
+                            val decoded: ByteArray? = try {
+                                java.util.Base64.getDecoder().decode(payload.trim())
                             } catch (e: IllegalArgumentException) {
-                                staged.writeText(payload)
+                                null
                             }
-                            VaultSession.adoptRecipientsFromVaultFile(staged)
-                            restoreLoop(android.net.Uri.parse(
-                                "file://" + staged.absolutePath))
+                            if (decoded != null && decoded.size >= 2 &&
+                                decoded[0] == 'P'.code.toByte() && decoded[1] == 'K'.code.toByte()
+                            ) {
+                                val staged = File(cacheDir, "qrft-import-repo.zip")
+                                staged.writeBytes(decoded)
+                                val r = VaultSession.importBackupZip(staged)
+                                sealedToast("Repo import: $r")
+                            } else {
+                                val staged = File(cacheDir, "qrft-import.gpg")
+                                if (decoded != null) {
+                                    staged.writeBytes(decoded)
+                                } else {
+                                    staged.writeText(payload)
+                                }
+                                VaultSession.adoptRecipientsFromVaultFile(staged)
+                                restoreLoop(android.net.Uri.parse(
+                                    "file://" + staged.absolutePath))
+                            }
                         }
                     }
                 },
@@ -1749,6 +1767,27 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onLock = { lockNow("") },
                     onExportBackupZip = {
                         backupExportLauncher.launch("offlinepass-backup.zip")
+                    },
+                    onExportRepoQrft = {
+                        lifecycleScope.launch {
+                            // The zip → the base64 → the looping QR sender
+                            // (the size math: ~100–200 compressed bytes per
+                            // secret — a handful of frames for the small
+                            // vaults, minutes for the big).
+                            status = "Preparing repo QR…"
+                            val payload = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                val zip = File(cacheDir, "repo-export.zip")
+                                val n = VaultSession.exportBackupZip(zip.outputStream())
+                                if (n == 0) null
+                                else java.util.Base64.getEncoder().encodeToString(zip.readBytes())
+                            }
+                            if (payload == null) {
+                                status = "Nothing to export — no repo yet."
+                            } else {
+                                sshKeyBackScreen = screen
+                                screen = Screen.QrftPayload(payload)
+                            }
+                        }
                     },
                     onImportQrft = { cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA) },
                     onPairDevice = { pairCameraLauncher.launch(android.Manifest.permission.CAMERA) },
