@@ -216,6 +216,42 @@ object YubiKitSshAuth {
         }
     }
 
+    /** The AUTH slot's one-time swap to an ECDSA P-256 key — the
+     *  challenge size that FITS the phone's USB transport (the RSA-4096
+     *  challenge = 512B = the 0x6581 dead end; a P-256 challenge = 32B).
+     *  ADMIN-PIN gated; overwrites the slot's existing key (the vault is
+     *  untouched — the recipients = the DEC key's). Returns the new
+     *  public key values. */
+    fun generateEcAuthKey(context: Context, adminPin: CharArray): ByteArray {
+        val device = findDevice(context)
+            ?: throw java.io.IOException("no YubiKey connected")
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: throw java.io.IOException("USB service unavailable")
+        if (!usbManager.hasPermission(device)) {
+            throw java.io.IOException("USB permission not granted for the YubiKey")
+        }
+        val ykDevice = UsbYubiKeyDevice(usbManager, device)
+        val connection = ykDevice.openConnection(SmartCardConnection::class.java)
+        try {
+            val session = OpenPgpSession(connection as SmartCardConnection)
+            try {
+                session.verifyAdminPin(adminPin)
+                android.util.Log.i("YubiKeySsh", "yubikit: generating the EC auth key…")
+                val pub = session.generateEcKey(
+                    com.yubico.yubikit.openpgp.KeyRef.AUT,
+                    com.yubico.yubikit.openpgp.OpenPgpCurve.SECP256R1)
+                android.util.Log.i("YubiKeySsh",
+                    "yubikit: the EC auth key generated (${pub.javaClass.simpleName})")
+                return pub.getEncoded()
+            } finally {
+                session.close()
+            }
+        } finally {
+            runCatching { connection.close() }
+            adminPin.fill('\u0000')
+        }
+    }
+
     /**
      * Verifies the OpenPGP user PIN on the applet, then signs [payload]
      * (the pre-built PKCS#1 v1.5 block) with the card's SIGNATURE slot.
@@ -363,36 +399,75 @@ object YubiKitSshAuth {
                         else "PSO:CDS on the SIGNATURE slot") +
                         " (touch the key if its LED blinks)")
                 val sig = if (useAut) {
-                    // The raw-RSA path: the challenge = the FULL PKCS#1
-                    // block padded to the AUT modulus (no on-card padding).
-                    val autPub = session.getPublicKey(com.yubico.yubikit.openpgp.KeyRef.AUT)
-                    val modulusLen = when (val pub = autPub) {
-                        is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa ->
-                            (pub.modulus.bitLength() + 7) / 8
-                        else -> throw java.io.IOException(
-                            "the AUT slot is not RSA — the AUT path needs an RSA authentication key")
-                    }
-                    require(payload.size <= modulusLen) {
-                        "the payload (${payload.size}B) exceeds the AUT modulus ($modulusLen B)"
-                    }
-                    val block = ByteArray(modulusLen) { 0 }
-                    payload.copyInto(block, modulusLen - payload.size)
-                    android.util.Log.i("YubiKeySsh",
-                        "yubikit: challenge padded to $modulusLen B")
-                    try {
-                        session.authenticate(block)
-                    } catch (e: com.yubico.yubikit.core.smartcard.ApduException) {
-                        if (e.sw.toInt() == 0x6982) {
-                            // The security-status failure: with the right
-                            // flavor this should be unreachable — if it
-                            // shows, name the asymmetry instead of the
-                            // raw SW.
-                            throw java.io.IOException(
-                                "the AUTH slot answered 0x6982 — the PIN is not " +
-                                    "verified for 'other use' (the INTERNAL " +
-                                    "AUTHENTICATE access condition)", e)
+                    // The AUT path branches on the slot's KEY TYPE:
+                    // - RSA: the challenge = the FULL PKCS#1 block padded
+                    //   to the modulus (no on-card padding). NOTE: a
+                    //   4096-bit modulus = a 512-byte command, which the
+                    //   phone's USB transport CANNOT carry (no extended
+                    //   APDUs over USB; the applet doesn't chain INS 0x88)
+                    //   — the card answers 0x6581. RSA-2048 fits (256B).
+                    // - EC: the challenge = the RAW digest — the caller's
+                    //   RSA-shaped DigestInfo is stripped here (the
+                    //   callers never branch on the key type).
+                    when (val autPub = session.getPublicKey(com.yubico.yubikit.openpgp.KeyRef.AUT)) {
+                        is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa -> {
+                            val modulusLen = (autPub.modulus.bitLength() + 7) / 8
+                            require(payload.size <= modulusLen) {
+                                "the payload (${payload.size}B) exceeds the AUT modulus ($modulusLen B)"
+                            }
+                            val block = ByteArray(modulusLen) { 0 }
+                            payload.copyInto(block, modulusLen - payload.size)
+                            android.util.Log.i("YubiKeySsh",
+                                "yubikit: challenge padded to $modulusLen B")
+                            try {
+                                session.authenticate(block)
+                            } catch (e: com.yubico.yubikit.core.smartcard.ApduException) {
+                                if (e.sw.toInt() == 0x6982) {
+                                    throw java.io.IOException(
+                                        "the AUTH slot answered 0x6982 — the PIN is not " +
+                                            "verified for 'other use' (the INTERNAL " +
+                                            "AUTHENTICATE access condition)", e)
+                                }
+                                if (e.sw.toInt() == 0x6581) {
+                                    // THE DEAD END, named: a long challenge
+                                    // over a transport that can't carry it.
+                                    throw java.io.IOException(
+                                        "the AUTH slot answered 0x6581 (command too long): " +
+                                            "an RSA-${
+                                                autPub.modulus.bitLength()
+                                            } challenge ($modulusLen B) exceeds this USB " +
+                                            "transport's INTERNAL AUTHENTICATE limit. " +
+                                            "Use the SIGNATURE slot, or move an EC (P-256) " +
+                                            "or RSA-2048 key into the AUTH slot.", e)
+                                }
+                                throw e
+                            }
                         }
-                        throw e
+                        is com.yubico.yubikit.core.keys.PublicKeyValues.Ec -> {
+                            // ECDSA: the raw digest in, the DER (r,s) out —
+                            // YubiKit formats SEQUENCE(INTEGER r, INTEGER s).
+                            val hash = com.offlinepass.app.crypto.SshRsaPkcs1
+                                .digestWithin(payload)
+                                ?: throw java.io.IOException(
+                                    "the EC AUT slot needs the hashed payload — " +
+                                        "the caller sent an unrecognized form")
+                            android.util.Log.i("YubiKeySsh",
+                                "yubikit: EC challenge = the raw digest (${hash.size}B)")
+                            try {
+                                session.authenticate(hash)
+                            } catch (e: com.yubico.yubikit.core.smartcard.ApduException) {
+                                if (e.sw.toInt() == 0x6982) {
+                                    throw java.io.IOException(
+                                        "the AUTH slot answered 0x6982 — the PIN is not " +
+                                            "verified for 'other use' (the INTERNAL " +
+                                            "AUTHENTICATE access condition)", e)
+                                }
+                                throw e
+                            }
+                        }
+                        else -> throw java.io.IOException(
+                            "the AUT slot's key type is unsupported for SSH auth " +
+                                "(${autPub.javaClass.simpleName})")
                     }
                 } else {
                     session.sign(payload)

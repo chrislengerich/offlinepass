@@ -61,6 +61,7 @@ fun SetupTabScreen(
     onPickAuthSubkey: () -> Unit = {},
     onSshSelfTest: () -> Unit = {},
     onShowGithubAuthKey: () -> Unit = {},
+    onGenerateEcAuthKey: () -> Unit = {},
     onRemoveDevice: (String) -> Unit = {}
 ) {
     val cfg = VaultSession.config()
@@ -69,21 +70,41 @@ fun SetupTabScreen(
     confirmDialog?.let { what ->
         AlertDialog(
             onDismissRequest = { confirmDialog = null },
-            title = { Text("Confirm reset") },
+            title = { Text(
+                when (what) {
+                    "repo" -> "Confirm reset"
+                    "ecgen" -> "Generate an EC auth key?"
+                    else -> "Confirm forget"
+                }) },
             text = {
                 Text(
-                    if (what == "repo") "Wipe the local git clone and re-clone from the remote? "
-                        + "Unpushed work is re-applied automatically if the vault is unlocked."
-                    else "Forget the configuration? The vault files stay on the device; "
-                        + "you'll return to the setup screen."
-                )
+                    when (what) {
+                        "repo" -> ("Wipe the local git clone and re-clone from the remote? "
+                            + "Unpushed work is re-applied automatically if the vault is unlocked.")
+                        "ecgen" -> ("Overwrite the AUTH slot on the security key with a new "
+                            + "ECDSA P-256 key (the admin PIN gates it). The slot's current "
+                            + "key is destroyed. The vault is NOT touched — its encryption "
+                            + "key lives in a different slot. Why: an RSA-4096 AUTH key "
+                            + "cannot authenticate over this phone's USB transport.")
+                        else -> ("Forget the configuration? The vault files stay on the device; "
+                            + "you'll return to the setup screen.")
+                    })
             },
             confirmButton = {
                 TextButton(onClick = {
                     val action = confirmDialog
                     confirmDialog = null
-                    if (action == "repo") onResetRepo() else onForget()
-                }) { Text("Reset") }
+                    when (action) {
+                        "repo" -> onResetRepo()
+                        "ecgen" -> onGenerateEcAuthKey()
+                        else -> onForget()
+                    }
+                }) { Text(
+                    when (what) {
+                        "repo" -> "Reset"
+                        "ecgen" -> "Generate"
+                        else -> "Forget"
+                    }) }
             },
             dismissButton = {
                 TextButton(onClick = { confirmDialog = null }) { Text("Cancel") }
@@ -352,6 +373,9 @@ fun SetupTabScreen(
             }
             TextButton(onClick = onShowGithubAuthKey, enabled = busy == null) {
                 Text("Show auth key for GitHub")
+            }
+            TextButton(onClick = { confirmDialog = "ecgen" }, enabled = busy == null) {
+                Text("Generate an EC auth key (AUTH slot swap)")
             }
             TextButton(onClick = onRemoveYubikeySsh, enabled = busy == null) {
                 Text("Remove")

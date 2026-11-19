@@ -146,4 +146,22 @@ class SshRsaPkcs1Test {
         v.initVerify(kp.public); v.update(message)
         org.junit.Assert.assertFalse(v.verify(raw))
     }
+
+    @org.junit.Test
+    fun `digestWithin extracts the raw digest for the EC slot`() {
+        val message = "the EC adaptation test".toByteArray()
+        for (alg in listOf("SHA-256", "SHA-512", "SHA-1", "rsa-sha2-256", "rsa-sha2-512")) {
+            val di = SshRsaPkcs1.digestInfo(alg, message)
+            val digest = SshRsaPkcs1.digestWithin(di)
+            org.junit.Assert.assertNotNull("no prefix matched for $alg", digest)
+            org.junit.Assert.assertArrayEquals(
+                java.security.MessageDigest.getInstance(
+                    when (alg) { "rsa-sha2-256" -> "SHA-256"; "rsa-sha2-512" -> "SHA-512"; else -> alg }
+                ).digest(message), digest)
+        }
+        // A raw hash passed straight through = NOT a DigestInfo → null
+        // (the EC branch must never sign an unrecognized form).
+        org.junit.Assert.assertNull(
+            SshRsaPkcs1.digestWithin(byteArrayOf(1, 2, 3, 4)))
+    }
 }

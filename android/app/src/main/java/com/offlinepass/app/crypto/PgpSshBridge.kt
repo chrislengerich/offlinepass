@@ -596,6 +596,38 @@ object PgpSshBridge {
      *  ssh-rsa → RSA(n, e); ssh-ed25519 → the Ed25519 point. Used for the
      *  LOCAL signature verification (the self-test verifies the card's
      *  signature in-app — no server needed). */
+    /** THE ECDSA SSH SIG VALUE from a DER-encoded signature (the card's
+     *  EC output = SEQUENCE(INTEGER r, INTEGER s)): the SSH wire wants
+     *  string("nistpNNN") + string(r) + string(s), each padded to the
+     *  field size. Returns the inner sig-blob (the caller adds the
+     *  algorithm string). */
+    fun ecdsaSshSigValue(der: ByteArray, fieldSizeBytes: Int): ByteArray {
+        if (der.isEmpty() || (der[0].toInt() and 0xFF) != 0x30) {
+            throw PgpSshBridgeException("the ECDSA signature is not a DER SEQUENCE")
+        }
+        var p = 2
+        if (der[1].toInt() and 0x80 != 0) {
+            val lenBytes = der[1].toInt() and 0x7F
+            p = 2 + lenBytes
+        }
+        fun readInt(): ByteArray {
+            if (p + 2 > der.size) throw PgpSshBridgeException("truncated DER INTEGER")
+            val len = der[p + 1].toInt() and 0xFF
+            val v = der.copyOfRange(p + 2, p + 2 + len)
+            p += 2 + len
+            // The SSH mpint-style padding to the field size (strip the
+            // DER sign byte, pad to the fixed width).
+            var body = if (v.isNotEmpty() && v[0] == 0x00.toByte()) v.copyOfRange(1, v.size) else v
+            if (body.size > fieldSizeBytes) {
+                body = body.copyOfRange(body.size - fieldSizeBytes, body.size)
+            }
+            return ByteArray(fieldSizeBytes - body.size) + body
+        }
+        val r = readInt()
+        val s = readInt()
+        return sshString(r) + sshString(s)
+    }
+
     fun publicKeyFromLine(line: SshPublicKeyLine): java.security.PublicKey {
         val data = line.wireBlob
         return when (line.algorithm) {
@@ -614,6 +646,24 @@ object PgpSshBridge {
                     java.security.spec.XECPublicKeySpec(
                         java.security.spec.NamedParameterSpec.ED25519,
                         java.math.BigInteger(1, point)))
+            }
+            "ecdsa-sha2-nistp256" -> {
+                // blob = string("ecdsa-sha2-nistp256") + string("nistp256")
+                //        + string(0x04 || X || Y)
+                var p = readU32String(data, 0).second
+                val (_, p2) = readU32String(data, p)
+                val (point, _) = readU32String(data, p2)
+                require(point.size == 65 && point[0] == 0x04.toByte()) {
+                    "the ECDSA public point is not an uncompressed P-256 point"
+                }
+                val x = java.math.BigInteger(1, point.copyOfRange(1, 33))
+                val y = java.math.BigInteger(1, point.copyOfRange(33, 65))
+                val ap = java.security.AlgorithmParameters.getInstance("EC")
+                ap.init(java.security.spec.ECGenParameterSpec("secp256r1"))
+                val params = ap.getParameterSpec(java.security.spec.ECParameterSpec::class.java)
+                java.security.KeyFactory.getInstance("EC").generatePublic(
+                    java.security.spec.ECPublicKeySpec(
+                        java.security.spec.ECPoint(x, y), params))
             }
             else -> throw PgpSshBridgeException(
                 "publicKeyFromLine: unsupported algorithm ${line.algorithm}")

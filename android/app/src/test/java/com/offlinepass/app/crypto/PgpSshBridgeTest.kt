@@ -440,6 +440,75 @@ class PgpSshBridgeTest {
     }
 
     @org.junit.Test
+    fun `ecdsaSshSigValue converts a real DER signature and verifies back`() {
+        val kp = java.security.KeyPairGenerator.getInstance("EC").apply {
+            initialize(java.security.spec.ECGenParameterSpec("secp256r1"))
+        }.generateKeyPair()
+        val data = "offlinepass ec round trip".toByteArray()
+        val der = java.security.Signature.getInstance("SHA256withECDSA").apply {
+            initSign(kp.private); update(data)
+        }.sign()
+        // The SSH value: string(r) + string(s) — each a 4-byte length
+        // prefix + the 32-byte padded half (36 + 36 = 72).
+        val value = PgpSshBridge.ecdsaSshSigValue(der, 32)
+        org.junit.Assert.assertEquals(72, value.size)
+        fun str(b: ByteArray, p0: Int): Pair<ByteArray, Int> {
+            val len = ((b[p0].toInt() and 0xFF) shl 24) or ((b[p0 + 1].toInt() and 0xFF) shl 16) or
+                ((b[p0 + 2].toInt() and 0xFF) shl 8) or (b[p0 + 3].toInt() and 0xFF)
+            return b.copyOfRange(p0 + 4, p0 + 4 + len) to (p0 + 4 + len)
+        }
+        val (rRaw, p2) = str(value, 0)
+        val (sRaw, _) = str(value, p2)
+        org.junit.Assert.assertEquals(32, rRaw.size)
+        org.junit.Assert.assertEquals(32, sRaw.size)
+        // Rebuild a DER from the SSH halves — the round-trip closes with
+        // a JCE verification against the original data.
+        fun big(v: ByteArray) = java.math.BigInteger(1, v)
+        val r = big(rRaw)
+        val s = big(sRaw)
+        fun int(v: java.math.BigInteger): ByteArray {
+            val b = v.toByteArray()
+            return byteArrayOf(0x02, b.size.toByte()) + b
+        }
+        val body = int(r) + int(s)
+        val der2 = byteArrayOf(0x30, body.size.toByte()) + body
+        org.junit.Assert.assertTrue(
+            java.security.Signature.getInstance("SHA256withECDSA").apply {
+                initVerify(kp.public); update(data)
+            }.verify(der2))
+    }
+
+    @org.junit.Test
+    fun `publicKeyFromLine verifies an ECDSA signature`() {
+        val kp = java.security.KeyPairGenerator.getInstance("EC").apply {
+            initialize(java.security.spec.ECGenParameterSpec("secp256r1"))
+        }.generateKeyPair()
+        val pub = kp.public as java.security.interfaces.ECPublicKey
+        fun pad32(v: java.math.BigInteger): ByteArray {
+            val b = v.toByteArray()
+            val body = if (b.size > 32) b.copyOfRange(b.size - 32, b.size) else b
+            return ByteArray(32 - body.size) + body
+        }
+        val point = byteArrayOf(0x04) + pad32(pub.w.affineX) + pad32(pub.w.affineY)
+        fun ss(b: ByteArray) = byteArrayOf(
+            ((b.size ushr 24) and 0xFF).toByte(), ((b.size ushr 16) and 0xFF).toByte(),
+            ((b.size ushr 8) and 0xFF).toByte(), (b.size and 0xFF).toByte()) + b
+        val blob = ss("ecdsa-sha2-nistp256".toByteArray()) +
+            ss("nistp256".toByteArray()) + ss(point)
+        val line = "ecdsa-sha2-nistp256 " +
+            java.util.Base64.getEncoder().encodeToString(blob) + " card"
+        val jcePub = PgpSshBridge.publicKeyFromLine(PgpSshBridge.parsePublicKeyLine(line))
+        val data = "offlinepass ec verify".toByteArray()
+        val der = java.security.Signature.getInstance("SHA256withECDSA").apply {
+            initSign(kp.private); update(data)
+        }.sign()
+        org.junit.Assert.assertTrue(
+            java.security.Signature.getInstance("SHA256withECDSA").apply {
+                initVerify(jcePub); update(data)
+            }.verify(der))
+    }
+
+    @org.junit.Test
     fun `rsaFingerprint matches the enrolled line's fingerprint`() {
         // The live-card read (modulus + exponent BigIntegers) must produce
         // the SAME "SHA256:…" fingerprint as the enrolled SSH line — the

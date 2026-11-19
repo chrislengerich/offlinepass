@@ -1063,6 +1063,39 @@ object VaultSession {
      *  never stored — it is used once and dropped. */
     var openPgpPinPrompt: (suspend () -> CharArray?)? = null
 
+    /** UI hook: the OpenPGP applet's ADMIN PIN (the one-time slot-swap
+     *  gate; the factory default = 12345678). Never cached, zeroed after
+     *  the card op. */
+    var openPgpAdminPinPrompt: (suspend () -> CharArray?)? = null
+
+    /** THE EC AUTH KEY GENERATION: overwrites the AUTH slot with an
+     *  ECDSA P-256 key — the slot whose challenge fits the phone's USB
+     *  transport (the RSA-4096's 512B challenge = the 0x6581 dead end).
+     *  One-time, the ADMIN PIN gated. The vault needs NO re-encryption:
+     *  the recipients = the DEC key's, and this touches the AUT slot
+     *  only. Returns the status line. */
+    suspend fun generateEcAuthKey(): String {
+        if (com.offlinepass.app.crypto.YubiKitSshAuth.findDevice(appContext) == null) {
+            return "No security key connected."
+        }
+        if (!com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(appContext)) {
+            return "USB permission missing — retry the action."
+        }
+        val adminPin = openPgpAdminPinPrompt?.invoke() ?: return "Admin PIN cancelled."
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                withTouchPrompt {
+                    com.offlinepass.app.crypto.YubiKitSshAuth
+                        .generateEcAuthKey(appContext, adminPin)
+                }
+                "EC auth key generated on the security key — re-run Enroll " +
+                    "with the AUTH slot setting on."
+            } catch (e: Exception) {
+                "The EC key generation failed: ${e.message}"
+            }
+        }
+    }
+
     /** The auth subkey id picked in OpenKeyChain (reactive — the Setup
      *  enrollment dialog prepopulates its field from this). */
     var pickedAuthSubkeyId by mutableStateOf<Long?>(null)
@@ -2144,8 +2177,12 @@ object VaultSession {
             val signOutcome = kotlinx.coroutines.withContext(
                 kotlinx.coroutines.Dispatchers.IO) {
                 runCatching {
-                    val block = com.offlinepass.app.crypto.SshRsaPkcs1
-                        .digestInfo("SHA-512", data)
+                    // The hash = the KEY's: RSA signs the SHA-512 DigestInfo
+                    // (the card pads); an EC slot signs a SHA-256 digest
+                    // (sign() strips it to the raw 32B hash).
+                    val block = com.offlinepass.app.crypto.SshRsaPkcs1.digestInfo(
+                        if (parsedLine.algorithm.startsWith("ecdsa-sha2-"))
+                            "SHA-256" else "SHA-512", data)
                     withTouchPrompt {
                         // The slot = the SETTING's: the SIG (the default was
                         // the old) or the AUT (the dedicated auth key — the
@@ -2164,7 +2201,15 @@ object VaultSession {
             }
             val verified = runCatching {
                 val pub = PgpSshBridge.publicKeyFromLine(parsedLine)
-                val verifier = java.security.Signature.getInstance("SHA512withRSA")
+                // The verifier = the ALGORITHM's: RSA (SHA-512) or ECDSA
+                // (SHA-256 — the P-256 digest size).
+                val verifier = java.security.Signature.getInstance(
+                    when (parsedLine.algorithm) {
+                        "ssh-rsa" -> "SHA512withRSA"
+                        "ecdsa-sha2-nistp256" -> "SHA256withECDSA"
+                        else -> throw IllegalStateException(
+                            "no local verifier for ${parsedLine.algorithm}")
+                    })
                 verifier.initVerify(pub); verifier.update(data)
                 verifier.verify(sigBlock)
             }.getOrElse { false }

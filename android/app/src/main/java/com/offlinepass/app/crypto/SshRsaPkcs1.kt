@@ -41,6 +41,22 @@ object SshRsaPkcs1 {
     fun digestInfoFromDigest(jcaName: String, digest: ByteArray): ByteArray =
         prefixFor(jcaName) + digest
 
+    /** THE EC ADAPTATION: the digest embedded in a known DigestInfo —
+     *  the EC slot's INTERNAL AUTHENTICATE wants the RAW hash, but every
+     *  caller builds the RSA-shaped DigestInfo. The strip happens inside
+     *  [com.offlinepass.app.crypto.YubiKitSshAuth.sign]'s EC branch, so
+     *  the callers never branch on the key type. Null = a not-known
+     *  prefix (a raw hash passed straight through would be wrong). */
+    fun digestWithin(digestInfo: ByteArray): ByteArray? {
+        for (prefix in listOf(SHA256_PREFIX, SHA512_PREFIX, SHA1_PREFIX)) {
+            if (digestInfo.size > prefix.size &&
+                digestInfo.copyOfRange(0, prefix.size).contentEquals(prefix)) {
+                return digestInfo.copyOfRange(prefix.size, digestInfo.size)
+            }
+        }
+        return null
+    }
+
     /** The PKCS#1 v1.5 encoded block: 0x00 0x01 PS 0x00 DigestInfo, where PS
      *  is 0xFF-filled to make the block exactly [modulusSize] bytes (the
      *  encoding length ≥ 8 octets of padding is guaranteed for any real

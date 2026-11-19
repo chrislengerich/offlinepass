@@ -47,16 +47,34 @@ class YubiKeySshIdentity(
             return try {
                 // The BARE DigestInfo — the SIG slot's card pads
                 // on-device (long pre-padded commands fail 0x6581 on this
-                // transport; see YubiKitSshAuth's header note).
-                val payload = com.offlinepass.app.crypto.SshRsaPkcs1
-                    .digestInfo(algorithm, data)
+                // transport; see YubiKitSshAuth's header note). For an EC
+                // slot the digest is stripped client-side inside sign()
+                // (the EC challenge = the raw hash).
+                val payload = if (algorithm.startsWith("ecdsa-sha2-"))
+                    com.offlinepass.app.crypto.SshRsaPkcs1.digestInfo("SHA-256", data)
+                else com.offlinepass.app.crypto.SshRsaPkcs1.digestInfo(algorithm, data)
                 val raw = kotlinx.coroutines.runBlocking { yubiKitSigner?.invoke(payload) }
                     ?: run {
                         lastAuthError = "OpenPGP PIN cancelled"
                         return null
                     }
                 android.util.Log.i("YubiKeySsh", "yubikit sig: alg=$algorithm, ${raw.size} bytes")
-                sshString(algorithm.toByteArray()) + sshString(raw)
+                // THE EC BRANCH: the card's ECDSA output = the DER
+                // SEQUENCE(r, s) — the SSH wire wants the padded r||s
+                // value inside the curve-named blob. RSA passes through.
+                return if (algorithm.startsWith("ecdsa-sha2-")) {
+                    val curve = algorithm.removePrefix("ecdsa-sha2-")
+                    val field = when (curve) {
+                        "nistp256" -> 32; "nistp384" -> 48; "nistp521" -> 66
+                        else -> throw PgpSshBridge.PgpSshBridgeException(
+                            "unsupported ECDSA curve $curve")
+                    }
+                    sshString(algorithm.toByteArray()) + sshString(
+                        sshString(curve.toByteArray()) +
+                            PgpSshBridge.ecdsaSshSigValue(raw, field))
+                } else {
+                    sshString(algorithm.toByteArray()) + sshString(raw)
+                }
             } catch (e: Exception) {
                 android.util.Log.w("YubiKeySsh",
                     "yubikit sign failed: ${e.javaClass.simpleName}: ${e.message}")

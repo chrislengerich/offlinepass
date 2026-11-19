@@ -534,6 +534,17 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 }
             }
         }
+        // The ADMIN PIN (the one-time AUTH-slot swap gate) — the same
+        // prompt mechanics, never cached (the session zeroes the array
+        // after the op).
+        VaultSession.openPgpAdminPinPrompt = {
+            kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+                pinCallback = { value ->
+                    pinCallback = null
+                    cont.resume(value?.toCharArray())
+                }
+            }
+        }
         // First push to an EMPTY remote: confirm before creating the remote
         // main branch.
         VaultSession.firstPushGate = {
@@ -1886,6 +1897,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         }
                     },
                     onShowGithubAuthKey = { showGithubAuthKey() },
+                    onGenerateEcAuthKey = {
+                        lifecycleScope.launch { status = VaultSession.generateEcAuthKey() }
+                    },
                     onPickAuthSubkey = {
                         lifecycleScope.launch { pickAuthSubkey() }
                     },
