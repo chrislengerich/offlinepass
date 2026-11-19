@@ -58,7 +58,8 @@ class YubiKeySshIdentity(
                 android.util.Log.i("YubiKeySsh", "yubikit sig: alg=$algorithm, ${raw.size} bytes")
                 sshString(algorithm.toByteArray()) + sshString(raw)
             } catch (e: Exception) {
-                android.util.Log.w("YubiKeySsh", "yubikit sign failed: ${e.message}")
+                android.util.Log.w("YubiKeySsh",
+                    "yubikit sign failed: ${e.javaClass.simpleName}: ${e.message}")
                 lastAuthError = e.message
                 return null
             }

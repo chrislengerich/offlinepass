@@ -814,8 +814,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 cardIdentity = {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                         ensureUsbPermission()
+                        // The identity = the TRANSPORT's slot (the AUT
+                        // setting): the enrolled line must be the key that
+                        // signs the handshakes — enrolling the SIG slot's
+                        // line while the transport is set to AUT guarantees
+                        // the server's sig-verify can never pass.
                         val id = com.offlinepass.app.crypto.YubiKitSshAuth
-                            .signingKeyIdentity(applicationContext)
+                            .signingKeyIdentity(applicationContext,
+                                useAut = VaultSession.sshAuthUseAut())
                         id.keyId to id.fingerprint
                     }
                 },
@@ -828,7 +834,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             .digestInfo("SHA-256", nonce)
                         val sig = VaultSession.withTouchPrompt {
                             com.offlinepass.app.crypto.YubiKitSshAuth.sign(
-                                applicationContext, pin, digestInfo)
+                                applicationContext, pin, digestInfo,
+                                useAut = VaultSession.sshAuthUseAut())
                         }
                         VaultSession.yubikeyPinRemember(pin)  // cache-on-success
                         sig

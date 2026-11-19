@@ -997,6 +997,26 @@ object VaultSession {
                         .ifEmpty { "The YubiKey is not ready — retry." }
                     return null
                 }
+                // THE SLOT↔LINE GATE: the OFFERED key (the enrolled line)
+                // must be the key that SIGNS (the setting's slot) — the
+                // server verifies the sig against the offered key, so a
+                // mismatch can never authenticate (GitHub answers only
+                // "Auth fail for methods 'publickey'"). Named fail-fast
+                // instead — the guidance, not the dead handshake.
+                val enrolledFp = runCatching { PgpSshBridge.fingerprintOf(line) }.getOrNull()
+                val liveFp = runCatching {
+                    com.offlinepass.app.crypto.YubiKitSshAuth
+                        .slotKeyFingerprint(context, sshAuthUseAut())
+                }.getOrNull()
+                if (enrolledFp != null && liveFp != null && enrolledFp != liveFp) {
+                    sshIdentityUnavailable =
+                        "the transport is set to the " +
+                            (if (sshAuthUseAut()) "AUTH" else "SIGNATURE") +
+                            " slot, but the enrolled SSH line is a different key (" +
+                            enrolledFp + " ≠ " + liveFp +
+                            ") — re-run Enroll while the setting is on, or switch back."
+                    return null
+                }
                 val yubiKitSigner: (suspend (payload: ByteArray) -> ByteArray) =
                     pinCachingSigner(
                         prompt = { yubikeyPin() },

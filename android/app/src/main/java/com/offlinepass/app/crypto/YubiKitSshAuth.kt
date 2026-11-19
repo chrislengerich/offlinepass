@@ -127,10 +127,13 @@ object YubiKitSshAuth {
         val holderName: String?
     )
 
-    /** The SIGNATURE slot's identity — an unauthenticated GET DATA: no
-     *  PIN, no touch. The key id = the fingerprint's last 8 bytes (the v4
+    /** The SIGNATURE/AUTHENTICATION slot's identity — an unauthenticated
+     *  GET DATA: no PIN, no touch. The slot = the transport's SETTING
+     *  ([useAut]): the enrolled SSH line must be the key that signs the
+     *  handshakes, so the enrollment reads the SAME slot the transport
+     *  uses. The key id = the fingerprint's last 8 bytes (the v4
      *  fingerprint's low half); the holder name = the card's own. */
-    fun signingKeyIdentity(context: Context): CardIdentity {
+    fun signingKeyIdentity(context: Context, useAut: Boolean = false): CardIdentity {
         val device = findDevice(context)
             ?: throw java.io.IOException("no YubiKey connected")
         val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
@@ -143,11 +146,14 @@ object YubiKitSshAuth {
         try {
             val session = OpenPgpSession(connection as SmartCardConnection)
             try {
+                val ref = if (useAut) com.yubico.yubikit.openpgp.KeyRef.AUT
+                else com.yubico.yubikit.openpgp.KeyRef.SIG
                 val fp = session.applicationRelatedData.discretionary
-                    .getFingerprint(com.yubico.yubikit.openpgp.KeyRef.SIG)
+                    .getFingerprint(ref)
                 if (fp == null || fp.size < 20) {
-                    throw java.io.IOException("the card reports no SIGNATURE fingerprint " +
-                        "(an empty slot?)")
+                    throw java.io.IOException("the card reports no " +
+                        (if (useAut) "AUTHENTICATION" else "SIGNATURE") +
+                        " fingerprint (an empty slot?)")
                 }
                 val keyId = (12 until 20).fold(0L) { acc, k ->
                     (acc shl 8) or (fp[k].toLong() and 0xFF)
@@ -272,6 +278,8 @@ object YubiKitSshAuth {
                 android.util.Log.i("YubiKeySsh",
                     "yubikit: auth key " + (if (useAut) "AUT" else "SIG") + " fp=$liveFp")
                 if (expectedFingerprint != null && liveFp != expectedFingerprint) {
+                    android.util.Log.w("YubiKeySsh",
+                        "refusing to sign: live=$liveFp expected=$expectedFingerprint")
                     throw java.io.IOException(
                         "refusing to sign: the card's " +
                             (if (useAut) "AUT" else "SIG") +
