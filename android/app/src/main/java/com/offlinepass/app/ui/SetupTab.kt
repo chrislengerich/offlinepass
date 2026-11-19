@@ -75,8 +75,11 @@ fun SetupTabScreen(
             onDismissRequest = { confirmDialog = null },
             title = { Text("Confirm reset") },
             text = {
-                Text("Wipe the local git clone and re-clone from the remote? " +
-                    "Unpushed work is re-applied automatically if the vault is unlocked.")
+                Text("Wipe the local git clone and re-clone from the remote?\n\n" +
+                    // The divergence against the last-fetched origin/main —
+                    // computed once per remote change (a local git read, no
+                    // network, no touch prompt).
+                    (remember(cfg?.remoteUrl) { VaultSession.resetRemoteWarning() }))
             },
             confirmButton = {
                 TextButton(onClick = {
