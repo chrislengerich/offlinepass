@@ -77,12 +77,14 @@ class AutofillAuthActivity : ComponentActivity() {
                             listOf("https://$origin") else emptyList(),
                         password = PasswordGen.password())
                     AutofillRevealStore.put(item, "generate")
-                    // THE INTERSTITIAL = right after choosing the password
-                    // (the user's sequencing: "after logging in / choosing
-                    // the password") — the add path (the entry = brand-new;
-                    // the edit path would no-op). Either way RESULT_OK: the
-                    // fill continues.
-                    withContext(Dispatchers.Main) { showSaveInterstitial(item) }
+                    // NO INTERSTITIAL HERE — the save = ONCE, after the
+                    // form submission, via the framework's save request
+                    // (the SAVE mode below; the platform fires it when a
+                    // user-entered field changed — typing the username
+                    // qualifies).
+                    Log.i(TAG, "generated a password for $origin — RESULT_OK (the fill)")
+                    setResult(RESULT_OK)
+                    finish()
                 }
                 MODE_SAVE -> {
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Login"
