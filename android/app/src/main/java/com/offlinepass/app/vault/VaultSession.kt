@@ -3004,8 +3004,28 @@ object VaultSession {
         return com.offlinepass.app.crypto.OpenPgpCardCrypto.encryptToBytes(plain, "10.gpg", keys)
     }
 
-    fun adoptRecipientsFromVaultFile(file: File) {
-        runCatching {
+    /** THIS device's armored public key (the first permanent recipient —
+     *  the owner's), fetched through the SHARED OpenKeyChain client so the
+     *  service binding persists (per-op clients re-pay OKK's 5-20s cold
+     *  start). Returns (armored, keyId) or null. The interaction (the
+     *  key-access prompt) loops through the UI handler like every fetch. */
+    suspend fun devicePublicKeyArmored(): Pair<String, Long>? {
+        val keyId = recipientKeyIds().firstOrNull() ?: return null
+        val client = sharedOpenPgpClient(appContext)
+        var reqData: Intent? = null
+        var guard = 0
+        while (guard++ < 3) {
+            when (val r = client.fetchPublicKeyArmored(keyId, reqData)) {
+                is OpenPgpClient.PublicKey.Success -> return r.armored to keyId
+                is OpenPgpClient.PublicKey.UserInteraction ->
+                    reqData = interactionHandler?.invoke(r.pendingIntent) ?: return null
+                else -> return null
+            }
+        }
+        return null
+    }
+
+    fun adoptRecipientsFromVaultFile(file: File) {        runCatching {
             val msg = com.offlinepass.app.vault.PgpMessageParser.parse(file.readBytes())
             val ids = msg.pkesks.mapNotNull { it.keyId }.distinct()
             if (ids.isNotEmpty()) {
