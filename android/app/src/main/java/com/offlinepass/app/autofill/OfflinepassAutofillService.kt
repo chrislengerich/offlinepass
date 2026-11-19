@@ -100,66 +100,9 @@ class OfflinepassAutofillService : AutofillService() {
             return
         }
         val origin = fields?.webDomain ?: fields?.appPackage ?: "the login"
-        // THE V0 SAVE OFFER: the notification → the AddEntry screen
-        // prefilled — the app's FULL save machinery runs there (the gate,
-        // the commit signer, the touch prompt); no duplicated save path,
-        // and the review = the user's tap (the "if confirmed" gate).
-        postSaveNotification(origin, fields?.usernameValue, pw)
+        // The user-typed save: the platform's own trigger → the same offer.
+        AutofillSaveOffer.post(applicationContext, origin, fields?.usernameValue, pw)
         callback.onSuccess()
-    }
-
-    /** The save offer: the notification → MainActivity's AddEntry
-     *  prefilled. The password rides the intent (the app's own process;
-     *  never in the notification text). */
-    private fun postSaveNotification(origin: String, username: String?, password: String) {
-        val nm = getSystemService(android.app.NotificationManager::class.java)
-        // API 33+: the runtime POST_NOTIFICATIONS — the service cannot
-        // prompt; a denial = the save offer is LOST (logged). The main app
-        // can grant it on its next run.
-        if (android.os.Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            Log.w(TAG, "onSaveRequest: POST_NOTIFICATIONS not granted — " +
-                "the save offer for $origin could not be posted")
-        }
-        val channelId = "autofill-save"
-        if (android.os.Build.VERSION.SDK_INT >= 26) {
-            nm.createNotificationChannel(android.app.NotificationChannel(
-                channelId, "Autofill save offers",
-                android.app.NotificationManager.IMPORTANCE_DEFAULT))
-        }
-        val intent = android.content.Intent(appContext(), MainActivity::class.java)
-            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            .putExtra(EXTRA_SAVE_NAME, origin)
-            .putExtra(EXTRA_SAVE_USERNAME, username ?: "")
-            .putExtra(EXTRA_SAVE_PASSWORD, password)
-        val pi = android.app.PendingIntent.getActivity(
-            appContext(), saveRequestCode++, intent,
-            android.app.PendingIntent.FLAG_IMMUTABLE or
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT)
-        val n = androidx.core.app.NotificationCompat.Builder(appContext(), channelId)
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Save this login to offlinepass?")
-            .setContentText(origin + (username?.let { " — $it" } ?: ""))
-            .setContentIntent(pi)
-            .setAutoCancel(true)
-            .build()
-        nm.notify(saveNotifId++, n)
-        Log.i(TAG, "onSaveRequest: the save offer posted for $origin " +
-            "(username=${!username.isNullOrBlank()})")
-    }
-
-    private var saveRequestCode = 4000
-    private var saveNotifId = 4001
-
-    companion object {
-        /** The save-offer intent extras (the notification → MainActivity's
-         *  prefilled AddEntry). The password = the app's own process only. */
-        const val EXTRA_SAVE_NAME = "autofill-save-name"
-        const val EXTRA_SAVE_USERNAME = "autofill-save-username"
-        const val EXTRA_SAVE_PASSWORD = "autofill-save-password"
     }
 
     /** THE SAVE CONTRACT: the declared savable fields — without this the

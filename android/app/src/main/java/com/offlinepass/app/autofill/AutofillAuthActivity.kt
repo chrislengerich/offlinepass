@@ -56,6 +56,12 @@ class AutofillAuthActivity : androidx.activity.ComponentActivity() {
                     name = name?.takeIf { it.isNotBlank() } ?: "Generated password",
                     password = PasswordGen.password())
                 AutofillRevealStore.put(item, "generate")
+                // THE SAVE OFFER = SELF-POSTED: the OS's onSaveRequest
+                // SUPPRESSES the autofilled values (the save request =
+                // the user-typed entries only) — the offer must go out
+                // the moment the password is generated ("save it if
+                // confirmed").
+                AutofillSaveOffer.post(this@AutofillAuthActivity, item.name, null, item.password)
                 Log.i(TAG, "generated a password for ${item.name} — RESULT_OK")
                 setResult(RESULT_OK)
                 finish()

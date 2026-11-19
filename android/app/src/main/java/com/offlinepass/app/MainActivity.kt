@@ -2064,17 +2064,17 @@ class MainActivity : androidx.activity.ComponentActivity() {
      *  AddEntry screen (the app's full save machinery takes over there). */
     private fun handleAutofillSaveIntent(intent: android.content.Intent?) {
         val pw = intent?.getStringExtra(
-            com.offlinepass.app.autofill.OfflinepassAutofillService.EXTRA_SAVE_PASSWORD)
+            com.offlinepass.app.autofill.AutofillSaveOffer.EXTRA_SAVE_PASSWORD)
             ?: return
         if (pw.isBlank()) return
         val origin = intent.getStringExtra(
-            com.offlinepass.app.autofill.OfflinepassAutofillService.EXTRA_SAVE_NAME) ?: ""
+            com.offlinepass.app.autofill.AutofillSaveOffer.EXTRA_SAVE_NAME) ?: ""
         val url = if (origin.contains('.') && !origin.contains(' '))
             listOf("https://$origin") else emptyList()
         autofillSaveDraft = com.offlinepass.app.vault.ProtonItem(
             name = origin,
             username = intent.getStringExtra(
-                com.offlinepass.app.autofill.OfflinepassAutofillService.EXTRA_SAVE_USERNAME) ?: "",
+                com.offlinepass.app.autofill.AutofillSaveOffer.EXTRA_SAVE_USERNAME) ?: "",
             urls = url,
             password = pw)
         screen = Screen.AddEntry
