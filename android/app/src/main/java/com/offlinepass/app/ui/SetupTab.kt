@@ -48,7 +48,6 @@ fun SetupTabScreen(
     screenlockUnlockOn: Boolean = false,
     onScreenlockUnlockToggle: (Boolean) -> Unit = {},
     onLock: () -> Unit,
-    onExportQrft: () -> Unit,
     onExportBackupZip: () -> Unit = {},
     onImportQrft: () -> Unit,
     onPairDevice: () -> Unit = {},
@@ -375,9 +374,7 @@ fun SetupTabScreen(
         Button(onClick = onExportBackupZip, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Export whole repo (USB)")
         }
-        Button(onClick = onExportQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Export entries as QRFT")
-        }
+
         Button(onClick = onImportQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Import from QRFT (scan)")
         }

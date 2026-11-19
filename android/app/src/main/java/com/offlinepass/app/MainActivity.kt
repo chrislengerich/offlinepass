@@ -1751,7 +1751,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onExportBackupZip = {
                         backupExportLauncher.launch("offlinepass-backup.zip")
                     },
-                    onExportQrft = { screen = Screen.ExportPick },
                     onImportQrft = { cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA) },
                     onPairDevice = { pairCameraLauncher.launch(android.Manifest.permission.CAMERA) },
                     onEnrollFromGithubKeys = { enrollFromGithubKeys() },
