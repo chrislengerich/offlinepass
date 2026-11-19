@@ -1707,7 +1707,7 @@ object VaultSession {
                             // pending until a PAT is stored (Setup).
                             pendingPush = true
                             lastSaveRemoteState = "pending"
-                            syncStatus = "Committed locally (rev ${env.rev}); push pending — store a PAT in Setup"
+                            syncStatus = "Committed locally (rev ${env.rev}) — click Sync in Settings to publish"
                             // NO early return: the tail below (the seal +
                             // the re-stub) must run for EVERY save — the
                             // old early return skipped the re-seal, the
@@ -1729,7 +1729,7 @@ object VaultSession {
                                 Log.w(TAG, "push failed (kept local commit): ${e.message}")
                                 pendingPush = true
                                 lastSaveRemoteState = "pending"
-                                syncStatus = "Saved locally; push pending"
+                                syncStatus = "Committed locally (rev ${env.rev}) — click Sync in Settings to publish"
                                 // NOT an error: the change persisted locally.
                             }
                         }
