@@ -209,7 +209,7 @@ fun SetupTabScreen(
         // ONE-OFF HANDOFF: a scanned key lives in the session only — it is
         // appended to the export's recipient set (the permanent recipients
         // stay first) and never written to the repo's keys/ or config.
-        Text("Temporary recipient (one-off export)", style = MaterialTheme.typography.titleSmall)
+        Text("Share", style = MaterialTheme.typography.titleSmall)
         Text(
             if (tempRecipientLabel == null) "(none scanned — scan a recipient's public key)"
             else "Scanned: $tempRecipientLabel",
@@ -218,13 +218,19 @@ fun SetupTabScreen(
         Button(onClick = onScanTempRecipient, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Scan recipient key (QRFT)")
         }
-        Button(onClick = onExportTempUsb, enabled = busy == null && tempRecipientLabel != null,
+        Button(onClick = onExportTempUsb, enabled = busy == null,
             modifier = Modifier.fillMaxWidth()) {
             Text("Export vault to USB (recipients + scanned)")
         }
-        Button(onClick = onExportTempQrft, enabled = busy == null && tempRecipientLabel != null,
+        Button(onClick = onExportTempQrft, enabled = busy == null,
             modifier = Modifier.fillMaxWidth()) {
             Text("Export vault as QRFT (recipients + scanned)")
+        }
+        Button(onClick = onUsbRestore, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Import from USB/file (merge)")
+        }
+        Button(onClick = onImportQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Import from QRFT (scan)")
         }
         HorizontalDivider()
         Text("This device", style = MaterialTheme.typography.titleSmall)
@@ -355,15 +361,12 @@ fun SetupTabScreen(
         Text("Active mode: " + VaultSession.sshSyncMode(), style = MaterialTheme.typography.bodySmall)
         HorizontalDivider()
 
-        Text("USB offline copies", style = MaterialTheme.typography.titleSmall)
+        Text("Backups", style = MaterialTheme.typography.titleSmall)
         // The USB export = the WHOLE REPO (the git-state clone — the vault
         // + the keys + the signed history; the repo export supersedes the
         // vault-snapshot).
         Button(onClick = onExportBackupZip, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Export whole repo (USB)")
-        }
-        Button(onClick = onUsbRestore, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Import from USB/file (merge)")
+            Text("Export backup")
         }
         HorizontalDivider()
 
@@ -372,9 +375,6 @@ fun SetupTabScreen(
             Text("Export repo as QRFT")
         }
 
-        Button(onClick = onImportQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Import from QRFT (scan)")
-        }
         HorizontalDivider()
 
         Text("Paste devices (Chrome extension)", style = MaterialTheme.typography.titleSmall)

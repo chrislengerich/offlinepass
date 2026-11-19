@@ -2986,19 +2986,20 @@ object VaultSession {
     }
 
     /** The one-off export: the CURRENT envelope encrypted to the PERMANENT
-     *  repo recipients + the scanned temporary key (appended). No rev bump,
-     *  no commit, no repo write — a pure snapshot of the vault as-is. */
+     *  repo recipients + the scanned temporary key when one is present
+     *  (appended). No rev bump, no commit, no repo write — a pure snapshot
+     *  of the vault as-is. */
     suspend fun exportVaultToTempRecipient(): ByteArray {
         if (state !is State.Unlocked) throw IllegalStateException("Unlock the vault first")
         if (stubSession && !promoteIfStub()) throw IllegalStateException(
             "The sealed cache is missing or stale — re-unlock with the key, then export")
         val env = loadedEnvelope ?: Envelope(deviceId = config()?.deviceId ?: "")
-        val armored = tempRecipientArmored
-            ?: throw IllegalStateException("No temporary recipient scanned")
         val keyIds = cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()
         if (keyIds.isEmpty()) throw IllegalStateException("No permanent recipients to include")
         val keys = loadRecipientKeysFor(gitRoot(), keyIds).toMutableList()
-        keys += com.offlinepass.app.crypto.OpenPgpCardCrypto.loadRecipientKeys(armored.toByteArray())
+        tempRecipientArmored?.let {
+            keys += com.offlinepass.app.crypto.OpenPgpCardCrypto.loadRecipientKeys(it.toByteArray())
+        }
         val plain = env.toJsonObject().toString().toByteArray(Charsets.UTF_8)
         return com.offlinepass.app.crypto.OpenPgpCardCrypto.encryptToBytes(plain, "10.gpg", keys)
     }
