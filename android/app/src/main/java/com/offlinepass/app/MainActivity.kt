@@ -955,10 +955,19 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        // The autofill save-offer's tap (a warm start).
+        handleAutofillSaveIntent(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         VaultSession.init(applicationContext)
         SealedVault.init(applicationContext)
+        // The autofill save-offer's tap (a cold start): the extras → the
+        // prefilled AddEntry.
+        handleAutofillSaveIntent(intent)
         // Spike extras forward (S1/S3 keep working).
         val keys = listOf("path", "email", "exportKey", "probeSign", "autostart")
         val received = keys.mapNotNull { k -> intent.getStringExtra(k)?.let { k to it } }.toMap()
@@ -1716,8 +1725,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     }
                 }
                 Screen.AddEntry -> AddEntryScreen(
-                    onCancel = { screen = Screen.Search },
+                    initial = autofillSaveDraft,
+                    onCancel = {
+                        autofillSaveDraft = null
+                        screen = Screen.Search
+                    },
                     onSave = { item ->
+                        autofillSaveDraft = null
                         lifecycleScope.launch {
                             item.modifyTime = nowSeconds()
                             // The new item's uuid rides the save: a
@@ -2040,6 +2054,31 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 status = "Biometrics unavailable on this device — gate not enabled."
             }
         }
+    }
+
+    /** THE AUTOFILL SAVE DRAFT: the save-offer notification's prefill —
+     *  consumed by the AddEntry screen, cleared on the save/cancel. */
+    private var autofillSaveDraft by mutableStateOf<ProtonItem?>(null)
+
+    /** The save-offer notification's tap: the extras → the draft → the
+     *  AddEntry screen (the app's full save machinery takes over there). */
+    private fun handleAutofillSaveIntent(intent: android.content.Intent?) {
+        val pw = intent?.getStringExtra(
+            com.offlinepass.app.autofill.OfflinepassAutofillService.EXTRA_SAVE_PASSWORD)
+            ?: return
+        if (pw.isBlank()) return
+        val origin = intent.getStringExtra(
+            com.offlinepass.app.autofill.OfflinepassAutofillService.EXTRA_SAVE_NAME) ?: ""
+        val url = if (origin.contains('.') && !origin.contains(' '))
+            listOf("https://$origin") else emptyList()
+        autofillSaveDraft = com.offlinepass.app.vault.ProtonItem(
+            name = origin,
+            username = intent.getStringExtra(
+                com.offlinepass.app.autofill.OfflinepassAutofillService.EXTRA_SAVE_USERNAME) ?: "",
+            urls = url,
+            password = pw)
+        screen = Screen.AddEntry
+        Log.i(TAG, "autofill save offer accepted — the AddEntry prefilled for $origin")
     }
 
     private fun unlockedItems(): List<ProtonItem> =

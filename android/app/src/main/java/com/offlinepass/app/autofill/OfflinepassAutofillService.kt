@@ -31,8 +31,19 @@ class OfflinepassAutofillService : AutofillService() {
         val username: List<AutofillId>,
         val password: List<AutofillId>,
         val appPackage: String,
-        val webDomain: String?
-    )
+        val webDomain: String?,
+        /** The first non-empty text currently in the fields (the save
+         *  request's capture; the fill requests leave them null). */
+        val usernameValue: String? = null,
+        val passwordValue: String? = null
+    ) {
+        /** The page-match predicate (the ranking's match rule, shared with
+         *  the generate-chip's offer condition). */
+        fun matches(item: ProtonItem): Boolean =
+            (webDomain != null && item.urls.any { url ->
+                url.contains(webDomain!!.removePrefix("www."))
+            }) || item.urls.any { url -> url.contains(appPackage) }
+    }
 
     override fun onFillRequest(
         request: FillRequest,
@@ -64,9 +75,77 @@ class OfflinepassAutofillService : AutofillService() {
     }
 
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
-        // Capture/save of new credentials = the P2 feature (parked).
-        Log.i(TAG, "onSaveRequest: ignored (the create-and-fill flow = parked)")
-        callback.onFailure("offlinepass does not save new credentials from autofill")
+        VaultSession.init(applicationContext)
+        val structure = request.fillContexts.lastOrNull()?.structure
+        val fields = structure?.let { parse(it) }
+        val pw = fields?.passwordValue
+        if (pw.isNullOrBlank()) {
+            Log.i(TAG, "onSaveRequest: no password captured — ignoring " +
+                "(pkg=${fields?.appPackage})")
+            callback.onSuccess()
+            return
+        }
+        val origin = fields?.webDomain ?: fields?.appPackage ?: "the login"
+        // THE V0 SAVE OFFER: the notification → the AddEntry screen
+        // prefilled — the app's FULL save machinery runs there (the gate,
+        // the commit signer, the touch prompt); no duplicated save path,
+        // and the review = the user's tap (the "if confirmed" gate).
+        postSaveNotification(origin, fields?.usernameValue, pw)
+        callback.onSuccess()
+    }
+
+    /** The save offer: the notification → MainActivity's AddEntry
+     *  prefilled. The password rides the intent (the app's own process;
+     *  never in the notification text). */
+    private fun postSaveNotification(origin: String, username: String?, password: String) {
+        val nm = getSystemService(android.app.NotificationManager::class.java)
+        // API 33+: the runtime POST_NOTIFICATIONS — the service cannot
+        // prompt; a denial = the save offer is LOST (logged). The main app
+        // can grant it on its next run.
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.w(TAG, "onSaveRequest: POST_NOTIFICATIONS not granted — " +
+                "the save offer for $origin could not be posted")
+        }
+        val channelId = "autofill-save"
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            nm.createNotificationChannel(android.app.NotificationChannel(
+                channelId, "Autofill save offers",
+                android.app.NotificationManager.IMPORTANCE_DEFAULT))
+        }
+        val intent = android.content.Intent(appContext(), MainActivity::class.java)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(EXTRA_SAVE_NAME, origin)
+            .putExtra(EXTRA_SAVE_USERNAME, username ?: "")
+            .putExtra(EXTRA_SAVE_PASSWORD, password)
+        val pi = android.app.PendingIntent.getActivity(
+            appContext(), saveRequestCode++, intent,
+            android.app.PendingIntent.FLAG_IMMUTABLE or
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+        val n = androidx.core.app.NotificationCompat.Builder(appContext(), channelId)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("Save this login to offlinepass?")
+            .setContentText(origin + (username?.let { " — $it" } ?: ""))
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .build()
+        nm.notify(saveNotifId++, n)
+        Log.i(TAG, "onSaveRequest: the save offer posted for $origin " +
+            "(username=${!username.isNullOrBlank()})")
+    }
+
+    private var saveRequestCode = 4000
+    private var saveNotifId = 4001
+
+    companion object {
+        /** The save-offer intent extras (the notification → MainActivity's
+         *  prefilled AddEntry). The password = the app's own process only. */
+        const val EXTRA_SAVE_NAME = "autofill-save-name"
+        const val EXTRA_SAVE_USERNAME = "autofill-save-username"
+        const val EXTRA_SAVE_PASSWORD = "autofill-save-password"
     }
 
     private fun unlockedResponse(fields: Fields): FillResponse {
@@ -88,6 +167,12 @@ class OfflinepassAutofillService : AutofillService() {
         val shown = ranked.take(5)
         for (item in shown) {
             builder.addDataset(datasetFor(item, fields, "${item.displayName} — ${item.identity}"))
+        }
+        // THE GENERATE CHIP: the registration / new-credentials case — no
+        // entry matches the page. Tapping gates, generates, and the
+        // re-invoke fills the fresh password.
+        if (shown.none { fields.matches(it) }) {
+            builder.addDataset(generateDataset(fields))
         }
         // Search-in-app dataset (covers non-matching or >5 entries). With the
         // empty-fields guard in onFillRequest, at least one id exists here.
@@ -143,6 +228,12 @@ class OfflinepassAutofillService : AutofillService() {
         }
         val ids = (fields.username + fields.password)
         var requestCode = 10
+        // THE GENERATE CHIP: no entry matches the page (the registration
+        // case) — the tap gates, generates, the re-invoke fills.
+        if (ranked.none { fields.matches(it) }) {
+            builder.addDataset(generateDataset(fields, requestCode++))
+            count++
+        }
         for (item in ranked.take(5)) {
             if (revealed != null && item.itemUuid == revealed.itemUuid) continue
             val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
@@ -202,14 +293,44 @@ class OfflinepassAutofillService : AutofillService() {
             setTextViewText(R.id.autofill_text, label)
         }
         val ds = Dataset.Builder()
-        for (id in fields.username) ds.setValue(id, AutofillValue.forText(item.identity), view)
+        // THE NO-IDENTITY CASE (the generated password): the username ids
+        // stay UNSET — the re-invoke must never clobber the user's typed
+        // username with an empty value.
+        if (item.identity.isNotBlank()) {
+            for (id in fields.username) ds.setValue(id, AutofillValue.forText(item.identity), view)
+        }
         for (id in fields.password) ds.setValue(id, AutofillValue.forText(item.password), view)
+        return ds.build()
+    }
+
+    /** The "⚡ Generate a strong password" dataset: the auth = the auth
+     *  activity's GENERATE mode (the screenlock gates — the vault is
+     *  touched); only the PASSWORD ids carry a placeholder, so the
+     *  re-invoke fills the generated value without touching the username. */
+    private fun generateDataset(fields: Fields, requestCode: Int = 30): Dataset {
+        val origin = fields.webDomain ?: fields.appPackage
+        val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
+            .putExtra(AutofillAuthActivity.EXTRA_MODE, AutofillAuthActivity.MODE_GENERATE)
+            .putExtra(AutofillAuthActivity.EXTRA_NAME, origin)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        val pi = android.app.PendingIntent.getActivity(
+            appContext(), requestCode, intent,
+            android.app.PendingIntent.FLAG_IMMUTABLE or
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+        val view = RemoteViews(packageName, R.layout.autofill_item).apply {
+            setTextViewText(R.id.autofill_text, "⚡ Generate a strong password")
+        }
+        val ds = Dataset.Builder().setAuthentication(pi.intentSender)
+        fields.password.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
+        Log.i(TAG, "generate chip offered for $origin")
         return ds.build()
     }
 
     private fun parse(structure: AssistStructure): Fields {
         val username = mutableListOf<AutofillId>()
         val password = mutableListOf<AutofillId>()
+        var usernameValue: String? = null
+        var passwordValue: String? = null
         var appPackage = structure.activityComponent.packageName
         var webDomain: String? = null
 
@@ -232,8 +353,20 @@ class OfflinepassAutofillService : AutofillService() {
             node.autofillId?.let { id ->
                 if (node.visibility == View.VISIBLE) {
                     when {
-                        isPassword -> password.add(id)
-                        isUsername -> username.add(id)
+                        isPassword -> {
+                            password.add(id)
+                            if (passwordValue == null) {
+                                (node.autofillValue?.textValue as? CharSequence)
+                                    ?.takeIf { it.isNotBlank() }?.let { passwordValue = it.toString() }
+                            }
+                        }
+                        isUsername -> {
+                            username.add(id)
+                            if (usernameValue == null) {
+                                (node.autofillValue?.textValue as? CharSequence)
+                                    ?.takeIf { it.isNotBlank() }?.let { usernameValue = it.toString() }
+                            }
+                        }
                     }
                 }
                 Unit
@@ -243,7 +376,7 @@ class OfflinepassAutofillService : AutofillService() {
         for (i in 0 until structure.windowNodeCount) {
             walk(structure.getWindowNodeAt(i).rootViewNode)
         }
-        return Fields(username, password, appPackage, webDomain)
+        return Fields(username, password, appPackage, webDomain, usernameValue, passwordValue)
     }
 
     private fun appContext() = applicationContext

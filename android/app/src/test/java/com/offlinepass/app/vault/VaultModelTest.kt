@@ -198,4 +198,14 @@ class PasswordGenTest {
         assertEquals(64, pw.length)
         assertTrue(pw.all { it in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+" })
     }
+
+    /** The autofill generate-chip's draw: the uniqueness across 100
+     *  default-length draws (a duplicate = a broken RNG path — the chip
+     *  hands this straight into a registration form). */
+    @Test
+    fun defaultDrawsAreUnique() {
+        assertEquals(24, PasswordGen.password().length)
+        val draws = (1..100).map { PasswordGen.password() }.toSet()
+        assertEquals("no duplicates in 100 draws", 100, draws.size)
+    }
 }

@@ -5,24 +5,33 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
 import com.offlinepass.app.crypto.ScreenlockGate
+import com.offlinepass.app.vault.PasswordGen
+import com.offlinepass.app.vault.ProtonItem
 import com.offlinepass.app.vault.SealedVault
 import kotlinx.coroutines.Dispatchers
-import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * The sealed-state autofill's auth activity: the SAME screenlock gate as
- * the item view — the device credential opens the keystore window, the
- * TARGETED single item unseals, the store carries it to the framework's
- * re-invoked onFillRequest. RESULT_OK = fill; canceled = the picker stays.
+ * The autofill's auth activity, two modes:
+ * - **reveal** (default): the sealed-state chip's tapped item — the SAME
+ *   screenlock gate as the item view; the TARGETED single item unseals,
+ *   the store carries it to the framework's re-invoked onFillRequest.
+ *   RESULT_OK = fill; canceled = the picker stays.
+ * - **generate**: the "⚡ Generate password" chip — the same gate, then a
+ *   fresh [PasswordGen.password] stored as the reveal-shaped item; the
+ *   re-invoke fills the generated value into the tapped password field.
+ *   NO MainActivity navigation in either mode — the control stays with
+ *   the framework's fill flow.
  */
 class AutofillAuthActivity : androidx.activity.ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val mode = intent.getStringExtra(EXTRA_MODE) ?: MODE_REVEAL
         val uuid = intent.getStringExtra(EXTRA_UUID)
-        if (uuid == null) {
+        val name = intent.getStringExtra(EXTRA_NAME)
+        if (mode == MODE_REVEAL && uuid == null) {
             setResult(RESULT_CANCELED)
             finish()
             return
@@ -30,17 +39,29 @@ class AutofillAuthActivity : androidx.activity.ComponentActivity() {
         lifecycleScope.launch {
             val ok = ScreenlockGate.promptGate(
                 this@AutofillAuthActivity,
-                "Unlock the entry",
-                "Autofill: the device lock opens this item's secrets")
+                if (mode == MODE_GENERATE) "Generate & fill" else "Unlock the entry",
+                if (mode == MODE_GENERATE)
+                    "The device lock authorizes filling a generated password"
+                else "Autofill: the device lock opens this item's secrets")
             if (!ok) {
-                Log.i(TAG, "auth gate declined — RESULT_CANCELED")
+                Log.i(TAG, "auth gate declined ($mode) — RESULT_CANCELED")
                 setResult(RESULT_CANCELED)
                 finish()
                 return@launch
             }
-            val item = withContext(Dispatchers.IO) { SealedVault.reveal(uuid) }
+            if (mode == MODE_GENERATE) {
+                val item = ProtonItem(
+                    name = name?.takeIf { it.isNotBlank() } ?: "Generated password",
+                    password = PasswordGen.password())
+                AutofillRevealStore.put(item)
+                Log.i(TAG, "generated a password for ${item.name} — RESULT_OK")
+                setResult(RESULT_OK)
+                finish()
+                return@launch
+            }
+            val item = withContext(Dispatchers.IO) { SealedVault.reveal(uuid!!) }
             if (item == null) {
-                Log.w(TAG, "the unseal failed for ${uuid.take(8)} — RESULT_CANCELED " +
+                Log.w(TAG, "the unseal failed for ${uuid?.take(8)} — RESULT_CANCELED " +
                     "(the cache stale/missing — the app's unlock re-seals)")
                 setResult(RESULT_CANCELED)
                 finish()
@@ -56,5 +77,9 @@ class AutofillAuthActivity : androidx.activity.ComponentActivity() {
     companion object {
         private const val TAG = "OfflinepassAutofill"
         const val EXTRA_UUID = "uuid"
+        const val EXTRA_NAME = "name"
+        const val EXTRA_MODE = "mode"
+        const val MODE_REVEAL = "reveal"
+        const val MODE_GENERATE = "generate"
     }
 }
