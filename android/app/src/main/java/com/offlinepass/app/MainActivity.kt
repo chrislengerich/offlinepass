@@ -744,10 +744,16 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
     }
 
-    /** Reads the ACTIVE slot's SSH line (no PIN, no touch) and opens the
-     *  copy-to-GitHub dialog. */
+    /** Opens the copy-to-GitHub dialog. The CONFIGURED auth key first:
+     *  the enrolled OpenSSH line lives in prefs — instant, no card, no
+     *  OpenKeyChain. Only an UN-enrolled state falls back to reading the
+     *  card's live slots over USB. */
     private fun showGithubAuthKey() {
         lifecycleScope.launch {
+            VaultSession.yubikeySshLine()?.let {
+                githubAuthKeyDialog = it
+                return@launch
+            }
             val line = unenrolledSlotLine()
             if (line == null) {
                 status = "No security key connected (or USB permission missing)."
