@@ -283,10 +283,71 @@ class AutofillAuthActivity : ComponentActivity() {
         }
     }
 
+    /** The screenlock signature flow (the copy of MainActivity's):
+     *  KeystoreSigner.prepare → the BiometricPrompt bound to THIS exact
+     *  Keystore op (the CryptoObject) → finish. Null = the declined/failed
+     *  signature (the save rolls back — nothing saved). */
+    private suspend fun screenLockSignFlow(bytes: ByteArray): ByteArray? =
+        kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+            try {
+                val signature = com.offlinepass.app.crypto.KeystoreSigner.prepare(bytes)
+                val builder = android.hardware.biometrics.BiometricPrompt.Builder(this)
+                    .setTitle("Sign vault change")
+                    .setSubtitle("Screen-lock signature for this revision")
+                if (android.os.Build.VERSION.SDK_INT >= 30) {
+                    builder.setAllowedAuthenticators(
+                        android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG
+                            or android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+                } else {
+                    builder.setDeviceCredentialAllowed(true)
+                }
+                val cancel = android.os.CancellationSignal()
+                cont.invokeOnCancellation { cancel.cancel() }
+                builder.build().authenticate(
+                    android.hardware.biometrics.BiometricPrompt.CryptoObject(signature),
+                    cancel,
+                    androidx.core.content.ContextCompat.getMainExecutor(this),
+                    object : android.hardware.biometrics.BiometricPrompt.AuthenticationCallback() {
+                        override fun onAuthenticationSucceeded(
+                            result: android.hardware.biometrics.BiometricPrompt.AuthenticationResult
+                        ) {
+                            cont.resume(
+                                runCatching {
+                                    com.offlinepass.app.crypto.KeystoreSigner.finish(signature)
+                                }.getOrNull(), null)
+                        }
+                        override fun onAuthenticationError(code: Int, errString: CharSequence) {
+                            Log.w(TAG, "screenlock signature declined: $code $errString")
+                            cont.resume(null, null)
+                        }
+                    })
+            } catch (e: Exception) {
+                Log.w(TAG, "screenlock signature failed: ${e.message}")
+                cont.resume(null, null)
+            }
+        }
+
     /** The prompt surfaces for the in-activity save: the touch reminder +
      *  the OpenPGP PIN — the SAME hooks MainActivity installs, pointed at
      *  this activity's dialogs (the interstitials the user referenced). */
     private fun installPromptSurfaces() {
+        // THE SCREENLOCK COMMIT SIGNER: the save pipeline's screenlock
+        // signing mode needs it — without the hook the save rolls back
+        // ("Screenlock signer unavailable (UI layer absent)"). The same
+        // flow as MainActivity's: prepare → the CryptoObject prompt →
+        // finish. The save path's gate opens the 60s keystore window
+        // right before addSealed, so this prompt stays silent within it
+        // (ONE screenlock per save).
+        VaultSession.keystoreSignerHook = { bytes ->
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                screenLockSignFlow(bytes)
+            }
+        }
+        // The seal/unseal gate: the framework-enforced authenticator set
+        // matching the seal key — the same wrapper MainActivity installs.
+        VaultSession.sealGate = { title, subtitle ->
+            ScreenlockGate.promptGate(this, title, subtitle, strongOrCredential = true)
+        }
         VaultSession.openPgpPinPrompt = {
             kotlinx.coroutines.suspendCancellableCoroutine { cont ->
                 runOnUiThread {
