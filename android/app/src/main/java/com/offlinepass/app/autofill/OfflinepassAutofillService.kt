@@ -3,6 +3,7 @@ package com.offlinepass.app.autofill
 import android.app.assist.AssistStructure
 import android.os.CancellationSignal
 import android.service.autofill.*
+import android.util.Log
 import android.view.View
 import android.view.autofill.AutofillId
 import android.view.autofill.AutofillValue
@@ -23,6 +24,8 @@ import com.offlinepass.app.vault.VaultSession
  * hint text, then resource-id/idEntry substrings.
  */
 class OfflinepassAutofillService : AutofillService() {
+
+    private val TAG = "OfflinepassAutofill"
 
     data class Fields(
         val username: List<AutofillId>,
@@ -61,13 +64,15 @@ class OfflinepassAutofillService : AutofillService() {
     }
 
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
-        // Capture/save of new credentials is a non-goal (design §3); only
-        // filling is supported.
+        // Capture/save of new credentials = the P2 feature (parked).
+        Log.i(TAG, "onSaveRequest: ignored (the create-and-fill flow = parked)")
         callback.onFailure("offlinepass does not save new credentials from autofill")
     }
 
     private fun unlockedResponse(fields: Fields): FillResponse {
         val items = (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
+        Log.i(TAG, "branch=unlocked pkg=${fields.appPackage} domain=${fields.webDomain} " +
+            "items=${items.size}")
         // Rank: URL/domain match first, then everything else.
         val ranked = items.sortedByDescending { item ->
             when {
@@ -107,16 +112,16 @@ class OfflinepassAutofillService : AutofillService() {
     /** The sealed state: the manifest entries as authenticated datasets —
      *  tapping launches the auth activity (the device credential), which
      *  unseals that ONE item and returns RESULT_OK; the framework then
-     *  re-invokes onFillRequest and the freshly revealed item fills. */
+     *  re-invokes onFillRequest. THE LAYERED RESPONSE: the freshly
+     *  revealed item's REAL-value dataset is PREPENDED to the full
+     *  manifest list — the re-invoke fills the tapped item AND keeps
+     *  every other entry offered (the old short-circuit collapsed the
+     *  second interaction to one entry). */
     private fun sealedResponse(fields: Fields): FillResponse {
-        // A fresh reveal (within the TTL) fills with the REAL values.
         val revealed = AutofillRevealStore.peek()
-        if (revealed != null) {
-            return FillResponse.Builder().addDataset(
-                datasetFor(revealed, fields,
-                    "${revealed.displayName} — ${revealed.identity}")).build()
-        }
         val manifest = SealedVault.manifestItems()
+        Log.i(TAG, "branch=sealed pkg=${fields.appPackage} domain=${fields.webDomain} " +
+            "manifest=${manifest.size} revealed=${revealed?.displayName ?: "none"}")
         // Rank: the URL/domain match first, then everything else.
         val ranked = manifest.sortedByDescending { item ->
             when {
@@ -128,9 +133,18 @@ class OfflinepassAutofillService : AutofillService() {
             }
         }
         val builder = FillResponse.Builder()
+        var count = 0
+        // The revealed item's REAL dataset FIRST (no auth needed — the
+        // store = the fresh unseal within the TTL).
+        if (revealed != null) {
+            builder.addDataset(datasetFor(revealed, fields,
+                "✓ ${revealed.displayName} — ${revealed.identity}"))
+            count++
+        }
         val ids = (fields.username + fields.password)
         var requestCode = 10
         for (item in ranked.take(5)) {
+            if (revealed != null && item.itemUuid == revealed.itemUuid) continue
             val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
                 .putExtra(AutofillAuthActivity.EXTRA_UUID, item.itemUuid)
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -145,6 +159,7 @@ class OfflinepassAutofillService : AutofillService() {
             val ds = Dataset.Builder().setAuthentication(pi.intentSender)
             ids.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
             builder.addDataset(ds.build())
+            count++
         }
         // The unsealed/not-sealed fallback: the open-the-app dataset.
         val intent = android.content.Intent(appContext(), MainActivity::class.java)
@@ -160,10 +175,12 @@ class OfflinepassAutofillService : AutofillService() {
         val ds = Dataset.Builder().setAuthentication(pi.intentSender)
         ids.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
         builder.addDataset(ds.build())
+        Log.i(TAG, "sealed response: $count entry datasets + the app fallback")
         return builder.build()
     }
 
     private fun lockedResponse(fields: Fields): FillResponse {
+        Log.i(TAG, "branch=locked pkg=${fields.appPackage} domain=${fields.webDomain}")
         val intent = android.content.Intent(appContext(), MainActivity::class.java)
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val pi = android.app.PendingIntent.getActivity(

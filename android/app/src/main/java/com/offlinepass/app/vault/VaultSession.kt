@@ -1478,21 +1478,35 @@ object VaultSession {
                 val env = (loadedEnvelope ?: Envelope(deviceId = cfg.deviceId)).also { e ->
                     e.rev = rev + 1
                     if (wasStub) {
-                        // The apply-diff (the stub mode only): the UI's list
-                        // = the stubs + the edited full items. The sealed
-                        // base wins for the stubs; the edited = the item
-                        // whose secrets are set OR the explicitly-edited
-                        // uuid (covers a cleared-to-empty edit); the new
-                        // items append. Never the stubs themselves.
+                        // THE APPLY-DIFF (the stub mode) — the modifyTime
+                        // rule, the same one the sync merge uses: the UI's
+                        // copy vs the base's copy → the NEWER modifyTime
+                        // wins. The edited item = stamped NOW here (the
+                        // caller's edit) so it beats the base; the UI's
+                        // stubs carry the item's own older modifyTime, so
+                        // the base — which holds the previous saves'
+                        // secrets — wins over them. The old
+                        // hasSecrets()/editedUuid heuristics were the
+                        // clobber's second half (the base was the stubs
+                        // after the promote's in-place mutation).
+                        items.forEach { ui ->
+                            if (ui.hasSecrets() && ui.modifyTime == 0L) {
+                                ui.modifyTime = System.currentTimeMillis() / 1000
+                            }
+                        }
+                        items.firstOrNull { it.itemUuid == editedUuid }
+                            ?.let { it.modifyTime = System.currentTimeMillis() / 1000 }
                         val base = e.items
                         val applied = base.map { baseItem ->
-                            items.firstOrNull { it.itemUuid == baseItem.itemUuid }
-                                ?.takeIf {
-                                    it.hasSecrets() || it.itemUuid == editedUuid
-                                } ?: baseItem
+                            val ui = items.firstOrNull { it.itemUuid == baseItem.itemUuid }
+                            if (ui == null || ui.modifyTime <= baseItem.modifyTime) baseItem
+                            else {
+                                Log.i(TAG, "save: ${ui.itemUuid.take(8)} — the UI edit wins " +
+                                    "(modifyTime ${ui.modifyTime} > ${baseItem.modifyTime})")
+                                ui
+                            }
                         } + items.filter { ui ->
-                            (ui.hasSecrets() || ui.itemUuid == editedUuid) &&
-                                base.none { it.itemUuid == ui.itemUuid }
+                            base.none { it.itemUuid == ui.itemUuid }
                         }
                         e.items = applied.toMutableList()
                     } else {
@@ -1748,9 +1762,12 @@ object VaultSession {
                     // closure captured the full list, so this is race-safe.
                     if (screenlockUnlockEnabled()) {
                         SealedVault.sealNowAwait(items, env, File(vaultFilePath()))
-                        val stubs = items.map { it.asStub() }
-                        env.items = stubs.toMutableList()
-                        state = State.Unlocked(stubs)
+                        // THE MODELS SEPARATED (see the promote): the state =
+                        // a FRESH stub list; loadedEnvelope (env) KEEPS the
+                        // just-saved full items — the next save's base. The
+                        // old `env.items = stubs` mutated the encryption
+                        // base to the stubs (the measured save-clobber).
+                        state = State.Unlocked(items.map { it.asStub() })
                         stubSession = true
                     }
                     Result.Success
@@ -1964,24 +1981,26 @@ object VaultSession {
             // the same shape — the freshness check above already gated it.
             if (items.isEmpty())
                 return Result.Success
-            // The tombstones = carried across the promote: the batch
-            // unseal's new envelope resets them, and the stub-session's
-            // deletes must survive the re-seal.
+            // THE TOMBSTONES carried across the promote (the batch unseal's
+            // new envelope resets them; the stub-session's deletes must
+            // survive the re-seal).
             val carriedTombstones = loadedEnvelope?.deletedItemUuids?.toList() ?: emptyList()
             val env = SealedVault.toEnvelope(items)
             rev = env.rev
-            loadedEnvelope = env
-            // THE STUB MODEL: the promote = the full items for the
-            // immediate write ops (the save/edit ride the auth window) —
-            // but the browsing must stay gated, so the session re-stubs
-            // (the secrets = in the cache; the detail = the unseal; the
-            // save's apply-diff = the stub mode).
-            env.items = items.map { it.asStub() }.toMutableList()
-            state = State.Unlocked(env.items)
-            stubSession = true
             env.deletedItemUuids = (carriedTombstones + env.deletedItemUuids)
                 .distinct().toMutableSet()
-            Log.i(TAG, "promoted sealed session (stubs): ${env.items.size} items, rev=${env.rev}")
+            // THE MODELS SEPARATED: loadedEnvelope = the FULL envelope (the
+            // save's encryption base — NEVER the stubs); the state = a
+            // SEPARATE stub list (the browsing gate). The old code mutated
+            // env.items to the stubs IN PLACE — the same reference as
+            // loadedEnvelope — so the next save's apply-diff base was the
+            // stubs and every non-edited item's secrets were zeroed into
+            // the vault file (the measured save-clobber).
+            loadedEnvelope = env
+            val stubs = items.map { it.asStub() }.toMutableList()
+            state = State.Unlocked(stubs)
+            stubSession = true
+            Log.i(TAG, "promoted sealed session (stubs): ${stubs.size} items, rev=${env.rev}")
             Result.Success
         } catch (e: Exception) {
             if (SealedVault.isKeyMismatch(e)) return Result.NeedsKeyDecrypt("Seal key regenerated")

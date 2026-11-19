@@ -236,6 +236,42 @@ class VaultSaveTransactionTest {
     }
 
     @Test
+    fun consecutiveStubSavesSurviveEachOther() = runBlocking {
+        // THE MEASURED CLOBBER: the promote and the save-tail mutated the
+        // loadedEnvelope to the STUBS (the same reference) — the next
+        // save's apply-diff base was the stubs and the PREVIOUS save's
+        // secrets were zeroed into the vault file. With the models
+        // separated (the envelope = the full, the state = the stubs) and
+        // the modifyTime resolution, consecutive edits must all survive.
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        val a = item("A").apply { password = "pw-a1" }
+        val b = item("B").apply { password = "pw-b0" }
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf(a, b)
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        // Save #1: edit A → pw-a2.
+        VaultSession.save(
+            listOf(a.copy(password = "pw-a2")), a.itemUuid)
+        // Save #2: edit B → pw-b2 (the UI's list = the stubs + the edited).
+        VaultSession.save(
+            listOf(b.copy(password = "pw-b2")), b.itemUuid)
+        // Save #3: re-edit A → pw-a3 (the newest wins for the same uuid).
+        VaultSession.save(
+            listOf(a.copy(password = "pw-a3")), a.itemUuid)
+        val plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertTrue("save #2's edit must be written", plain.contains("pw-b2"))
+        assertFalse("the pre-save stale value must be replaced", plain.contains("pw-b0"))
+        assertTrue("save #3's re-edit must win for the same uuid", plain.contains("pw-a3"))
+        assertFalse("the intermediate value must be replaced", plain.contains("pw-a2"))
+        assertFalse("no stubs may reach the vault", plain.contains("B\"}"))
+    }
+
+    @Test
     fun seedParsesUnsignedHexIds() = runBlocking {
         // THE UNSIGNED-PARSE REGRESSION: the ids with the high bit set (the
         // card's own 0xF3E2… among them) overflow the signed Long —
