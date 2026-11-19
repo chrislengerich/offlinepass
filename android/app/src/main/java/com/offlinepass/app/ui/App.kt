@@ -63,6 +63,7 @@ fun SetupChoiceScreen(
     onLoadBackupZip: () -> Unit = {},
     onEnrollFromGithubKeys: () -> Unit = {},
     onSshSelfTest: () -> Unit = {},
+    onShowGithubAuthKey: () -> Unit = {},
     onEnrollYubikeySsh: (sshLine: String, subkeyId: String) -> Unit = { _, _ -> },
     onClearStatus: () -> Unit = {}
 ) {
@@ -168,6 +169,9 @@ fun SetupChoiceScreen(
             }
             TextButton(onClick = onSshSelfTest) {
                 Text("Run SSH auth self-test")
+            }
+            TextButton(onClick = onShowGithubAuthKey) {
+                Text("Show auth key for GitHub")
             }
             OutlinedTextField(
                 value = subkeyId, onValueChange = { subkeyId = it },

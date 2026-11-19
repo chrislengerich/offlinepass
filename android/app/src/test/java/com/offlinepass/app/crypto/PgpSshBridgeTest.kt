@@ -423,6 +423,23 @@ class PgpSshBridgeTest {
     }
 
     @org.junit.Test
+    fun `rsaSshLine round-trips through parse and fingerprint`() {
+        val n = java.math.BigInteger(1, byteArrayOf(
+            0xC6.toByte(), 0x11, 0x7F.toByte(), 0x33, 0x44))
+        val e = java.math.BigInteger(1, byteArrayOf(0x01, 0x00, 0x01))
+        val line = PgpSshBridge.rsaSshLine(n, e, "offlinepass-test")
+        val parsed = PgpSshBridge.parsePublicKeyLine(line)
+        assertEquals("ssh-rsa", parsed.algorithm)
+        assertEquals("offlinepass-test", parsed.comment)
+        // The line's fingerprint = the live-key fingerprint — the same
+        // wire construction under both.
+        assertEquals(PgpSshBridge.rsaFingerprint(n, e),
+            PgpSshBridge.fingerprintOf(line))
+        // And the blank-comment form stays pasteable (no trailing space).
+        assertTrue(!PgpSshBridge.rsaSshLine(n, e, "").endsWith(" "))
+    }
+
+    @org.junit.Test
     fun `rsaFingerprint matches the enrolled line's fingerprint`() {
         // The live-card read (modulus + exponent BigIntegers) must produce
         // the SAME "SHA256:…" fingerprint as the enrolled SSH line — the

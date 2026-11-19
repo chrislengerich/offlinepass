@@ -650,6 +650,30 @@ class MainActivity : androidx.activity.ComponentActivity() {
      *  SetupChoice screen pre-load). */
     private var sshKeyBackScreen: Screen = Screen.Setup
 
+    /** The GitHub-auth-key dialog's line (null = hidden). Set by the
+     *  enrollment's no-match path (the desktop gpg command is gone —
+     *  the copy/paste loop is in-app) and the Setup's show button. */
+    private var githubAuthKeyDialog by androidx.compose.runtime.mutableStateOf<String?>(null)
+
+    /** Reads the ACTIVE slot's SSH line (no PIN, no touch) and opens the
+     *  copy-to-GitHub dialog. */
+    private fun showGithubAuthKey() {
+        lifecycleScope.launch {
+            val line = kotlinx.coroutines.withContext(
+                kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    com.offlinepass.app.crypto.YubiKitSshAuth.slotSshLine(
+                        applicationContext, VaultSession.sshAuthUseAut())
+                }.getOrNull()
+            }
+            if (line == null) {
+                status = "No security key connected (or USB permission missing)."
+            } else {
+                githubAuthKeyDialog = line
+            }
+        }
+    }
+
     /** Generates/refreshes the screenlock SSH key and shows its public
      *  key QR (scanned by the offlinepass extension). */
     private fun showSshKeyQr(back: Screen) {
@@ -847,6 +871,18 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     VaultSession.loadSshLineState.value = line
                     VaultSession.loadSubkeyIdState.value = idHex
                 })
+            // THE NO-MATCH LOOP CLOSER: the desktop gpg command is gone —
+            // the key itself + the copy/paste steps, in-app.
+            if (status.startsWith("No GitHub key")) {
+                val line = kotlinx.coroutines.withContext(
+                    kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching {
+                        com.offlinepass.app.crypto.YubiKitSshAuth.slotSshLine(
+                            applicationContext, VaultSession.sshAuthUseAut())
+                    }.getOrNull()
+                }
+                if (line != null) githubAuthKeyDialog = line
+            }
         }
     }
 
@@ -995,6 +1031,48 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         style = androidx.compose.material3.MaterialTheme.typography.bodyMedium)
                 },
                 confirmButton = {})
+        }
+        // THE COPY-TO-GITHUB DIALOG: the ACTIVE slot's SSH line + the
+        // in-app loop (copy → paste at github.com/settings/keys →
+        // re-run Enroll) — the desktop gpg step is gone. Every state:
+        // the first enrollment happens pre-load.
+        githubAuthKeyDialog?.let { keyLine ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { githubAuthKeyDialog = null },
+                title = { androidx.compose.material3.Text("Add the auth key to GitHub") },
+                text = {
+                    androidx.compose.foundation.layout.Column {
+                        androidx.compose.material3.Text(
+                            "1. Copy the key line below.\n" +
+                                "2. Open github.com/settings/keys → New SSH key → " +
+                                "paste as an Authentication key.\n" +
+                                "3. Re-run Enroll.",
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+                        androidx.compose.foundation.text.selection.SelectionContainer {
+                            androidx.compose.material3.Text(
+                                keyLine,
+                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = {
+                        val cm = applicationContext.getSystemService(
+                            android.content.Context.CLIPBOARD_SERVICE)
+                            as? android.content.ClipboardManager
+                        cm?.setPrimaryClip(android.content.ClipData.newPlainText(
+                            "offlinepass auth key", keyLine))
+                        sealedToast("Copied to the clipboard")
+                    }) { androidx.compose.material3.Text("Copy") }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = {
+                        githubAuthKeyDialog = null
+                        startActivity(android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://github.com/settings/keys")))
+                    }) { androidx.compose.material3.Text("Open GitHub") }
+                })
         }
         val pinCallbackNow = pinCallback
         if (pinCallbackNow != null) {
@@ -1224,6 +1302,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         status = (if (v.ok) "✅ SSH self-test OK — " else "❌ SSH self-test FAILED — ") + v.detail
                     }
                 },
+                onShowGithubAuthKey = { showGithubAuthKey() },
                 onEnrollYubikeySsh = { line, subkeyId -> enrollYubikeySsh(line, subkeyId) }
             )
             VaultSession.State.Locked -> when {
@@ -1806,6 +1885,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             status = (if (v.ok) "✅ SSH self-test OK — " else "❌ SSH self-test FAILED — ") + v.detail
                         }
                     },
+                    onShowGithubAuthKey = { showGithubAuthKey() },
                     onPickAuthSubkey = {
                         lifecycleScope.launch { pickAuthSubkey() }
                     },

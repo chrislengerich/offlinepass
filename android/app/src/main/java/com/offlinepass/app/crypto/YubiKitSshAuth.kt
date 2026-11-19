@@ -170,6 +170,52 @@ object YubiKitSshAuth {
         }
     }
 
+    /** The ACTIVE slot's full OpenSSH line — "ssh-rsa AAAA…
+     *  offlinepass-<holder>" — for the copy-to-GitHub flow. The same
+     *  unauthenticated reads as [slotKeyFingerprint] (no PIN, no touch);
+     *  the slot = the transport's setting ([useAut]). The line the
+     *  enrollment expects to find on github.com/settings/keys. */
+    fun slotSshLine(context: Context, useAut: Boolean): String? {
+        val device = findDevice(context) ?: return null
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: return null
+        if (!usbManager.hasPermission(device)) return null
+        val ykDevice = UsbYubiKeyDevice(usbManager, device)
+        val connection = ykDevice.openConnection(SmartCardConnection::class.java)
+        try {
+            val session = OpenPgpSession(connection as SmartCardConnection)
+            try {
+                val ref = if (useAut) com.yubico.yubikit.openpgp.KeyRef.AUT
+                else com.yubico.yubikit.openpgp.KeyRef.SIG
+                val fp = runCatching {
+                    session.applicationRelatedData.discretionary.getFingerprint(ref)
+                }.getOrNull()
+                val holder = runCatching {
+                    parseHolderName(session.getData(0x0065))
+                }.getOrNull()
+                // The comment: the cardholder (sanitized), else the key's
+                // low 16 bits — always a non-empty, pasteable label.
+                val comment = "offlinepass-" +
+                    (holder?.takeIf { it.isNotBlank() }?.replace(' ', '-')
+                        ?: (fp?.let { f ->
+                            "%04X".format(
+                                ((f[18].toInt() and 0xFF) shl 8) or (f[19].toInt() and 0xFF))
+                        } ?: "key"))
+                val pub = session.getPublicKey(ref)
+                return when (pub) {
+                    is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa ->
+                        com.offlinepass.app.crypto.PgpSshBridge
+                            .rsaSshLine(pub.modulus, pub.publicExponent, comment)
+                    else -> null
+                }
+            } finally {
+                session.close()
+            }
+        } finally {
+            runCatching { connection.close() }
+        }
+    }
+
     /**
      * Verifies the OpenPGP user PIN on the applet, then signs [payload]
      * (the pre-built PKCS#1 v1.5 block) with the card's SIGNATURE slot.

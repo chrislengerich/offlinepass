@@ -119,8 +119,9 @@ object GithubKeysEnrollment {
             return "The card could not prove the key: ${e.message}"
         }
         val matched = match(lines, nonce, rawSig)
-            ?: return "No GitHub key of $user matches this card — add the line " +
-                "with: gpg --export-ssh-key %016X!".format(keyId) + " (once, on a desktop)."
+            ?: return "No GitHub key of $user matches this security key — " +
+                "add the key's SSH line at github.com/settings/keys " +
+                "(New SSH key → Authentication key), then re-run Enroll."
         enroll(matched, keyId)
         return "Enrolled the card's key 0x%016X (verified against $user's GitHub " +
             "keys). Ready to load.".format(keyId)

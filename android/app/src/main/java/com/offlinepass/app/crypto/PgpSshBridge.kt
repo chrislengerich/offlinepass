@@ -48,19 +48,34 @@ object PgpSshBridge {
             .encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(parsed.wireBlob))
     }
 
+    /** The full OpenSSH public-key line ("ssh-rsa AAAA… <comment>") for a
+     *  LIVE RSA key (the card slot's read): the same wire construction
+     *  [rsaFingerprint] digests — one place owns the e-then-n order. */
+    fun rsaSshLine(
+        modulus: java.math.BigInteger,
+        exponent: java.math.BigInteger,
+        comment: String,
+    ): String {
+        // The ssh-rsa wire order: string(e) THEN string(n) (RFC 4253 §6.6 —
+        // the same order the existing sshBlobFor emits).
+        val blob = sshString("ssh-rsa".toByteArray()) +
+            sshString(sshMpint(exponent.toByteArray())) +
+            sshString(sshMpint(modulus.toByteArray()))
+        return "ssh-rsa " + java.util.Base64.getEncoder().encodeToString(blob) +
+            (if (comment.isBlank()) "" else " " + comment)
+    }
+
     /** The same ssh-keygen fingerprint for a LIVE RSA public key (the
      *  card slot's read at auth time): builds the ssh-rsa wire blob from
      *  the modulus + exponent and digests it — the same value the
      *  enrolled line's [fingerprintOf] yields, so live-vs-enrolled and
      *  card-vs-GitHub-security-log comparisons are direct. */
     fun rsaFingerprint(modulus: java.math.BigInteger, exponent: java.math.BigInteger): String {
-        // The ssh-rsa wire order: string(e) THEN string(n) (RFC 4253 §6.6 —
-        // the same order the existing sshBlobFor emits).
-        val blob = sshString("ssh-rsa".toByteArray()) +
-            sshString(sshMpint(exponent.toByteArray())) +
-            sshString(sshMpint(modulus.toByteArray()))
+        val line = rsaSshLine(modulus, exponent, "")
         return "SHA256:" + java.util.Base64.getEncoder().withoutPadding()
-            .encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(blob))
+            .encodeToString(
+                java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(parsePublicKeyLine(line).wireBlob))
     }
 
     fun parsePublicKeyLine(line: String): SshPublicKeyLine {

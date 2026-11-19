@@ -81,8 +81,8 @@ class GithubKeysEnrollmentFlowTest {
             cardIdentity = { 0x1L to ByteArray(20) },
             cardSign = { nonce -> cardSign(nonce) },
             enroll = { _, _ -> throw AssertionError("must not enroll") })
-        assertTrue(status.contains("No GitHub key of alice matches this card"))
-        assertTrue(status.contains("gpg --export-ssh-key"))
+        assertTrue(status.contains("No GitHub key of alice matches this security key"))
+        assertTrue(status.contains("github.com/settings/keys"))
     }
 
     @Test

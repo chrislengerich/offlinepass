@@ -60,6 +60,7 @@ fun SetupTabScreen(
     onEnrollYubikeySsh: (String, String) -> Unit = { _, _ -> },
     onPickAuthSubkey: () -> Unit = {},
     onSshSelfTest: () -> Unit = {},
+    onShowGithubAuthKey: () -> Unit = {},
     onRemoveDevice: (String) -> Unit = {}
 ) {
     val cfg = VaultSession.config()
@@ -348,6 +349,9 @@ fun SetupTabScreen(
             Text("YubiKey auth subkey: ${ykFp ?: "(line unparseable)"}", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = onSshSelfTest, enabled = busy == null) {
                 Text("Run SSH auth self-test")
+            }
+            TextButton(onClick = onShowGithubAuthKey, enabled = busy == null) {
+                Text("Show auth key for GitHub")
             }
             TextButton(onClick = onRemoveYubikeySsh, enabled = busy == null) {
                 Text("Remove")
