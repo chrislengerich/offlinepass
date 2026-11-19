@@ -304,6 +304,10 @@ fun GetStartedScreen(
             // digest) vs the AUT subkey (the dedicated authentication key —
             // the raw-RSA challenge, the caller pads; the transport is the
             // experiment). The switch = the pref the cardSign reads.
+            // The local state: the switch flips INSTANTLY (the prefs alone
+            // don't trigger a recomposition — the user's report: the toggle
+            // "doesn't engage").
+            var autOn by remember { mutableStateOf(sshAuthUseAut) }
             androidx.compose.material3.ListItem(
                 headlineContent = { Text("Use the AUT key for SSH auth") },
                 supportingContent = { Text("The dedicated authentication subkey " +
@@ -311,8 +315,8 @@ fun GetStartedScreen(
                     "experiment). Off = the SIG signing subkey.") },
                 trailingContent = {
                     androidx.compose.material3.Switch(
-                        checked = sshAuthUseAut,
-                        onCheckedChange = onSshAuthUseAut)
+                        checked = autOn,
+                        onCheckedChange = { autOn = it; onSshAuthUseAut(it) })
                 })
         } else {
             Text("The card's SSH line must be on GitHub (an account key), then " +
@@ -320,16 +324,16 @@ fun GetStartedScreen(
                 style = MaterialTheme.typography.bodySmall)
             Button(
                 onClick = {
-                    // Commit the field FIRST: the enrollment derives the
-                    // username from the draft — a stale draft enrolled the
-                    // wrong user's keys.
-                    // The draft = seeded by the load flow (the configured
-                    // remote); the enrollment derives the username from it.
+                    // The field's value commits HERE: the draft (the
+                    // enrollment's username) AND the remote (the sync's
+                    // transport) — without the configure the Setup stays
+                    // local-only and the sync button never appears.
                     val draft = ownerRepo.trim()
                     if (draft.contains("/") && !draft.startsWith("/") &&
                         !draft.endsWith("/")
                     ) {
                         VaultSession.saveConnectDraft(draft, "card")
+                        VaultSession.configure("git@github.com:$draft", emptyList())
                         VaultSession.loadRemoteState.value = "git@github.com:$draft"
                         onEnrollFromGithubKeys()
                     }
