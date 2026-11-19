@@ -998,8 +998,12 @@ object VaultSession {
                         prompt = { yubikeyPin() },
                         sign = { pin, payload ->
                             val sig = withTouchPrompt {
+                                // The TRANSPORT = the sshAuthUseAut's slot:
+                                // the SIG (the default) or the AUT (the
+                                // raw-RSA challenge — the wire-compatible,
+                                // AutKeyPathTest-proven).
                                 com.offlinepass.app.crypto.YubiKitSshAuth
-                                    .sign(context, pin, payload)
+                                    .sign(context, pin, payload, useAut = sshAuthUseAut())
                             }
                             yubikeyPinRemember(pin)
                             sig
@@ -2562,6 +2566,7 @@ object VaultSession {
                     }
                     is VaultGitClient.Divergence.Diverged -> {
                         Log.i(TAG, "diverged: merging ${div.headId.take(7)} with ${div.remoteId.take(7)}")
+                        syncStatus = "syncing: decrypting both sides for the merge…"
                         // The vault files are ENCRYPTED — decrypt before the
                         // merge (the card, one touch for the remote side).
                         // The previous code fed the ciphertext to
@@ -2651,7 +2656,12 @@ object VaultSession {
             rev = env.rev
             loadedEnvelope = env
             state = State.Unlocked(env.items)
-            sealIfEnabled(env.items, env)
+            // The re-seal = AWAITED: the post-sync item detail reads the
+            // cache's freshness — the async seal would race it (the stale
+            // = the card demanded per item).
+            runCatching {
+                SealedVault.sealNowAwait(env.items, env, File(vaultFilePath()))
+            }.onFailure { Log.w(TAG, "pull re-seal failed: ${it.message}") }
             // The stub model (see unlock) — the same conversion when the
             // screenlock is enrolled.
             if (screenlockUnlockEnabled()) {
