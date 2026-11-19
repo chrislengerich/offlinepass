@@ -2217,8 +2217,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     securityKeyLabels = VaultSession.securityKeyLabels(),
                     onSetSecurityKeyName = {
                         lifecycleScope.launch {
+                            // The SERIAL alone identifies the physical key —
+                            // the SSH-line read is a bonus (it updates the
+                            // entry's material); never block the dialog on it.
                             val id = VaultSession.readSecurityKeyIdentity()
-                            if (id == null || id.second.isEmpty()) {
+                            if (id == null) {
                                 status = "No security key attached (or USB permission " +
                                     "denied) — plug it in, then tap again."
                             } else {
