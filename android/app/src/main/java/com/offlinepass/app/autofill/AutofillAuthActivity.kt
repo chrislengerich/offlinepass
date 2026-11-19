@@ -75,64 +75,126 @@ class AutofillAuthActivity : ComponentActivity() {
                             listOf("https://$origin") else emptyList(),
                         password = PasswordGen.password())
                     AutofillRevealStore.put(item, "generate")
-                    // THE FLYUP = THE SAVE QUESTION, SELF-POSTED AT THE
-                    // GENERATE: the platform's save event = the
+                    // THE SILENT TRAY TRIGGER (not the UI — the UI = the
+                    // bottom card): the platform's save event = the
                     // user-typed-delta only — an all-autofilled submission
-                    // fires NOTHING — so the question must be OURS. The
-                    // banner = NON-BLOCKING: it sits while the user
-                    // completes the form; the tap = the yes (the screenlock
-                    // → the INSERT via the SAVE mode), the swipe = the no.
-                    AutofillSaveOffer.post(this@AutofillAuthActivity, origin, null, item.password)
-                    Log.i(TAG, "generated a password for $origin — RESULT_OK (the fill) + the flyup")
+                    // fires NOTHING — so the save question must be OURS
+                    // for generated passwords. The tray item = SILENT
+                    // (the LOW importance: no banner, no vibration — the
+                    // user's "too noisy"); its TAP = the bottom card
+                    // (yes/no) → the screenlock → the insert.
+                    AutofillSaveOffer.postSilentTrigger(
+                        this@AutofillAuthActivity, origin, null, item.password)
+                    Log.i(TAG, "generated a password for $origin — RESULT_OK (the fill) + the silent trigger")
                     setResult(RESULT_OK)
                     finish()
                 }
                 MODE_SAVE -> {
-                    // THE OS'S SAVE BANNER = THE DIALOGUE (the framework's
-                    // save UI = the yes/no — its tap hands us the confirmed
-                    // save). This mode = THE SCREENLOCK ONLY: the gate →
-                    // the INSERT (the URL from the origin, the username
-                    // optional) → the toast → back to the form. No card,
-                    // no second question — the user's spec.
+                    // THE BOTTOM CARD = THE QUESTION: yes/no over the form
+                    // (the bottom gravity, ~a quarter up), the outside tap
+                    // = the no. [Save] = the screenlock gate → the INSERT
+                    // (the URL from the origin, the username optional).
+                    // Launched BY THE FRAMEWORK from onSaveRequest (the
+                    // typed logins) or from the silent tray trigger (the
+                    // generated-password logins — the platform's save
+                    // event = the user-typed-delta only, so the question
+                    // must be ours for those).
+                    window.setGravity(android.view.Gravity.BOTTOM)
+                    window.setLayout(
+                        android.view.WindowManager.LayoutParams.MATCH_PARENT,
+                        android.view.WindowManager.LayoutParams.WRAP_CONTENT)
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Login"
-                    val item = ProtonItem(
-                        name = origin,
-                        username = intent.getStringExtra(EXTRA_USERNAME) ?: "",
-                        urls = if (origin.contains('.') && !origin.contains(' '))
-                            listOf("https://$origin") else emptyList(),
-                        password = intent.getStringExtra(EXTRA_PASSWORD) ?: "")
-                    val gate = ScreenlockGate.promptGate(
-                        this@AutofillAuthActivity,
-                        "Unlock offlinepass",
-                        "The device lock authorizes saving the login")
-                    if (!gate) {
-                        Log.i(TAG, "the save's gate declined")
-                        Toast.makeText(this@AutofillAuthActivity,
-                            "Not saved — the screen lock declined", Toast.LENGTH_LONG).show()
+                    val card = LinearLayout(this@AutofillAuthActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(56, 44, 56, 44)
+                        background = android.graphics.drawable.GradientDrawable().apply {
+                            setColor(0xFF1D1B20.toInt())
+                            cornerRadius = 36f
+                        }
+                    }
+                    card.addView(TextView(this@AutofillAuthActivity).apply {
+                        text = "Save this login to offlinepass?"
+                        textSize = 17f
+                        setTextColor(0xFFFFFFFF.toInt())
+                    })
+                    card.addView(TextView(this@AutofillAuthActivity).apply {
+                        text = origin + (intent.getStringExtra(EXTRA_USERNAME)
+                            ?.takeIf { it.isNotBlank() }?.let { " — $it" } ?: "")
+                        textSize = 13f
+                        setTextColor(0xFFCCC2DC.toInt())
+                    })
+                    val buttons = LinearLayout(this@AutofillAuthActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = android.view.Gravity.END
+                    }
+                    buttons.addView(Button(this@AutofillAuthActivity).apply {
+                        text = "Not now"
+                        setBackgroundColor(0x00000000)
+                        setTextColor(0xFFCCC2DC.toInt())
+                        setOnClickListener {
+                            Log.i(TAG, "the card: the no — done")
+                            setResult(RESULT_OK)
+                            finish()
+                        }
+                    })
+                    buttons.addView(Button(this@AutofillAuthActivity).apply {
+                        text = "Save"
+                        setBackgroundColor(0x00000000)
+                        setTextColor(0xFFD0BCFF.toInt())
+                        setOnClickListener {
+                            isEnabled = false
+                            lifecycleScope.launch {
+                                val gate = ScreenlockGate.promptGate(
+                                    this@AutofillAuthActivity,
+                                    "Unlock offlinepass",
+                                    "The device lock authorizes saving the login")
+                                if (!gate) {
+                                    Log.i(TAG, "the card save's gate declined")
+                                    Toast.makeText(this@AutofillAuthActivity,
+                                        "Not saved — the screen lock declined",
+                                        Toast.LENGTH_LONG).show()
+                                    setResult(RESULT_OK)
+                                    finish()
+                                    return@launch
+                                }
+                                val item = ProtonItem(
+                                    name = origin,
+                                    username = intent.getStringExtra(EXTRA_USERNAME) ?: "",
+                                    urls = if (origin.contains('.') && !origin.contains(' '))
+                                        listOf("https://$origin") else emptyList(),
+                                    password = intent.getStringExtra(EXTRA_PASSWORD) ?: "")
+                                val r = try {
+                                    VaultSession.addSealed(item.copy(modifyTime = 0))
+                                } catch (e: Exception) {
+                                    VaultSession.Result.Error(
+                                        "${e.javaClass.simpleName}: ${e.message}")
+                                }
+                                when (r) {
+                                    VaultSession.Result.Success -> {
+                                        Log.i(TAG, "the card save: Saved ✓ " +
+                                            "(rev ${VaultSession.currentRev()})")
+                                        Toast.makeText(this@AutofillAuthActivity,
+                                            "Saved ✓", Toast.LENGTH_LONG).show()
+                                        setResult(RESULT_OK)
+                                        finish()
+                                    }
+                                    else -> {
+                                        Log.w(TAG, "the card save FAILED: $r")
+                                        Toast.makeText(this@AutofillAuthActivity,
+                                            "The save failed — $r", Toast.LENGTH_LONG).show()
+                                        isEnabled = true
+                                    }
+                                }
+                            }
+                        }
+                    })
+                    card.addView(buttons)
+                    setContentView(card)
+                    // The outside tap = the no.
+                    window.decorView.setOnClickListener {
+                        Log.i(TAG, "the card: dismissed outside")
                         setResult(RESULT_OK)
                         finish()
-                        return@launch
-                    }
-                    val r = try {
-                        VaultSession.addSealed(item.copy(modifyTime = 0))
-                    } catch (e: Exception) {
-                        VaultSession.Result.Error("${e.javaClass.simpleName}: ${e.message}")
-                    }
-                    when (r) {
-                        VaultSession.Result.Success -> {
-                            Log.i(TAG, "the banner-save: Saved ✓ (rev ${VaultSession.currentRev()})")
-                            Toast.makeText(this@AutofillAuthActivity,
-                                "Saved ✓", Toast.LENGTH_LONG).show()
-                            setResult(RESULT_OK)
-                            finish()
-                        }
-                        else -> {
-                            Log.w(TAG, "the banner-save FAILED: $r")
-                            Toast.makeText(this@AutofillAuthActivity,
-                                "The save failed — $r", Toast.LENGTH_LONG).show()
-                            setResult(RESULT_OK)
-                            finish()
-                        }
                     }
                 }
                 else -> {

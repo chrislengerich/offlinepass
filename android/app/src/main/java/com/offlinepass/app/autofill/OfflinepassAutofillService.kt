@@ -101,17 +101,35 @@ class OfflinepassAutofillService : AutofillService() {
             return
         }
         val origin = fields?.webDomain ?: fields?.appPackage ?: "the login"
-        // THE DEDUP: the generated password = ALREADY SAVED at the
-        // generate (the store holds it) — the framework's save request
-        // for the SAME password = acked silently (no duplicate entry, no
-        // second prompt). The genuinely new/typed logins = the flyup.
+        // THE GENERATED PASSWORD: the silent tray trigger is already
+        // pending (posted at the generate) — its tap = the bottom card.
+        // Here we only refresh the trigger's username (the user typed it
+        // after the generate) and ack the framework — no second question,
+        // no duplicate entry.
         if (AutofillRevealStore.peek()?.password == pw) {
-            Log.i(TAG, "onSaveRequest: the generated password = already saved — acked")
+            AutofillSaveOffer.postSilentTrigger(
+                applicationContext, origin, fields?.usernameValue, pw)
+            Log.i(TAG, "onSaveRequest: the generated password — " +
+                "the silent trigger refreshed (username=${!fields?.usernameValue.isNullOrBlank()})")
             callback.onSuccess()
             return
         }
-        AutofillSaveOffer.post(applicationContext, origin, fields?.usernameValue, pw)
-        callback.onSuccess()
+        // THE TYPED LOGIN (not from the generate): the framework launches
+        // the SAVE-mode bottom card DIRECTLY over the form (the armed
+        // intent) — the yes = the screenlock → the insert.
+        val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
+            .putExtra(AutofillAuthActivity.EXTRA_MODE, AutofillAuthActivity.MODE_SAVE)
+            .putExtra(AutofillAuthActivity.EXTRA_NAME, origin)
+            .putExtra(AutofillAuthActivity.EXTRA_USERNAME, fields?.usernameValue ?: "")
+            .putExtra(AutofillAuthActivity.EXTRA_PASSWORD, pw)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        val pi = android.app.PendingIntent.getActivity(
+            appContext(), 500, intent,
+            android.app.PendingIntent.FLAG_IMMUTABLE or
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+        Log.i(TAG, "onSaveRequest: the card armed for $origin " +
+            "(username=${!fields?.usernameValue.isNullOrBlank()})")
+        callback.onSuccess(pi.intentSender)
     }
 
     /** THE SAVE CONTRACT: the declared savable fields — without this the
