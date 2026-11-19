@@ -2054,12 +2054,15 @@ object VaultSession {
         return save(merged, edited.itemUuid)
     }
 
-    /** THE UPSERT for the autofill's saves: by the ORIGIN (the name/the
-     *  urls) — the existing entry = the update (the password-change
-     *  semantics); the new = the append. The framework's save-request
-     *  items and the generate's both carry fresh uuids — the uuid = NOT
-     *  the identity here, the origin is. The measured drop: the SAVE
-     *  mode's edit-path save no-opped the brand-new item (4→3). */
+    /** THE UPSERT for the autofill's saves: the key = SITE + USERNAME —
+     *  the same origin AND the same (possibly empty) username = the
+     *  update (the password-change semantics, the entry's other fields
+     *  preserved); anything else = the append. The framework's
+     *  save-request items and the generate's both carry fresh uuids —
+     *  the uuid = NOT the identity here, the (site, username) pair is.
+     *  The empty-username generate re-run at the same site = the update
+     *  (no duplicate pile-up). The measured drop: the SAVE mode's
+     *  edit-path save no-opped the brand-new item (4→3). */
     suspend fun upsertSealed(item: ProtonItem): Result {
         when (val p = promoteSealedSession()) {
             is Result.Success -> {}
@@ -2067,15 +2070,28 @@ object VaultSession {
         }
         val items = (state as? State.Unlocked)?.items
             ?: return Result.Error("Session unavailable")
+        val siteMatch: (ProtonItem) -> Boolean = if (item.urls.isNotEmpty()) { existing ->
+            existing.urls.any { u -> item.urls.contains(u) }
+        } else { existing ->
+            existing.name.equals(item.name, ignoreCase = true)
+        }
         val existing = items.firstOrNull { existing ->
-            existing.name.equals(item.name, ignoreCase = true) ||
-                (item.urls.isNotEmpty() &&
-                    existing.urls.any { u -> item.urls.contains(u) })
+            siteMatch(existing) &&
+                existing.username.trim() == item.username.trim()
         }
         return if (existing != null) {
-            Log.i(TAG, "upsertSealed: the existing entry ${existing.name.take(20)} — the update")
-            item.itemUuid = existing.itemUuid
-            saveSealed(item)
+            Log.i(TAG, "upsertSealed: the existing entry ${existing.name.take(20)} " +
+                "(site+username) — the update")
+            // THE STATE'S ITEMS = THE STUBS after the promote (asStub
+            // strips the password AND the note AND the totp) — the update
+            // base must be the FULL item from loadedEnvelope (the promote
+            // just installed it), or the update would zero the entry's
+            // other fields (the measured note loss in the tests).
+            val full = loadedEnvelope?.items
+                ?.firstOrNull { it.itemUuid == existing.itemUuid } ?: existing
+            val updated = full.copy(password = item.password,
+                username = item.username)
+            saveSealed(updated)
         } else {
             Log.i(TAG, "upsertSealed: the new entry ${item.name.take(20)} — the append")
             addSealed(item)

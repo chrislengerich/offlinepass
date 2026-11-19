@@ -405,7 +405,7 @@ class AutofillAuthActivity : ComponentActivity() {
                 listOf("https://$origin") else emptyList(),
             password = password)
         val r = try {
-            VaultSession.addSealed(item.copy(modifyTime = 0))
+            VaultSession.upsertSealed(item.copy(modifyTime = 0))
         } catch (e: Exception) {
             VaultSession.Result.Error("${e.javaClass.simpleName}: ${e.message}")
         }

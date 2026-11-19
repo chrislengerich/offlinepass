@@ -323,7 +323,10 @@ class VaultSaveTransactionTest {
         VaultSession.adopt(Envelope(deviceId = "t").also { e ->
             e.rev = 3
             e.items = mutableListOf(
-                item("github.com").apply { password = "pw-old"; modifyTime = 100 })
+                item("github.com").apply {
+                    password = "pw-old"; modifyTime = 100
+                    urls = listOf("https://github.com")
+                })
         })
         kotlinx.coroutines.withTimeout(5000) {
             while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
@@ -374,6 +377,78 @@ class VaultSaveTransactionTest {
         // The app's list = the stubs INCLUDING the new entry.
         val after = (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
         assertTrue("the new entry must be in the session", after.any { it.name == "com.offlinepass.autofilltest" })
+    }
+
+    @Test
+    fun upsertSealedUpdatesOnSameSiteAndUsername() = runBlocking {
+        // THE UPSERT KEY = SITE + USERNAME: the same origin AND the same
+        // username = the password-change update — the entry's OTHER fields
+        // (notes, the name, the uuid) preserved. The empty-username
+        // generate re-run at the same site = the update (no pile-up).
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf(item("site.example").apply {
+                username = "user@x"
+                password = "old-pw"
+                urls = listOf("https://site.example")
+                note = "keep me"
+            })
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        val gen = item("site.example").apply {
+            username = "user@x"
+            password = "new-pw"
+            urls = listOf("https://site.example")
+        }
+        val r = VaultSession.upsertSealed(gen)
+        assertTrue("upsertSealed: $r", r is VaultSession.Result.Success)
+        val plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        if (!plain.contains("keep me")) {
+            println("DEBUG the vault file: $plain")
+        }
+        assertTrue("the new password must be in the vault", plain.contains("new-pw"))
+        assertTrue("the old password must be replaced", !plain.contains("old-pw"))
+        assertTrue("the notes must survive the update", plain.contains("keep me"))
+        val after = (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
+        assertEquals("no duplicate — one entry for the site+username", 1,
+            after.count { it.name == "site.example" && it.username == "user@x" })
+    }
+
+    @Test
+    fun upsertSealedAppendsOnDifferentUsername() = runBlocking {
+        // THE OTHER HALF OF THE KEY: the same site with a DIFFERENT
+        // username = a distinct login — the append, not the update.
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf(item("site.example").apply {
+                username = "user@x"
+                password = "pw-1"
+                urls = listOf("https://site.example")
+            })
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        val gen = item("site.example").apply {
+            username = "other@x"
+            password = "pw-2"
+            urls = listOf("https://site.example")
+        }
+        val r = VaultSession.upsertSealed(gen)
+        assertTrue("upsertSealed: $r", r is VaultSession.Result.Success)
+        // The state's items = the stubs (the secrets live in the vault
+        // file + the sealed cache) — the secrets assert against the FILE.
+        val plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertTrue("both logins' secrets must be in the vault",
+            plain.contains("pw-1") && plain.contains("pw-2"))
+        assertTrue("two logins at the same site",
+            plain.split("\"itemUuid\"").size == 3)
     }
 
     @Test
