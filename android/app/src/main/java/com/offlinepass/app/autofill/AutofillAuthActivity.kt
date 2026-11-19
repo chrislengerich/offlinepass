@@ -148,12 +148,12 @@ class AutofillAuthActivity : ComponentActivity() {
             setOnClickListener {
                 it.isEnabled = false
                 lifecycleScope.launch {
-                    // THE ADD PATH: the generated entry = brand-new — the
-                    // EDIT path (saveSealed) silently no-ops for it (the
-                    // swap-by-uuid never matched — the measured "Saved ✓
-                    // but 3 items sealed").
+                    // THE UPSERT: by the ORIGIN — the existing entry (the
+                    // password-change case) = the update; the new = the
+                    // append. The edit path silently no-opped the
+                    // brand-new item (the measured 4→3 drop).
                     val r = try {
-                        VaultSession.addSealed(item.copy(modifyTime = 0))
+                        VaultSession.upsertSealed(item.copy(modifyTime = 0))
                     } catch (e: Exception) {
                         VaultSession.Result.Error("${e.javaClass.simpleName}: ${e.message}")
                     }

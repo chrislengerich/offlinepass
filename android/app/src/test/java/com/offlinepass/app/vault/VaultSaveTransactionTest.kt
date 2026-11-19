@@ -313,6 +313,42 @@ class VaultSaveTransactionTest {
     }
 
     @Test
+    fun upsertSealedUpdatesByOriginAndAppendsNew() = runBlocking {
+        // THE UPSERT: the autofill's saves carry FRESH uuids — the
+        // identity = the ORIGIN. The same site = the password-update;
+        // the new site = the append. The measured drop: the SAVE mode's
+        // edit-path save no-opped the brand-new item (4→3).
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf(
+                item("github.com").apply { password = "pw-old"; modifyTime = 100 })
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        // The same origin, the fresh uuid — the framework's save shape.
+        val sameOrigin = item("github.com").apply {
+            password = "pw-new"; modifyTime = 0
+            urls = listOf("https://github.com")
+        }
+        val r1 = VaultSession.upsertSealed(sameOrigin)
+        assertTrue("the update: $r1", r1 is VaultSession.Result.Success)
+        var plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertTrue("the password must be updated", plain.contains("pw-new"))
+        assertFalse("the old password must be replaced", plain.contains("pw-old"))
+        assertTrue("no duplicate entry", 
+            plain.split("\"itemUuid\"").size == 2)
+        // A different origin = the append.
+        val other = item("other.com").apply { password = "pw-other" }
+        val r2 = VaultSession.upsertSealed(other)
+        assertTrue("the append: $r2", r2 is VaultSession.Result.Success)
+        plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertTrue("the appended entry's secret", plain.contains("pw-other"))
+    }
+
+    @Test
     fun addSealedAppendsBrandNewEntry() = runBlocking {
         // THE MEASURED NO-OP: the generated entry went through the EDIT
         // path (the swap-by-uuid never matched) — "Saved ✓" with the

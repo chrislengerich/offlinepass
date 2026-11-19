@@ -2054,6 +2054,34 @@ object VaultSession {
         return save(merged, edited.itemUuid)
     }
 
+    /** THE UPSERT for the autofill's saves: by the ORIGIN (the name/the
+     *  urls) — the existing entry = the update (the password-change
+     *  semantics); the new = the append. The framework's save-request
+     *  items and the generate's both carry fresh uuids — the uuid = NOT
+     *  the identity here, the origin is. The measured drop: the SAVE
+     *  mode's edit-path save no-opped the brand-new item (4→3). */
+    suspend fun upsertSealed(item: ProtonItem): Result {
+        when (val p = promoteSealedSession()) {
+            is Result.Success -> {}
+            else -> return p
+        }
+        val items = (state as? State.Unlocked)?.items
+            ?: return Result.Error("Session unavailable")
+        val existing = items.firstOrNull { existing ->
+            existing.name.equals(item.name, ignoreCase = true) ||
+                (item.urls.isNotEmpty() &&
+                    existing.urls.any { u -> item.urls.contains(u) })
+        }
+        return if (existing != null) {
+            Log.i(TAG, "upsertSealed: the existing entry ${existing.name.take(20)} — the update")
+            item.itemUuid = existing.itemUuid
+            saveSealed(item)
+        } else {
+            Log.i(TAG, "upsertSealed: the new entry ${item.name.take(20)} — the append")
+            addSealed(item)
+        }
+    }
+
     /** THE ADD path for the sealed session (the autofill's generated
      *  entry): unlike [saveSealed] (the EDIT semantics — the swap by
      *  uuid, which SILENTLY NO-OPs for a brand-new item), this appends.
