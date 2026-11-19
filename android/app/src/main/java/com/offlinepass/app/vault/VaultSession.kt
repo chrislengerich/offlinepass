@@ -2973,8 +2973,13 @@ object VaultSession {
     // keys/ or the recipient config — it is appended to the export's
     // recipient set only (the permanent recipients stay first) and dies with
     // the process.
-    var tempRecipientArmored: String? = null
-    var tempRecipientLabel: String? = null
+    var tempRecipientArmored: String? by mutableStateOf(null)
+    var tempRecipientLabel: String? by mutableStateOf(null)
+
+    /** The Share export encryption: ON (default) = the OpenPGP envelope
+     *  (permanent recipients + the scanned key); OFF = the PLAINTEXT vault
+     *  JSON — the secrets in the clear, for handoffs with no PGP setup. */
+    var exportEncrypted: Boolean by mutableStateOf(true)
 
     fun setTempRecipient(armored: String) {
         val id = runCatching {
@@ -2994,13 +2999,14 @@ object VaultSession {
         if (stubSession && !promoteIfStub()) throw IllegalStateException(
             "The sealed cache is missing or stale — re-unlock with the key, then export")
         val env = loadedEnvelope ?: Envelope(deviceId = config()?.deviceId ?: "")
+        val plain = env.toJsonObject().toString().toByteArray(Charsets.UTF_8)
+        if (!exportEncrypted) return plain
         val keyIds = cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()
         if (keyIds.isEmpty()) throw IllegalStateException("No permanent recipients to include")
         val keys = loadRecipientKeysFor(gitRoot(), keyIds).toMutableList()
         tempRecipientArmored?.let {
             keys += com.offlinepass.app.crypto.OpenPgpCardCrypto.loadRecipientKeys(it.toByteArray())
         }
-        val plain = env.toJsonObject().toString().toByteArray(Charsets.UTF_8)
         return com.offlinepass.app.crypto.OpenPgpCardCrypto.encryptToBytes(plain, "10.gpg", keys)
     }
 

@@ -395,8 +395,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 try {
                     val bytes = VaultSession.exportVaultToTempRecipient()
                     contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
-                    status = "Exported (%d bytes) — permanent recipients + %s.".
-                        format(bytes.size, VaultSession.tempRecipientLabel ?: "?")
+                    status = "Exported (%d bytes, %s).".format(bytes.size,
+                        if (VaultSession.exportEncrypted)
+                            "permanent recipients" +
+                                (VaultSession.tempRecipientLabel?.let { " + $it" } ?: "")
+                        else "PLAINTEXT")
                 } catch (e: Exception) {
                     status = "Export failed: ${e.message}"
                 }
@@ -410,67 +413,96 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
 
     private suspend fun restoreLoop(uri: android.net.Uri) {
-        // THE CARD = THE DECRYPT: the USB permission first (the FILE grant
-        // ≠ the CARD grant — the restore's decrypt = the card = the
-        // permission was the blocker the user hit on the saved-USB-vault
-        // load; the QRFT's file route = the same shared loop).
-        if (!ensureUsbPermission()) {
-            status = "No security key attached or permission denied — " +
-                "the vault decrypt needs the card."
-            return
-        }
-        val staged = File(cacheDir, "restored.gpg")
+        val staged = File(cacheDir, "restored.in")
         try {
             contentResolver.openInputStream(uri)?.use { ins ->
                 staged.outputStream().use { ins.copyTo(it) }
             }
-            // THE RECIPIENT ADOPTION — RESTORE ONLY: a LOCAL-ONLY restore
-            // (no repo configured) adopts the file's recipients (the file IS
-            // the vault's origin). A MERGE into an existing repo does NOT:
-            // the import decrypts via the PKESK set and re-saves to the
-            // phone's OWN recipient set (see the branch below).
-            if (VaultSession.config() == null)
-                VaultSession.adoptRecipientsFromVaultFile(staged)
-            val restored: Envelope = run {
-                var env: VaultSession.DecryptEnvelope.Ok? = null
-                var guard = 0
-                while (guard++ < 2) {
-                    when (val r = VaultSession.decryptEnvelope(staged)) {
-                        is VaultSession.DecryptEnvelope.Ok -> { env = r; break }
-                        is VaultSession.DecryptEnvelope.Interaction -> {
-                            launchInteraction(r.pendingIntent); awaitInteraction()
-                        }
-                        is VaultSession.DecryptEnvelope.Error ->
-                            { status = "Restore failed: ${r.message}"; return }
-                    }
-                }
-                env?.env ?: run { status = "Restore decrypt failed after retry."; return }
-            }
-            val current = if (File(VaultSession.vaultFilePath()).exists())
-                (VaultSession.decryptEnvelope(File(VaultSession.vaultFilePath())) as? VaultSession.DecryptEnvelope.Ok)?.env
-            else null
-            val merged = if (current == null) restored else VaultMerge.unionMerge(current, restored)
-            if (VaultSession.config() == null) {
-                // Local-only restore: the imported file becomes the vault.
-                // The envelope is ALREADY decrypted — adopt it directly.
-                VaultSession.configure(null, emptyList())
-                File(VaultSession.vaultFilePath()).parentFile?.mkdirs()
-                File(VaultSession.vaultFilePath()).writeBytes(staged.readBytes())
-                VaultSession.adopt(restored)
-                status = "Restored (local-only, rev ${restored.rev})."
-                screen = Screen.Search
+            val bytes = staged.readBytes()
+            val restored: Envelope
+            var cipherFile: File? = staged
+            if (bytes.isNotEmpty() && bytes[0] == '{'.code.toByte()) {
+                // THE PLAINTEXT BRANCH: an unencrypted Share export (the
+                // checkmark off) — the bare envelope JSON or the
+                // offlinepass-vault-export wrapper with the envelope under
+                // "plain". No card, no decrypt, NO recipient adoption (a
+                // plaintext import has no PKESKs to adopt).
+                val text = String(bytes, Charsets.UTF_8)
+                val jo = runCatching { org.json.JSONObject(text) }.getOrNull()
+                restored = if (jo?.optString("type") == "offlinepass-vault-export")
+                    Envelope.fromJson(jo.optString("plain"))
+                else Envelope.fromJson(text)
+                cipherFile = null
             } else {
-                status = when (val r = saveLoop(merged.items)) {
-                    VaultSession.Result.Success -> "Restored + merged (rev ${VaultSession.currentRev()})."
-                    else -> "Merged locally; save reported: $r"
+                // THE CARD = THE DECRYPT: the USB permission first (the FILE
+                // grant ≠ the CARD grant — the restore's decrypt = the card
+                // = the permission was the blocker the user hit on the
+                // saved-USB-vault load; the QRFT's file route = the same
+                // shared loop).
+                if (!ensureUsbPermission()) {
+                    status = "No security key attached or permission denied — " +
+                        "the vault decrypt needs the card."
+                    return
                 }
-                screen = Screen.Search
+                // THE RECIPIENT ADOPTION — RESTORE ONLY: a LOCAL-ONLY restore
+                // (no repo configured) adopts the file's recipients (the file
+                // IS the vault's origin). A MERGE into an existing repo does
+                // NOT: the import decrypts via the PKESK set and re-saves to
+                // the phone's OWN recipient set (see applyRestoredEnvelope).
+                if (VaultSession.config() == null)
+                    VaultSession.adoptRecipientsFromVaultFile(staged)
+                restored = run {
+                    var env: VaultSession.DecryptEnvelope.Ok? = null
+                    var guard = 0
+                    while (guard++ < 2) {
+                        when (val r = VaultSession.decryptEnvelope(staged)) {
+                            is VaultSession.DecryptEnvelope.Ok -> { env = r; break }
+                            is VaultSession.DecryptEnvelope.Interaction -> {
+                                launchInteraction(r.pendingIntent); awaitInteraction()
+                            }
+                            is VaultSession.DecryptEnvelope.Error ->
+                                { status = "Restore failed: ${r.message}"; return }
+                        }
+                    }
+                    env?.env ?: run { status = "Restore decrypt failed after retry."; return }
+                }
             }
+            applyRestoredEnvelope(restored, cipherFile)
         } catch (e: Exception) {
             status = "Restore failed: ${e.javaClass.simpleName}: ${e.message}"
         } finally {
-            // Staged ciphertext copy — hygiene: never left in the cache dir.
+            // Staged copy — hygiene: never left in the cache dir.
             com.offlinepass.app.vault.SecureWipe.file(staged)
+        }
+    }
+
+    /** The shared import tail: union-merge the restored envelope into the
+     *  current state — a MERGE saves a child commit to the phone's OWN
+     *  recipient set (no adoption); a LOCAL-ONLY restore adopts the vault
+     *  as-is. [cipherFile] = the staged ciphertext for a local-only
+     *  restore (the file stays as the vault); null for a plaintext import
+     *  (nothing sealed to write — the next save creates the vault file). */
+    private suspend fun applyRestoredEnvelope(restored: Envelope, cipherFile: File?) {
+        val current = if (File(VaultSession.vaultFilePath()).exists())
+            (VaultSession.decryptEnvelope(File(VaultSession.vaultFilePath())) as? VaultSession.DecryptEnvelope.Ok)?.env
+        else null
+        val merged = if (current == null) restored else VaultMerge.unionMerge(current, restored)
+        if (VaultSession.config() == null) {
+            // Local-only restore: the imported file becomes the vault.
+            VaultSession.configure(null, emptyList())
+            if (cipherFile != null) {
+                File(VaultSession.vaultFilePath()).parentFile?.mkdirs()
+                File(VaultSession.vaultFilePath()).writeBytes(cipherFile.readBytes())
+            }
+            VaultSession.adopt(restored)
+            status = "Restored (local-only, rev ${restored.rev})."
+            screen = Screen.Search
+        } else {
+            status = when (val r = saveLoop(merged.items)) {
+                VaultSession.Result.Success -> "Restored + merged (rev ${VaultSession.currentRev()})."
+                else -> "Merged locally; save reported: $r"
+            }
+            screen = Screen.Search
         }
     }
 
@@ -1052,17 +1084,25 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                     // restore path — merge into an existing
                                     // repo (NO adoption) or adopt on a
                                     // local-only restore (the branch inside).
-                                    val decoded = runCatching {
-                                        java.util.Base64.getDecoder()
-                                            .decode(jo?.optString("cipher") ?: "")
-                                    }.getOrNull()
-                                    if (decoded == null) {
-                                        status = "Vault export payload undecodable."
+                                    // Plaintext exports ride under "plain"
+                                    // (no card needed); encrypted under
+                                    // "cipher".
+                                    val plain = jo?.optString("plain") ?: ""
+                                    if (plain.isNotBlank()) {
+                                        applyRestoredEnvelope(Envelope.fromJson(plain), null)
                                     } else {
-                                        val staged = File(cacheDir, "qrft-temp-export.gpg")
-                                        staged.writeBytes(decoded)
-                                        restoreLoop(android.net.Uri.parse(
-                                            "file://" + staged.absolutePath))
+                                        val decoded = runCatching {
+                                            java.util.Base64.getDecoder()
+                                                .decode(jo?.optString("cipher") ?: "")
+                                        }.getOrNull()
+                                        if (decoded == null) {
+                                            status = "Vault export payload undecodable."
+                                        } else {
+                                            val staged = File(cacheDir, "qrft-temp-export.gpg")
+                                            staged.writeBytes(decoded)
+                                            restoreLoop(android.net.Uri.parse(
+                                                "file://" + staged.absolutePath))
+                                        }
                                     }
                                 }
                                 else -> importQrftPayload(payload)
@@ -2000,11 +2040,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                 // The launcher's callback does the write —
                                 // pre-validate here so a bad state surfaces
                                 // before the file picker opens.
-                                if (VaultSession.tempRecipientArmored == null)
-                                    status = "Scan a recipient key first."
-                                else if (VaultSession.state !is VaultSession.State.Unlocked)
+                                if (VaultSession.state !is VaultSession.State.Unlocked)
                                     status = "Unlock the vault first."
-                                else tempExportLauncher.launch("offlinepass-export.gpg")
+                                else tempExportLauncher.launch(
+                                    if (VaultSession.exportEncrypted) "offlinepass-export.gpg"
+                                    else "offlinepass-export-PLAINTEXT.json")
                             } catch (e: Exception) {
                                 status = "Export failed: ${e.message}"
                             }
@@ -2013,17 +2053,25 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onExportTempQrft = {
                         lifecycleScope.launch {
                             try {
-                                status = "Encrypting for the handoff…"
+                                status = if (VaultSession.exportEncrypted)
+                                    "Encrypting for the handoff…" else "Exporting PLAINTEXT…"
                                 val bytes = withContext(kotlinx.coroutines.Dispatchers.IO) {
                                     VaultSession.exportVaultToTempRecipient()
                                 }
-                                // The payload is the RAW JSON (the cipher is
-                                // base64 INSIDE it) — the scanner routes on
-                                // the leading "{" and reads the type field.
-                                val payload = org.json.JSONObject()
+                                // The payload is the RAW JSON — the scanner
+                                // routes on the leading "{" and reads the
+                                // type field. Encrypted = the cipher under
+                                // "cipher"; plaintext = the envelope JSON
+                                // under "plain".
+                                val payload = if (VaultSession.exportEncrypted)
+                                    org.json.JSONObject()
+                                        .put("type", "offlinepass-vault-export")
+                                        .put("cipher",
+                                            java.util.Base64.getEncoder().encodeToString(bytes))
+                                        .toString()
+                                else org.json.JSONObject()
                                     .put("type", "offlinepass-vault-export")
-                                    .put("cipher",
-                                        java.util.Base64.getEncoder().encodeToString(bytes))
+                                    .put("plain", String(bytes, Charsets.UTF_8))
                                     .toString()
                                 sshKeyBackScreen = screen
                                 screen = Screen.QrftPayload(payload)

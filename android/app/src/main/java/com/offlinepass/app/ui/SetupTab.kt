@@ -220,11 +220,30 @@ fun SetupTabScreen(
             else "Scanned: $tempRecipientLabel (session only; exports include it)",
             style = MaterialTheme.typography.bodySmall
         )
+        if (VaultSession.recipientKeyIds().isEmpty())
+            Text("(no permanent recipients)", style = MaterialTheme.typography.bodySmall)
+        VaultSession.recipientKeyIds().forEach { id ->
+            Text("0x%016X".format(id), style = MaterialTheme.typography.bodySmall)
+        }
         Button(onClick = onScanTempRecipient, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Scan key")
         }
         Button(onClick = onShowDeviceKey, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Show key")
+        }
+
+        Row(modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Checkbox(checked = VaultSession.exportEncrypted, onCheckedChange = {
+                VaultSession.exportEncrypted = it
+            })
+            Text(
+                "Encrypt the vault export" +
+                    if (VaultSession.exportEncrypted) ""
+                    else " — OFF: the export is PLAINTEXT (anyone with the file reads everything)",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall
+            )
         }
 
         Text("USB", style = MaterialTheme.typography.labelLarge)
