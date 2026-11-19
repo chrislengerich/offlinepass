@@ -118,10 +118,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // unlock/promotion must not insta-lock the fresh session.
         lastInteractionMs = android.os.SystemClock.elapsedRealtime()
         if (!VaultSession.screenLockRequired()) return
-        val minutes = VaultSession.autoLockMinutes()
-        if (minutes <= 0) return
+        val seconds = VaultSession.autoLockSeconds()
+        if (seconds <= 0) return
         if (VaultSession.state !is VaultSession.State.Unlocked) return
-        val timeoutMs = minutes * 60_000L
+        val timeoutMs = seconds * 1000L
         autoLockJob = lifecycleScope.launch {
             while (true) {
                 val idleMs = android.os.SystemClock.elapsedRealtime() - lastInteractionMs
@@ -546,8 +546,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
             pausedAtMs = 0L
             if (VaultSession.state is VaultSession.State.Unlocked &&
                 VaultSession.screenLockRequired() &&
-                VaultSession.autoLockMinutes() > 0 &&
-                gapMs >= VaultSession.autoLockMinutes() * 60_000L
+                VaultSession.autoLockSeconds() > 0 &&
+                gapMs >= VaultSession.autoLockSeconds() * 1000L
             ) {
                 lockNow("Locked after inactivity.")
             }
@@ -1971,10 +1971,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onEnableAutofill = { requestAutofillService() },
                     screenLockOn = VaultSession.screenLockOn,
                     onScreenLockToggle = { on -> handleScreenLockToggle(on) },
-                    autoLockMinutes = VaultSession.autoLockMinutes(),
-                    onAutoLockChange = { mins ->
-                        VaultSession.setAutoLockMinutes(mins)
-                        status = "Auto-lock: ${if (mins == 0) "never" else "$mins min"}."
+                    autoLockSeconds = VaultSession.autoLockSeconds(),
+                    onAutoLockChange = { secs ->
+                        VaultSession.setAutoLockSeconds(secs)
+                        status = "Auto-lock: ${if (secs == 0) "never" else "$secs s"}."
                         rescheduleAutoLock()
                     },
                     screenlockUnlockOn = VaultSession.screenlockUnlockEnabled(),

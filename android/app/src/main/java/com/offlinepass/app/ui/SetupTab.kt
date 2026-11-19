@@ -42,7 +42,7 @@ fun SetupTabScreen(
     onEnrollScreenlock: () -> Unit = {},
     screenLockOn: Boolean,
     onScreenLockToggle: (Boolean) -> Unit,
-    autoLockMinutes: Int = 5,
+    autoLockSeconds: Int = 300,
     onAutoLockChange: (Int) -> Unit = {},
     screenlockUnlockOn: Boolean = false,
     onScreenlockUnlockToggle: (Boolean) -> Unit = {},
@@ -307,11 +307,8 @@ fun SetupTabScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Use the YubiKey (touch to sign)") }
             }
-            TextButton(
-                onClick = onRemoveScreenlock,
-                enabled = busy == null,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Remove screenlock signing (migrate to the security key)") }
+            // THE SAME SWITCH: using the YubiKey IS removing screenlock
+            // signing — one button, one action (the modes are exclusive).
         } else if (VaultSession.commitSigningMode() == VaultSession.SIGNING_YUBIKEY) {
             Text(
                 "YubiKey (SIG slot subkey 0x" +
@@ -324,7 +321,7 @@ fun SetupTabScreen(
                 onClick = onEnrollScreenlock,
                 enabled = busy == null && deviceCredentialReady,
                 modifier = Modifier.fillMaxWidth()
-            ) { Text("Enroll screenlock signing (alternative)") }
+            ) { Text("Re-enable screenlock signing") }
         } else {
             Text("Signer: $signerLabel", style = MaterialTheme.typography.bodySmall)
             Button(onClick = onPickSigner, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
@@ -458,8 +455,8 @@ fun SetupTabScreen(
             // after N minutes untouched, the decrypted session is zeroed —
             // everything is back to encrypted-at-rest. The timeout is a
             // free-form field (minutes; 0 = never).
-            var autoLockInput by remember(autoLockMinutes) {
-                mutableStateOf(autoLockMinutes.toString())
+            var autoLockInput by remember(autoLockSeconds) {
+                mutableStateOf(autoLockSeconds.toString())
             }
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
@@ -472,7 +469,7 @@ fun SetupTabScreen(
                         autoLockInput = text.filter { it.isDigit() }.take(4)
                         autoLockInput.toIntOrNull()?.let { onAutoLockChange(it) }
                     },
-                    label = { Text("Auto-lock (idle minutes; 0 = never)") },
+                    label = { Text("Auto-lock (idle seconds; 0 = never)") },
                     singleLine = true,
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                         keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
@@ -480,7 +477,7 @@ fun SetupTabScreen(
                 )
             }
             Text(
-                "After this many idle minutes the decrypted session is zeroed " +
+                "After this many idle seconds the decrypted session is zeroed " +
                     "(everything back to encrypted at rest). Applies to app use " +
                     "and backgrounding alike.",
                 style = MaterialTheme.typography.bodySmall

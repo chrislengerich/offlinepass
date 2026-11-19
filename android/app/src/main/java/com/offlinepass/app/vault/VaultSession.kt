@@ -1883,12 +1883,23 @@ object VaultSession {
         }
     }
 
-    /** Idle auto-lock timeout in minutes (0 = never); only meaningful
-     *  while [screenLockRequired] is on. */
-    fun autoLockMinutes(): Int = prefs().getInt("autoLockMinutes", 5)
+    /** Idle auto-lock timeout in SECONDS (0 = never); only meaningful
+     *  while [screenLockRequired] is on. One-time migration: the old
+     *  minute-granularity pref converts *60. */
+    fun autoLockSeconds(): Int {
+        if (prefs().contains("autoLockSeconds"))
+            return prefs().getInt("autoLockSeconds", 300)
+        if (prefs().contains("autoLockMinutes")) {
+            val seconds = prefs().getInt("autoLockMinutes", 5) * 60
+            prefs().edit().putInt("autoLockSeconds", seconds)
+                .remove("autoLockMinutes").apply()
+            return seconds
+        }
+        return 300
+    }
 
-    fun setAutoLockMinutes(n: Int) {
-        prefs().edit().putInt("autoLockMinutes", n).apply()
+    fun setAutoLockSeconds(n: Int) {
+        prefs().edit().putInt("autoLockSeconds", n).apply()
     }
 
     // -- screenlock unlock (experimental, default OFF) --------------------------
