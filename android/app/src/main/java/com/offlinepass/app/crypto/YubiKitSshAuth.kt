@@ -227,7 +227,8 @@ object YubiKitSshAuth {
         context: Context,
         pin: CharArray,
         payload: ByteArray,
-        useAut: Boolean = false
+        useAut: Boolean = false,
+        expectedFingerprint: String? = null
     ): ByteArray {
         val device = findDevice(context)
             ?: throw java.io.IOException("no YubiKey connected")
@@ -251,6 +252,32 @@ object YubiKitSshAuth {
                         "uifSIG=${session.getUif(com.yubico.yubikit.openpgp.KeyRef.SIG)} " +
                         "uifAUT=${session.getUif(com.yubico.yubikit.openpgp.KeyRef.AUT)} " +
                         "payload=${payload.size}B")
+                // THE WHICH-KEY READ + THE PRE-SIGN GATE: the live public
+                // key of the slot about to answer — read UNAUTHENTICATED
+                // (no PIN, no touch) BEFORE the PIN verify. Logged always;
+                // when the caller passes an expected fingerprint (the
+                // enrolled line's), a mismatch REFUSES to sign by name —
+                // the sig GitHub would reject is never produced, and the
+                // PIN attempt is never spent.
+                val liveFp: String = runCatching {
+                    when (val pub = session.getPublicKey(
+                        if (useAut) com.yubico.yubikit.openpgp.KeyRef.AUT
+                        else com.yubico.yubikit.openpgp.KeyRef.SIG)) {
+                        is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa ->
+                            com.offlinepass.app.crypto.PgpSshBridge
+                                .rsaFingerprint(pub.modulus, pub.publicExponent)
+                        else -> "non-RSA (${pub.javaClass.simpleName})"
+                    }
+                }.getOrElse { "unreadable" }
+                android.util.Log.i("YubiKeySsh",
+                    "yubikit: auth key " + (if (useAut) "AUT" else "SIG") + " fp=$liveFp")
+                if (expectedFingerprint != null && liveFp != expectedFingerprint) {
+                    throw java.io.IOException(
+                        "refusing to sign: the card's " +
+                            (if (useAut) "AUT" else "SIG") +
+                            " key is $liveFp, expected $expectedFingerprint — " +
+                            "wrong card or stale enrollment")
+                }
                 // extended=false = verify FOR SIGNATURE (the Javadoc:
                 // "false to verify for signature use, true for other
                 // uses"). True → P2=0x82 and PSO:CDS fails 0x6982.
@@ -278,25 +305,6 @@ object YubiKitSshAuth {
                         (if (useAut) "INTERNAL AUTHENTICATE on the AUTH slot"
                         else "PSO:CDS on the SIGNATURE slot") +
                         " (touch the key if its LED blinks)")
-                // THE WHICH-KEY LOG: the live public key of the slot about
-                // to answer — the ssh-keygen fingerprint (GitHub's security
-                // log format). A card holding a different key than the
-                // enrolled line shows up here instead of as an opaque
-                // verification failure downstream.
-                runCatching {
-                    when (val pub = session.getPublicKey(
-                        if (useAut) com.yubico.yubikit.openpgp.KeyRef.AUT
-                        else com.yubico.yubikit.openpgp.KeyRef.SIG)) {
-                        is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa ->
-                            com.offlinepass.app.crypto.PgpSshBridge
-                                .rsaFingerprint(pub.modulus, pub.publicExponent)
-                        else -> "non-RSA (${pub.javaClass.simpleName})"
-                    }
-                }.let { fp ->
-                    android.util.Log.i("YubiKeySsh",
-                        "yubikit: auth key " + (if (useAut) "AUT" else "SIG") +
-                            " fp=" + (fp.getOrNull() ?: "unreadable"))
-                }
                 val sig = if (useAut) {
                     // The raw-RSA path: the challenge = the FULL PKCS#1
                     // block padded to the AUT modulus (no on-card padding).

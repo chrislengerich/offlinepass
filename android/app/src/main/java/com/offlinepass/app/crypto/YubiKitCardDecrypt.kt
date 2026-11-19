@@ -126,6 +126,21 @@ object YubiKitCardDecrypt {
                 }
                 log("yubikit-decrypt: DEC key id 0x%016X, modulus $modulusLen bytes".format(decKeyId))
                 Log.i(TAG, "yubikit: DEC key id 0x%016X, modulus $modulusLen bytes".format(decKeyId))
+                // THE VAULT→CARD PRE-CHECK: the ciphertext's PKESK recipients
+                // vs the live DEC key — a wrong card fails BY NAME here,
+                // before the PIN (the decrypt could never open anyway; the
+                // PIN attempt would be pure loss).
+                runCatching { OpenPgpCardCrypto.pkeskKeyIds(msgBytes) }.onSuccess { ids ->
+                    if (ids.isNotEmpty() && decKeyId !in ids) {
+                        val listed = ids.joinToString(", ") { "0x%016X".format(it) }
+                        val msg = ("this vault is encrypted to key(s) $listed; " +
+                            "the attached card's DEC key is 0x%016X — wrong card?"
+                            ).format(decKeyId)
+                        log("yubikit-decrypt: $msg")
+                        Log.w(TAG, "yubikit: $msg")
+                        throw java.io.IOException(msg)
+                    }
+                }
                 // THE VERIFY = THE "EXTENDED" FLAVOR: with extended=false
                 // YubiKit verifies PW1 for SIGNATURE USE ONLY (P2=0x81) —
                 // the PSO:DEC then fails with 0x6982 despite the verify's

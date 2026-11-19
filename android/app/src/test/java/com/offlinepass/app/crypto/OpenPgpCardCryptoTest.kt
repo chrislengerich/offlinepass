@@ -34,6 +34,21 @@ class OpenPgpCardCryptoTest {
     /** The second fixture key ("second@fixture.test"). */
     private val secondKeyId = 0x4199727F7793732FUL.toLong()
 
+    @org.junit.Test
+    fun pkeskKeyIdsReadsTheSingleRecipientEnvelope() {
+        org.junit.Assert.assertEquals(
+            listOf(fixtureKeyId),
+            OpenPgpCardCrypto.pkeskKeyIds(resource("fixture-enc.gpg")))
+    }
+
+    @org.junit.Test
+    fun pkeskKeyIdsListsEveryRecipientOfMultiEnvelope() {
+        val ids = OpenPgpCardCrypto.pkeskKeyIds(resource("fixture-enc-two.gpg"))
+        org.junit.Assert.assertTrue(
+            "expected both fixture key ids, got $ids",
+            ids.contains(fixtureKeyId) && ids.contains(secondKeyId))
+    }
+
     /** The "card" (the CLASSIC shape): RSA-decrypts the PKESK's MPI value
      *  and returns the full PKCS#1 type-2 block — the same raw block in/out
      *  as the older YubiKey applets' PSO:DEC. The input is left-padded to

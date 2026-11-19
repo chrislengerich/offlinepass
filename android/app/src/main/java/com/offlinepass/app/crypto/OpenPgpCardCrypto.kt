@@ -171,6 +171,20 @@ object OpenPgpCardCrypto {
                 (lastError?.message ?: "unknown"), lastError)
     }
 
+    /** THE VAULT→CARD PRE-CHECK: the recipient key ids of an OpenPGP
+     *  message's PKESKs — a pure parse, no card, no secrets. The unlock
+     *  path reads this BEFORE the PIN verify: a wrong card fails by name
+     *  instead of burning a PIN attempt on a decrypt that can never open. */
+    fun pkeskKeyIds(msgBytes: ByteArray): List<Long> {
+        val decoder = PGPUtil.getDecoderStream(ByteArrayInputStream(msgBytes))
+        val factory = PGPObjectFactory(decoder, JcaKeyFingerprintCalculator())
+        val encList = findEncryptedDataList(factory)
+            ?: throw PGPException("no encrypted data in the message")
+        val ids = encList.filterIsInstance<PGPPublicKeyEncryptedData>().map { it.keyID }
+        if (ids.isEmpty()) throw PGPException("no PKESK in the message")
+        return ids
+    }
+
     /** Builds a v4 RSA public-key packet from the RAW key material — the
      *  card's DEC slot exposes only the (n, e); the creation time rides
      *  the card's own DO (the seconds). The fingerprint = computed over

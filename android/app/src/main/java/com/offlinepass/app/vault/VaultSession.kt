@@ -1005,9 +1005,16 @@ object VaultSession {
                                 // The TRANSPORT = the sshAuthUseAut's slot:
                                 // the SIG (the default) or the AUT (the
                                 // raw-RSA challenge — the wire-compatible,
-                                // AutKeyPathTest-proven).
-                                com.offlinepass.app.crypto.YubiKitSshAuth
-                                    .sign(context, pin, payload, useAut = sshAuthUseAut())
+                                // AutKeyPathTest-proven). The gate = the
+                                // enrolled line's fingerprint: a card
+                                // holding a different key refuses the
+                                // handshake by name (the sig GitHub would
+                                // reject is never produced).
+                                com.offlinepass.app.crypto.YubiKitSshAuth.sign(
+                                    context, pin, payload, useAut = sshAuthUseAut(),
+                                    expectedFingerprint = runCatching {
+                                        PgpSshBridge.fingerprintOf(line)
+                                    }.getOrNull())
                             }
                             yubikeyPinRemember(pin)
                             sig
@@ -2082,6 +2089,9 @@ object VaultSession {
             ?: return SshSelfTest(false, "no YubiKey SSH line enrolled")
         val parsedLine = runCatching { PgpSshBridge.parsePublicKeyLine(line) }
             .getOrElse { return SshSelfTest(false, "enrolled SSH line unparsable: ${it.message}") }
+        // The enrolled key's fingerprint — the pre-sign gate's expectation
+        // and the verdict's comparison base.
+        val enrolledFp = runCatching { PgpSshBridge.fingerprintOf(line) }.getOrNull()
         val data = "offlinepass ssh-auth self-test".toByteArray()
 
         // The device state, surfaced in the verdict.
@@ -2119,9 +2129,12 @@ object VaultSession {
                     withTouchPrompt {
                         // The slot = the SETTING's: the SIG (the default was
                         // the old) or the AUT (the dedicated auth key — the
-                        // padded challenge, the wire-compat proven).
-                        com.offlinepass.app.crypto.YubiKitSshAuth
-                            .sign(appContext, pin, block, useAut = sshAuthUseAut())
+                        // padded challenge, the wire-compat proven). The
+                        // gate = the enrolled line's fingerprint: a card
+                        // holding a different key refuses to sign AT ALL.
+                        com.offlinepass.app.crypto.YubiKitSshAuth.sign(
+                            appContext, pin, block, useAut = sshAuthUseAut(),
+                            expectedFingerprint = enrolledFp)
                     }
                 }
             }
@@ -2146,18 +2159,17 @@ object VaultSession {
                         .slotKeyFingerprint(appContext, sshAuthUseAut())
                 }.getOrNull()
             } ?: "unreadable"
-            val enrolledFp = runCatching { PgpSshBridge.fingerprintOf(line) }
-                .getOrNull() ?: "unparsable"
-            val keyMatch = liveFp == enrolledFp
+            val enrolledFpDisplay = enrolledFp ?: "unparsable"
+            val keyMatch = liveFp == enrolledFpDisplay
             return if (verified) SshSelfTest(true,
                 "YubiKit: the card signed on the " +
                     (if (sshAuthUseAut()) "AUTH slot (AUT)" else "SIGNATURE slot (SIG)") +
                     " + verified locally — auth key $liveFp " +
                     (if (keyMatch) "matches the enrolled line"
-                        else "MISMATCH vs the enrolled line $enrolledFp"))
+                        else "MISMATCH vs the enrolled line $enrolledFpDisplay"))
             else SshSelfTest(false,
                 "the card's signature did NOT verify locally against the enrolled line " +
-                    "(live auth key $liveFp" + (if (keyMatch) "" else ", enrolled $enrolledFp") +
+                    "(live auth key $liveFp" + (if (keyMatch) "" else ", enrolled $enrolledFpDisplay") +
                     "; the sig armor is saved to last-selftest-sig.asc)")
         }
 
