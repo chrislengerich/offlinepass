@@ -518,6 +518,23 @@ fun SetupTabScreen(
         ) { Text("Initialize OpenKeyChain from this repo's keys") }
         HorizontalDivider()
 
+        // Starting over: the app holds the decrypted state only in memory
+        // and the encrypted state in its files — clearing the app's data
+        // (or reinstalling) returns to the first-run screen, where the
+        // backup imports cleanly (a restore without a repo adopts the
+        // file's recipients).
+        Text("Start over", style = MaterialTheme.typography.titleSmall)
+        Text(
+            "1. Back up first: Backups → USB → Export (keep the file off this phone).\n" +
+                "2. Clear the app's data: Android Settings → Apps → offlinepass → " +
+                "Clear data (or uninstall and reinstall).\n" +
+                "3. Reopen: the first-run screen appears — Load existing → " +
+                "Share vault → USB → Import (or scan the QRFT) and unlock.",
+            style = MaterialTheme.typography.bodySmall
+        )
+
+        HorizontalDivider()
+
         if (busy != null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         HorizontalDivider()
         Text("Log", style = MaterialTheme.typography.titleSmall)
