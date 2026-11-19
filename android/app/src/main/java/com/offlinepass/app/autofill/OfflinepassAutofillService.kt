@@ -101,12 +101,23 @@ class OfflinepassAutofillService : AutofillService() {
             return
         }
         val origin = fields?.webDomain ?: fields?.appPackage ?: "the login"
-        // THE FLYUP (the user's pick): the heads-up banner — the tap =
-        // the yes (the screenlock → the insert), the swipe = the no. The
-        // ack = the no-arg onSuccess: the save = OURS (the banner's flow),
-        // the framework launches nothing.
-        AutofillSaveOffer.post(applicationContext, origin, fields?.usernameValue, pw)
-        callback.onSuccess()
+        // THE FLYUP = ONLY ON THE FORM SUBMISSION: the framework launches
+        // the SAVE-mode's bottom card over the form (the translucent
+        // theme + the bottom gravity) — the yes = the screenlock → the
+        // insert; the outside tap = the no.
+        val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
+            .putExtra(AutofillAuthActivity.EXTRA_MODE, AutofillAuthActivity.MODE_SAVE)
+            .putExtra(AutofillAuthActivity.EXTRA_NAME, origin)
+            .putExtra(AutofillAuthActivity.EXTRA_USERNAME, fields?.usernameValue ?: "")
+            .putExtra(AutofillAuthActivity.EXTRA_PASSWORD, pw)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        val pi = android.app.PendingIntent.getActivity(
+            appContext(), 500, intent,
+            android.app.PendingIntent.FLAG_IMMUTABLE or
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+        Log.i(TAG, "onSaveRequest: the flyup armed for $origin " +
+            "(username=${!fields?.usernameValue.isNullOrBlank()})")
+        callback.onSuccess(pi.intentSender)
     }
 
     /** THE SAVE CONTRACT: the declared savable fields — without this the

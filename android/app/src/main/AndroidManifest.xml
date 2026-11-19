@@ -59,19 +59,17 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- THE TASK AFFINITY = EMPTY: the default affinity pulls this
-             activity into offlinepass's task — when the app's task was
-             alive, the auth's finish brought the APP forward instead of
-             returning to the autofilled form (the measured "goes to list
-             view"). The empty affinity + noHistory = the auth lives in
-             the framework's own launch, the finish = back to the form. -->
+        <!-- THE TASK AFFINITY = EMPTY + THE TRANSLUCENT THEME: the auth
+             lives in the framework's own launch (the finish = back to the
+             form), the SAVE mode = the bottom flyup card over the form
+             (the reveal/generate = no content = nothing flashes). -->
         <activity
             android:name=".autofill.AutofillAuthActivity"
             android:exported="false"
             android:taskAffinity=""
             android:noHistory="true"
             android:excludeFromRecents="true"
-            android:theme="@style/Theme.Offlinepass" />
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <service
             android:name=".autofill.OfflinepassAutofillService"
             android:exported="false"
