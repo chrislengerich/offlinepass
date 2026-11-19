@@ -212,7 +212,7 @@ fun SetupTabScreen(
         // recipient set (the permanent recipients stay first) and never
         // written to the repo's keys/ or config. "Show key" publishes this
         // device's own public key as a QRFT for the other side to scan.
-        Text("Share", style = MaterialTheme.typography.titleSmall)
+        Text("Share vault", style = MaterialTheme.typography.titleSmall)
 
         Text("Recipients", style = MaterialTheme.typography.labelLarge)
         Text(
@@ -265,7 +265,10 @@ fun SetupTabScreen(
         }
 
         HorizontalDivider()
-        Text("This device", style = MaterialTheme.typography.titleSmall)
+        // THIS device + the repo's registered devices: one section — the
+        // device-level view of the sync.
+        Text("Devices", style = MaterialTheme.typography.titleSmall)
+        Text("This device", style = MaterialTheme.typography.labelLarge)
         var deviceNameInput by androidx.compose.runtime.remember {
             androidx.compose.runtime.mutableStateOf(VaultSession.deviceName())
         }
@@ -279,14 +282,8 @@ fun SetupTabScreen(
                 Text("Set")
             }
         }
-        Button(
-            onClick = onInitOkkFromRepo,
-            enabled = busy == null,
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Initialize OpenKeyChain from this repo's keys") }
-        HorizontalDivider()
         if (cfg?.remoteUrl != null) {
-            Text("Devices", style = MaterialTheme.typography.titleSmall)
+            Text("Registered", style = MaterialTheme.typography.labelLarge)
             val devices = VaultSession.deviceListLabels()
             if (devices.isEmpty()) {
                 Text("(no devices registered yet — the first sync adds this device)",
@@ -295,7 +292,16 @@ fun SetupTabScreen(
                 devices.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
         }
+        HorizontalDivider()
+        // Signing is its own section — the OpenKeyChain initialization
+        // (seeding the repo's keys into OKK) belongs with it, not with the
+        // device identity.
         Text("Commit signer", style = MaterialTheme.typography.titleSmall)
+        Button(
+            onClick = onInitOkkFromRepo,
+            enabled = busy == null,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Initialize OpenKeyChain from this repo's keys") }
         if (VaultSession.commitSigningMode() == VaultSession.SIGNING_SCREENLOCK) {
             // Screenlock mode: OpenKeyChain signing is not used at all.
             Text(
