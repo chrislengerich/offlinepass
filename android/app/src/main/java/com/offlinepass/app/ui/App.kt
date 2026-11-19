@@ -354,25 +354,6 @@ fun GetStartedScreen(
         }
         HorizontalDivider()
 
-        Text("2. Attach a GitHub remote", style = MaterialTheme.typography.titleSmall)
-        if (remoteAttached) {
-            Text("✅ Remote attached — the key material is published in the repo.",
-                style = MaterialTheme.typography.bodySmall)
-        } else {
-            // The local-only vault (the USB/QRFT/backup-zip restores, the
-            // new-vault): no remote configured — the draft is absent, so
-            // there is nothing to one-tap here. The attach = the Setup's
-            // Connect flow when the user wants the cloud copy; the history
-            // merges through sync (the local repo = a real git repo).
-            Text("The vault is local-only — it works fully offline and the " +
-                "secrets are safe without any remote. When you want the " +
-                "cloud copy: Setup → \"Connect remote\". The first sync " +
-                "publishes the key material (the offline keyring for new " +
-                "devices) and the history merges.",
-                style = MaterialTheme.typography.bodySmall)
-        }
-        HorizontalDivider()
-
         Text("3. Screenlock protection (signing + at-rest encryption)",
             style = MaterialTheme.typography.titleSmall)
         if (screenlockEnrolled) {
