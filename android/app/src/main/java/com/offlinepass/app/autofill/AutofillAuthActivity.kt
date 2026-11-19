@@ -25,18 +25,18 @@ import kotlinx.coroutines.withContext
  * - **reveal** (default): the sealed-state chip's tapped item — the SAME
  *   screenlock gate as the item view; the TARGETED single item unseals,
  *   the store carries it to the framework's re-invoked onFillRequest.
- *   RESULT_OK = fill; canceled = the picker stays.
+ *   RESULT_OK = fill; canceled = the picker stays. The unseal NEVER
+ *   escapes: the keystore's auth window can lag the device-credential
+ *   gate on this ROM (the measured UserNotAuthenticatedException crash)
+ *   — the failure = one gate retry, then a clean RESULT_CANCELED.
  * - **generate**: the "⚡ Generate password" chip — the gate, then a
  *   fresh [PasswordGen.password] into the store; RESULT_OK → the fill.
- *   NO save question here — the save comes AFTER the login.
- * - **save**: launched BY THE FRAMEWORK from onSaveRequest — i.e. only
- *   after the login completed (the user's sequencing: the interstitial
- *   = after the credentials' use). The screenlock gate → "Save this
- *   login to offlinepass?" [Save]/[Not now] — the save runs here with
- *   the app's standard prompt surfaces as dialogs (the security key's
- *   touch reminder, the OpenPGP PIN).
- *   NO MainActivity navigation in any mode — the control stays with the
- *   framework's flow.
+ * - **save**: launched BY THE FRAMEWORK from onSaveRequest — after the
+ *   form submission. THE USER'S ORDERING: the question first ("Save
+ *   this login to offlinepass?" — one [Save] click), THEN the screenlock
+ *   gate, THEN the save (the INSERT path — the autofill's items carry
+ *   fresh uuids; no origin matching, no updates).
+ *   NO MainActivity navigation in any mode.
  */
 class AutofillAuthActivity : ComponentActivity() {
 
@@ -71,28 +71,21 @@ class AutofillAuthActivity : ComponentActivity() {
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Generated password"
                     val item = ProtonItem(
                         name = origin,
-                        // THE URL = THE ORIGIN's (the domain-shaped origins
-                        // become the entry's urls).
                         urls = if (origin.contains('.') && !origin.contains(' '))
                             listOf("https://$origin") else emptyList(),
                         password = PasswordGen.password())
                     AutofillRevealStore.put(item, "generate")
-                    // NO INTERSTITIAL HERE — the save = ONCE, after the
-                    // form submission, via the framework's save request
-                    // (the SAVE mode below; the platform fires it when a
-                    // user-entered field changed — typing the username
-                    // qualifies).
                     Log.i(TAG, "generated a password for $origin — RESULT_OK (the fill)")
                     setResult(RESULT_OK)
                     finish()
                 }
                 MODE_SAVE -> {
+                    // THE BANNER = THE QUESTION: the tap = the yes — the
+                    // gate → the insert directly (no second question UI).
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Login"
                     val item = ProtonItem(
                         name = origin,
                         username = intent.getStringExtra(EXTRA_USERNAME) ?: "",
-                        // THE URL = THE ORIGIN's (the domain-shaped origins
-                        // become the entry's urls — the add path's item).
                         urls = if (origin.contains('.') && !origin.contains(' '))
                             listOf("https://$origin") else emptyList(),
                         password = intent.getStringExtra(EXTRA_PASSWORD) ?: "")
@@ -101,18 +94,76 @@ class AutofillAuthActivity : ComponentActivity() {
                         "Unlock offlinepass",
                         "The device lock authorizes saving the login")
                     if (!gate) {
-                        Log.i(TAG, "the save's gate declined — done")
+                        Log.i(TAG, "the save's gate declined")
+                        Toast.makeText(this@AutofillAuthActivity,
+                            "Not saved — the screen lock declined", Toast.LENGTH_LONG).show()
                         setResult(RESULT_OK)
                         finish()
                         return@launch
                     }
-                    withContext(Dispatchers.Main) { showSaveInterstitial(item) }
+                    val r = try {
+                        VaultSession.addSealed(item.copy(modifyTime = 0))
+                    } catch (e: Exception) {
+                        VaultSession.Result.Error("${e.javaClass.simpleName}: ${e.message}")
+                    }
+                    when (r) {
+                        VaultSession.Result.Success -> {
+                            Log.i(TAG, "the banner save: Saved ✓ (rev ${VaultSession.currentRev()})")
+                            Toast.makeText(this@AutofillAuthActivity,
+                                "Saved ✓", Toast.LENGTH_LONG).show()
+                            setResult(RESULT_OK)
+                            finish()
+                        }
+                        else -> {
+                            Log.w(TAG, "the banner save FAILED: $r")
+                            Toast.makeText(this@AutofillAuthActivity,
+                                "The save failed — $r", Toast.LENGTH_LONG).show()
+                            setResult(RESULT_OK)
+                            finish()
+                        }
+                    }
                 }
                 else -> {
-                    val item = withContext(Dispatchers.IO) { SealedVault.reveal(uuid!!) }
+                    // THE REVEAL: the unseal never escapes — the keystore's
+                    // window can lag the credential gate (the measured
+                    // crash): one gate retry, then the clean cancellation.
+                    val gate = ScreenlockGate.promptGate(
+                        this@AutofillAuthActivity,
+                        "Unlock the entry",
+                        "Autofill: the device lock opens this item's secrets")
+                    if (!gate) {
+                        Log.i(TAG, "auth gate declined — RESULT_CANCELED")
+                        setResult(RESULT_CANCELED)
+                        finish()
+                        return@launch
+                    }
+                    var item: ProtonItem? = try {
+                        withContext(Dispatchers.IO) { SealedVault.reveal(uuid!!) }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "the unseal threw (${e.javaClass.simpleName}) — " +
+                            "the gate retry")
+                        null
+                    }
                     if (item == null) {
-                        Log.w(TAG, "the unseal failed for ${uuid?.take(8)} — RESULT_CANCELED " +
-                            "(the cache stale/missing — the app's unlock re-seals)")
+                        // The window lag: ONE retry behind a fresh gate.
+                        val again = ScreenlockGate.promptGate(
+                            this@AutofillAuthActivity,
+                            "Unlock the entry",
+                            "One more device-lock press to open the entry")
+                        if (again) {
+                            item = try {
+                                withContext(Dispatchers.IO) { SealedVault.reveal(uuid!!) }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "the retry unseal threw (${e.javaClass.simpleName})")
+                                null
+                            }
+                        }
+                    }
+                    if (item == null) {
+                        Log.w(TAG, "the unseal failed for ${uuid?.take(8)} — RESULT_CANCELED")
+                        Toast.makeText(this@AutofillAuthActivity,
+                            "Couldn't open the entry — unlock the app once, then retry",
+                            Toast.LENGTH_LONG).show()
                         setResult(RESULT_CANCELED)
                         finish()
                         return@launch
@@ -124,69 +175,6 @@ class AutofillAuthActivity : ComponentActivity() {
                 }
             }
         }
-    }
-
-    /** THE SAVE INTERSTITIAL — after the login, on the framework's
-     *  launch: [Save] = the sealed save here (the dialogs cover the card
-     *  prompts); [Not now] = done. Either way RESULT_OK. */
-    private fun showSaveInterstitial(item: ProtonItem) {
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(64, 96, 64, 48)
-        }
-        col.addView(TextView(this).apply {
-            text = "Save this login to offlinepass?"
-            textSize = 20f
-        })
-        col.addView(TextView(this).apply {
-            text = "${item.name}\n${item.username.takeIf { it.isNotBlank() }?.let { "$it\n" } ?: ""}" +
-                "Save it with your security key's protection."
-            textSize = 14f
-        })
-        col.addView(Button(this).apply {
-            text = "Save"
-            setOnClickListener {
-                it.isEnabled = false
-                lifecycleScope.launch {
-                    // THE UPSERT: by the ORIGIN — the existing entry (the
-                    // password-change case) = the update; the new = the
-                    // append. The edit path silently no-opped the
-                    // brand-new item (the measured 4→3 drop).
-                    val r = try {
-                        VaultSession.upsertSealed(item.copy(modifyTime = 0))
-                    } catch (e: Exception) {
-                        VaultSession.Result.Error("${e.javaClass.simpleName}: ${e.message}")
-                    }
-                    when (r) {
-                        VaultSession.Result.Success -> {
-                            Log.i(TAG, "the interstitial save: Saved ✓ " +
-                                "(rev ${VaultSession.currentRev()})")
-                            Toast.makeText(this@AutofillAuthActivity,
-                                "Saved ✓", Toast.LENGTH_LONG).show()
-                            setResult(RESULT_OK)
-                            finish()
-                        }
-                        else -> {
-                            // LOUD: the failure = the retry stays available
-                            // (the silence = the measured "probably not saved").
-                            Log.w(TAG, "the interstitial save FAILED: $r")
-                            Toast.makeText(this@AutofillAuthActivity,
-                                "The save failed — $r", Toast.LENGTH_LONG).show()
-                            it.isEnabled = true
-                        }
-                    }
-                }
-            }
-        })
-        col.addView(Button(this).apply {
-            text = "Not now"
-            setOnClickListener {
-                Log.i(TAG, "the save declined — done")
-                setResult(RESULT_OK)
-                finish()
-            }
-        })
-        setContentView(col)
     }
 
     /** The prompt surfaces for the in-activity save: the touch reminder +

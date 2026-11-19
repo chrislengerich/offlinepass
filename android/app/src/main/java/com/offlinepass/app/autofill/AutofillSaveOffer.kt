@@ -25,7 +25,21 @@ object AutofillSaveOffer {
     private var requestCode = 4000
     private var notifId = 4001
 
+    @Volatile private var lastOfferKey: String? = null
+    @Volatile private var lastOfferAt: Long = 0
+
     fun post(context: Context, origin: String, username: String?, password: String) {
+        // THE DEDUP: the framework RE-FIRES the save event for the same
+        // form (the measured "Shouldn't be logging again" + the double
+        // offers) — the same origin+password within 5 minutes = skipped.
+        val key = "$origin|${password.hashCode()}"
+        val now = System.currentTimeMillis()
+        if (key == lastOfferKey && now - lastOfferAt < 5 * 60_000) {
+            Log.i("OfflinepassAutofill", "the duplicate save event for $origin — skipped")
+            return
+        }
+        lastOfferKey = key
+        lastOfferAt = now
         val nm = context.getSystemService(android.app.NotificationManager::class.java)
         // THE HEADS-UP BANNER: the offer must INTERRUPT the form (the old
         // channel ran at DEFAULT = tray-only — the user never saw it; the
