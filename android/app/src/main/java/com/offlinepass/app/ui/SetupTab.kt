@@ -58,6 +58,7 @@ fun SetupTabScreen(
     onRemoveYubikeySsh: () -> Unit = {},
     onEnrollYubikeySsh: (String, String) -> Unit = { _, _ -> },
     onPickAuthSubkey: () -> Unit = {},
+    selfTestResult: String? = null,
     onSshSelfTest: () -> Unit = {},
     onShowGithubAuthKey: () -> Unit = {},
     onRemoveDevice: (String) -> Unit = {},
@@ -388,6 +389,11 @@ fun SetupTabScreen(
             Text("YubiKey auth subkey: ${ykFp ?: "(line unparseable)"}", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = onSshSelfTest, enabled = busy == null) {
                 Text("Run SSH auth self-test")
+            }
+            // The verdict INLINE (the bottom Log is easy to miss): a
+            // no-keys failure points at Show auth key for GitHub.
+            selfTestResult?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall)
             }
             TextButton(onClick = onShowGithubAuthKey, enabled = busy == null) {
                 Text("Show auth key for GitHub")

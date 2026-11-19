@@ -715,6 +715,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
      *  enrollment's no-match path (the desktop gpg command is gone —
      *  the copy/paste loop is in-app) and the Setup's show button. */
     private var githubAuthKeyDialog by androidx.compose.runtime.mutableStateOf<String?>(null)
+    /** The SSH auth self-test's verdict, shown INLINE below its button. */
+    private var selfTestResult by androidx.compose.runtime.mutableStateOf<String?>(null)
 
     /** The line the copy-to-GitHub dialog carries: the AUTH slot's key
      *  unless the enrolled line already IS the AUTH key (then the SIG's
@@ -1175,15 +1177,34 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 text = {
                     androidx.compose.foundation.layout.Column {
                         androidx.compose.material3.Text(
-                            "1. Copy the key line below.\n" +
-                                "2. Open github.com/settings/keys → New SSH key → " +
-                                "paste as an Authentication key.\n" +
-                                "3. Re-run Enroll.",
+                            "1. GitHub must hold this exact line: the repo → " +
+                                "Settings → Deploy keys → Add deploy key (allow " +
+                                "WRITE access), or github.com/settings/keys → " +
+                                "New SSH key (Authentication key).\n" +
+                                "2. Copy the line below, or show it as a QRFT " +
+                                "and scan it with the extension/another phone.\n" +
+                                "3. The sync's handshake signs with this key — " +
+                                "each sync asks for the touch.",
                             style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
                         androidx.compose.foundation.text.selection.SelectionContainer {
                             androidx.compose.material3.Text(
                                 keyLine,
                                 style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+                        }
+                        androidx.compose.material3.Button(onClick = {
+                            githubAuthKeyDialog = null
+                            val fp = runCatching {
+                                com.offlinepass.app.crypto.PgpSshBridge.fingerprintOf(keyLine)
+                            }.getOrDefault("?")
+                            val payload = org.json.JSONObject()
+                                .put("type", "offlinepass-ssh-pubkey")
+                                .put("sshKey", keyLine)
+                                .put("fp", fp)
+                                .toString()
+                            sshKeyBackScreen = screen
+                            screen = Screen.QrftPayload(payload)
+                        }) {
+                            androidx.compose.material3.Text("Show as QRFT")
                         }
                     }
                 },
@@ -2088,10 +2109,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     },
                     onEnrollFromGithubKeys = { enrollFromGithubKeys() },
                     onEnrollYubikeySsh = { line, subkeyId -> enrollYubikeySsh(line, subkeyId) },
+                    selfTestResult = selfTestResult,
                     onSshSelfTest = {
                         lifecycleScope.launch {
                             val v = VaultSession.sshAuthSelfTest { status = it }
-                            status = (if (v.ok) "✅ SSH self-test OK — " else "❌ SSH self-test FAILED — ") + v.detail
+                            selfTestResult = if (v.ok) "✅ SSH self-test OK — ${v.detail}"
+                            else if (v.detail.startsWith("no YubiKey SSH"))
+                                "❌ ${v.detail} — tap \"Show auth key for GitHub\" to get the line to enroll."
+                            else "❌ SSH self-test FAILED — ${v.detail}"
                         }
                     },
                     onShowGithubAuthKey = { showGithubAuthKey() },
