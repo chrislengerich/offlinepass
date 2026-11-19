@@ -182,31 +182,6 @@ fun SetupTabScreen(
         }
         HorizontalDivider()
 
-        Text("Vault encryption keys", style = MaterialTheme.typography.titleSmall)
-        if (recipientIds.isEmpty()) {
-            Text("(none — add one before saving)", style = MaterialTheme.typography.bodySmall)
-        }
-        recipientIds.forEach { id ->
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Text("0x%016X".format(id), modifier = Modifier.weight(1f))
-                TextButton(onClick = { onRemoveRecipient(id) }) { Text("Remove") }
-            }
-        }
-        Button(onClick = onAddCardRecipient, enabled = busy == null,
-            modifier = Modifier.fillMaxWidth()) {
-            Text("Add the attached card as a recipient")
-        }
-        TextButton(onClick = onAddRecipient, enabled = busy == null,
-            modifier = Modifier.fillMaxWidth()) {
-            Text("Add recipient (pick in OpenKeyChain)")
-        }
-        HorizontalDivider()
-
-        // THE SHARE SECTION: how a vault moves between people. A scanned
-        // key lives in the session only — appended to the export's
-        // recipient set (the permanent recipients stay first) and never
-        // written to the repo's keys/ or config. "Show key" publishes this
-        // device's own public key as a QRFT for the other side to scan.
         Text("Share vault", style = MaterialTheme.typography.titleSmall)
 
         Text("Recipients", style = MaterialTheme.typography.labelLarge)
@@ -260,6 +235,21 @@ fun SetupTabScreen(
         }
 
         HorizontalDivider()
+        Text("Backups", style = MaterialTheme.typography.titleSmall)
+        // The backup exports carry the WHOLE REPO (the git-state clone —
+        // the vault + the keys + the signed history); the repo export
+        // supersedes the vault-snapshot. The imports live in Share.
+        Text("USB", style = MaterialTheme.typography.labelLarge)
+        Button(onClick = onExportBackupZip, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Export")
+        }
+        Text("QRFT", style = MaterialTheme.typography.labelLarge)
+        Button(onClick = onExportRepoQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Export")
+        }
+
+        HorizontalDivider()
+
         // THIS device + the repo's registered devices: one section — the
         // device-level view of the sync.
         Text("Devices", style = MaterialTheme.typography.titleSmall)
@@ -288,6 +278,31 @@ fun SetupTabScreen(
             }
         }
         HorizontalDivider()
+        Text("Vault encryption keys", style = MaterialTheme.typography.titleSmall)
+        if (recipientIds.isEmpty()) {
+            Text("(none — add one before saving)", style = MaterialTheme.typography.bodySmall)
+        }
+        recipientIds.forEach { id ->
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("0x%016X".format(id), modifier = Modifier.weight(1f))
+                TextButton(onClick = { onRemoveRecipient(id) }) { Text("Remove") }
+            }
+        }
+        Button(onClick = onAddCardRecipient, enabled = busy == null,
+            modifier = Modifier.fillMaxWidth()) {
+            Text("Add the attached card as a recipient")
+        }
+        TextButton(onClick = onAddRecipient, enabled = busy == null,
+            modifier = Modifier.fillMaxWidth()) {
+            Text("Add recipient (pick in OpenKeyChain)")
+        }
+        HorizontalDivider()
+
+        // THE SHARE SECTION: how a vault moves between people. A scanned
+        // key lives in the session only — appended to the export's
+        // recipient set (the permanent recipients stay first) and never
+        // written to the repo's keys/ or config. "Show key" publishes this
+        // device's own public key as a QRFT for the other side to scan.
         // Signing is its own section — the OpenKeyChain initialization
         // (seeding the repo's keys into OKK) belongs with it, not with the
         // device identity.
@@ -384,21 +399,6 @@ fun SetupTabScreen(
             Text("YubiKey SSH: not enrolled.", style = MaterialTheme.typography.bodySmall)
         }
         Text("Active mode: " + VaultSession.sshSyncMode(), style = MaterialTheme.typography.bodySmall)
-        HorizontalDivider()
-
-        Text("Backups", style = MaterialTheme.typography.titleSmall)
-        // The backup exports carry the WHOLE REPO (the git-state clone —
-        // the vault + the keys + the signed history); the repo export
-        // supersedes the vault-snapshot. The imports live in Share.
-        Text("USB", style = MaterialTheme.typography.labelLarge)
-        Button(onClick = onExportBackupZip, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Export")
-        }
-        Text("QRFT", style = MaterialTheme.typography.labelLarge)
-        Button(onClick = onExportRepoQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Export")
-        }
-
         HorizontalDivider()
 
         Text("Paste devices (Chrome extension)", style = MaterialTheme.typography.titleSmall)
