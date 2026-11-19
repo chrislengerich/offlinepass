@@ -123,15 +123,20 @@ class OfflinepassAutofillService : AutofillService() {
     /** THE SAVE CONTRACT: the declared savable fields — without this the
      *  framework never fires onSaveRequest on the activity's finish (the
      *  measured missing save-offer). The username = optional (the signup
-     *  forms may leave it blank), the password = required. */
+     *  forms may leave it blank), the password = required. The flag =
+     *  the save fires when ALL the autofillable views go invisible (the
+     *  form's dismissal) — the experiment for the username-less signups
+     *  (the all-autofilled case: the framework's default = the save only
+     *  when a user-entered field changed). */
     private fun FillResponse.Builder.withSaveInfo(fields: Fields): FillResponse.Builder {
         val allIds = (fields.username + fields.password).toTypedArray()
         if (allIds.isEmpty()) return this
-        return setSaveInfo(android.service.autofill.SaveInfo.Builder(
-            android.service.autofill.SaveInfo.SAVE_DATA_TYPE_PASSWORD or
-                android.service.autofill.SaveInfo.SAVE_DATA_TYPE_USERNAME,
-            allIds
-        ).build())
+        return setFlags(FillResponse.FLAG_SAVE_ON_ALL_VIEWS_INVISIBLE)
+            .setSaveInfo(android.service.autofill.SaveInfo.Builder(
+                android.service.autofill.SaveInfo.SAVE_DATA_TYPE_PASSWORD or
+                    android.service.autofill.SaveInfo.SAVE_DATA_TYPE_USERNAME,
+                allIds
+            ).build())
     }
 
     private fun unlockedResponse(fields: Fields): FillResponse {
