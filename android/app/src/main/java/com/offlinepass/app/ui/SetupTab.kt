@@ -109,8 +109,7 @@ fun SetupTabScreen(
         // the Recent commits list shows (NOT the device id, which looks
         // deceptively like a commit hash).
         Text(
-            "Commit: ${VaultSession.headCommitShort()}   Rev: ${VaultSession.currentRev()}   " +
-                "Device id: ${cfg?.deviceId?.take(8) ?: "-"}",
+            "Commit: ${VaultSession.headCommitShort()}   Rev: ${VaultSession.currentRev()}",
             style = MaterialTheme.typography.bodySmall
         )
 

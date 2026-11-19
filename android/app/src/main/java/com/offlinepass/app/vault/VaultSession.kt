@@ -345,7 +345,8 @@ object VaultSession {
     fun deviceName(): String =
         prefs().getString("deviceName", null) ?: android.os.Build.MODEL
     fun setDeviceName(n: String) {
-        prefs().edit().putString("deviceName", n.trim()).apply()
+        prefs().edit().putString("deviceName",
+            sanitizeDeviceName(n)).apply()
     }
 
     /** The minimal registry entry: the device NAME mapped to its public
@@ -364,18 +365,34 @@ object VaultSession {
     private fun keysEncryptDir(): File = File(gitRoot(), "keys/encrypt")
     private fun authorizedKeysFile(): File = File(keysAuthDir(), "authorized-keys")
 
+    /** Device names are user-visible: strip control bytes (an earlier
+     *  build once wrote raw bytes into the registry) and blank the
+     *  result to "(unnamed)". */
+    private fun sanitizeDeviceName(raw: String): String =
+        raw.filter { !it.isISOControl() }.trim().ifEmpty { "(unnamed)" }
+
     fun readDeviceRegistry(): List<DeviceRegistryEntry> {
         val f = metaDevicesFile()
         if (!f.exists()) return emptyList()
         return runCatching {
             val arr = org.json.JSONObject(f.readText()).getJSONArray("devices")
-            (0 until arr.length()).mapNotNull { i ->
+            val entries = (0 until arr.length()).mapNotNull { i ->
                 val o = arr.getJSONObject(i)
                 DeviceRegistryEntry(
-                    o.optString("name", ""),
+                    sanitizeDeviceName(o.optString("name", "")),
                     o.optString("authKey", "").ifEmpty { null },
                     o.optString("cert", "").ifEmpty { null })
             }
+            // SELF-HEAL: a sanitized name differing from the stored one
+            // rewrites the registry so the fix persists.
+            runCatching {
+                val raw = (0 until arr.length()).mapNotNull { i ->
+                    arr.getJSONObject(i).optString("name", "")
+                }
+                if (entries.zip(raw).any { (e, r) -> e.name != r })
+                    writeDeviceRegistry(entries)
+            }
+            entries
         }.getOrDefault(emptyList())
     }
 
@@ -386,7 +403,7 @@ object VaultSession {
         val arr = org.json.JSONArray()
         for (e in entries) {
             val o = org.json.JSONObject()
-            o.put("name", e.name)
+            o.put("name", sanitizeDeviceName(e.name))
             if (e.authKey != null) o.put("authKey", e.authKey)
             if (e.cert != null) o.put("cert", e.cert)
             arr.put(o)
