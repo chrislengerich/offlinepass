@@ -719,6 +719,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
     private var selfTestResult by androidx.compose.runtime.mutableStateOf<String?>(null)
     /** The security-key naming dialog's prefill (null = closed). */
     private var securityKeyNaming by androidx.compose.runtime.mutableStateOf<String?>(null)
+    /** The plug-in wait: the dialog asks for the key and the poll loop
+     *  proceeds the moment it appears. */
+    private var waitingForKey by androidx.compose.runtime.mutableStateOf(false)
+    private var keyWaitJob: kotlinx.coroutines.Job? = null
 
     /** The line the copy-to-GitHub dialog carries: the AUTH slot's key
      *  unless the enrolled line already IS the AUTH key (then the SIG's
@@ -1172,6 +1176,23 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // in-app loop (copy → paste at github.com/settings/keys →
         // re-run Enroll) — the desktop gpg step is gone. Every state:
         // the first enrollment happens pre-load.
+        if (waitingForKey) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { keyWaitJob?.cancel(); waitingForKey = false },
+                title = { androidx.compose.material3.Text("Plug in the security key") },
+                text = {
+                    androidx.compose.material3.Text(
+                        "Attach the YubiKey to the phone's USB port (a hub " +
+                            "counts). The naming dialog opens the moment it appears.")
+                },
+                confirmButton = {},
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = {
+                        keyWaitJob?.cancel(); waitingForKey = false
+                    }) { androidx.compose.material3.Text("Cancel") }
+                }
+            )
+        }
         securityKeyNaming?.let { prefill ->
             var skName by androidx.compose.runtime.remember(prefill) {
                 androidx.compose.runtime.mutableStateOf(prefill)
@@ -2221,11 +2242,28 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             // the SSH-line read is a bonus (it updates the
                             // entry's material); never block the dialog on it.
                             val id = VaultSession.readSecurityKeyIdentity()
-                            if (id == null) {
-                                status = "No security key attached (or USB permission " +
-                                    "denied) — plug it in, then tap again."
-                            } else {
+                            if (id != null) {
                                 securityKeyNaming = VaultSession.securityKeyNameSuggestion()
+                            } else {
+                                // NOTHING attached: prompt for the plug-in and
+                                // WAIT — the poll proceeds the moment the key
+                                // appears (60 s cap).
+                                waitingForKey = true
+                                keyWaitJob?.cancel()
+                                keyWaitJob = lifecycleScope.launch {
+                                    repeat(60) {
+                                        kotlinx.coroutines.delay(1000)
+                                        val id2 = VaultSession.readSecurityKeyIdentity()
+                                        if (id2 != null) {
+                                            waitingForKey = false
+                                            securityKeyNaming =
+                                                VaultSession.securityKeyNameSuggestion()
+                                            return@launch
+                                        }
+                                    }
+                                    waitingForKey = false
+                                    status = "Still no security key — plug it in and tap again."
+                                }
                             }
                         }
                     },
