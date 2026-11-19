@@ -75,27 +75,15 @@ class AutofillAuthActivity : ComponentActivity() {
                             listOf("https://$origin") else emptyList(),
                         password = PasswordGen.password())
                     AutofillRevealStore.put(item, "generate")
-                    // THE SAVE = AT THE GENERATE: the chip's tap = the
-                    // confirmation (the screenlock = the ONE interaction).
-                    // The platform's save event = the user-typed-delta
-                    // only — the all-autofilled submissions fire NOTHING
-                    // (the measured no-save), so the entry is inserted
-                    // NOW; the username gets added later in the app. The
-                    // framework's save request for the SAME password (the
-                    // typed-username case) = acked by the store-matching
-                    // dedup in onSaveRequest.
-                    val saved = try {
-                        VaultSession.addSealed(item.copy(modifyTime = 0))
-                    } catch (e: Exception) {
-                        VaultSession.Result.Error("${e.javaClass.simpleName}: ${e.message}")
-                    }
-                    Log.i(TAG, "the generate's save: $saved")
-                    Toast.makeText(this@AutofillAuthActivity,
-                        when (saved) {
-                            VaultSession.Result.Success -> "Saved ✓"
-                            else -> "The save failed — $saved"
-                        }, Toast.LENGTH_LONG).show()
-                    Log.i(TAG, "generated a password for $origin — RESULT_OK (the fill)")
+                    // THE FLYUP = THE SAVE QUESTION, SELF-POSTED AT THE
+                    // GENERATE: the platform's save event = the
+                    // user-typed-delta only — an all-autofilled submission
+                    // fires NOTHING — so the question must be OURS. The
+                    // banner = NON-BLOCKING: it sits while the user
+                    // completes the form; the tap = the yes (the screenlock
+                    // → the INSERT via the SAVE mode), the swipe = the no.
+                    AutofillSaveOffer.post(this@AutofillAuthActivity, origin, null, item.password)
+                    Log.i(TAG, "generated a password for $origin — RESULT_OK (the fill) + the flyup")
                     setResult(RESULT_OK)
                     finish()
                 }
