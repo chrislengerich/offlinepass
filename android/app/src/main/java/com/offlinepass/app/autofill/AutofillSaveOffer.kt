@@ -27,11 +27,17 @@ object AutofillSaveOffer {
 
     fun post(context: Context, origin: String, username: String?, password: String) {
         val nm = context.getSystemService(android.app.NotificationManager::class.java)
-        val channelId = "autofill-save"
+        // THE HEADS-UP BANNER: the offer must INTERRUPT the form (the old
+        // channel ran at DEFAULT = tray-only — the user never saw it; the
+        // channel's importance = frozen at the first creation, so the NEW
+        // id + HIGH). The banner = the "if confirmed" moment itself.
+        val channelId = "autofill-save-hi"
         if (android.os.Build.VERSION.SDK_INT >= 26) {
             nm.createNotificationChannel(android.app.NotificationChannel(
                 channelId, "Autofill save offers",
-                android.app.NotificationManager.IMPORTANCE_DEFAULT))
+                android.app.NotificationManager.IMPORTANCE_HIGH).apply {
+                enableVibration(true)
+            })
         }
         val granted = if (android.os.Build.VERSION.SDK_INT >= 33) {
             context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
@@ -55,6 +61,8 @@ object AutofillSaveOffer {
             .setContentTitle("Save this login to offlinepass?")
             .setContentText(origin + (username?.let { " — $it" } ?: ""))
             .setContentIntent(pi)
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .setVibrate(longArrayOf(0, 250, 150, 250))
             .setAutoCancel(true)
             .build()
         nm.notify(notifId++, n)
