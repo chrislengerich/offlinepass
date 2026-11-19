@@ -1528,15 +1528,17 @@ object VaultSession {
                     if (commitSigningMode() == SIGNING_YUBIKEY) {
                         signer = yubikeyCommitSignerOrNull()
                             ?: run {
-                                // THE SSH ENROLLMENT = PENDING (the fresh
-                                // creation): the commit = the unsigned — the
-                                // git accepts, the vault = on disk (the
-                                // creation's whole point), and the signed
-                                // commits begin after the checklist's
-                                // enrollment step.
-                                syncStatus = "Commit unsigned — the SSH " +
-                                    "enrollment is pending."
-                                null
+                                // THE LOCAL FALLBACK (the SSH enrollment
+                                // NOT needed): the screenlock's keystore key
+                                // — the on-demand generation + the
+                                // screen-lock prompt (the device's lock =
+                                // always present). The commits = SIGNED
+                                // from the birth.
+                                val hook = keystoreSignerHook
+                                    ?: return@withContext rollback(
+                                        "Screenlock signer unavailable (UI layer absent) — nothing saved.")
+                                syncStatus = "Commit signed with the screenlock key."
+                                com.offlinepass.app.crypto.KeystoreCommitSigner(hook)
                             }
                     } else if (commitSigningMode() == SIGNING_SCREENLOCK) {
                         // Publish/re-publish the enrolled public key so any
