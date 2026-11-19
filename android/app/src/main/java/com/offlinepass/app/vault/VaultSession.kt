@@ -920,12 +920,10 @@ object VaultSession {
             prompt = { yubikeyPin() },
             rememberPin = { yubikeyPinRemember(it) },
             cardSign = { pin, payload -> withTouchPrompt {
-                // The slot = the SIG (the default — the card pads the
-                // digest) or AUT (the dedicated authentication key — the
-                // raw-RSA challenge, the caller pads; the measured
-                // experiment, the pref flips it).
-                com.offlinepass.app.crypto.YubiKitSshAuth.sign(
-                    appContext, pin, payload, useAut = sshAuthUseAut())
+                // THE COMMIT SIGNING = the SIG slot (the card pads the
+                // digest) — ALWAYS. The AUT = the TRANSPORT auth's slot
+                // (the SSH handshake), not the signing's.
+                com.offlinepass.app.crypto.YubiKitSshAuth.sign(appContext, pin, payload)
             } })
     }
 
