@@ -1499,11 +1499,24 @@ object VaultSession {
                         val base = e.items
                         val applied = base.map { baseItem ->
                             val ui = items.firstOrNull { it.itemUuid == baseItem.itemUuid }
-                            if (ui == null || ui.modifyTime <= baseItem.modifyTime) baseItem
-                            else {
-                                Log.i(TAG, "save: ${ui.itemUuid.take(8)} — the UI edit wins " +
-                                    "(modifyTime ${ui.modifyTime} > ${baseItem.modifyTime})")
-                                ui
+                            when {
+                                ui == null -> baseItem
+                                ui.modifyTime > baseItem.modifyTime -> {
+                                    Log.i(TAG, "save: ${ui.itemUuid.take(8)} — the UI edit wins " +
+                                        "(modifyTime ${ui.modifyTime} > ${baseItem.modifyTime})")
+                                    ui
+                                }
+                                // THE EXPLICIT EDIT WINS THE TIE: the caller
+                                // named this item as the edit — a same-second
+                                // stamp must not drop it (the sub-second
+                                // consecutive saves).
+                                ui.itemUuid == editedUuid &&
+                                    ui.modifyTime == baseItem.modifyTime -> {
+                                    Log.i(TAG, "save: ${ui.itemUuid.take(8)} — the UI edit wins " +
+                                        "(the modifyTime tie, the explicit edit)")
+                                    ui
+                                }
+                                else -> baseItem
                             }
                         } + items.filter { ui ->
                             base.none { it.itemUuid == ui.itemUuid }
@@ -1753,7 +1766,15 @@ object VaultSession {
                         git.commitFile(gitRoot(), "Update 10.gpg (rev ${env.rev})", signer)
                         syncStatus = "Committed locally (rev ${env.rev}, no remote)"
                     }
-                    sealIfEnabled(items, env)
+                    // THE TAIL SEALS THE ENVELOPE'S FULL ITEMS — never the
+                    // caller's list: in the stub-mode save the caller's
+                    // list = THE STUBS (+ the edited), and sealing those
+                    // wrote EMPTY secrets into the cache — the next
+                    // promote made them the base, and the next save
+                    // encrypted them into the vault file (the measured
+                    // clobber; also the autofill's "only the username"
+                    // reveals). The envelope = the just-saved full state.
+                    sealIfEnabled(env.items, env)
                     // THE STUB MODEL: the save's batch unseal brought the
                     // full items into memory — re-seal AWAITED (the async
                     // seal would race the re-stub: a tap right after the
@@ -1761,13 +1782,13 @@ object VaultSession {
                     // per item), then re-stub immediately. The seal's
                     // closure captured the full list, so this is race-safe.
                     if (screenlockUnlockEnabled()) {
-                        SealedVault.sealNowAwait(items, env, File(vaultFilePath()))
+                        SealedVault.sealNowAwait(env.items, env, File(vaultFilePath()))
                         // THE MODELS SEPARATED (see the promote): the state =
                         // a FRESH stub list; loadedEnvelope (env) KEEPS the
                         // just-saved full items — the next save's base. The
                         // old `env.items = stubs` mutated the encryption
                         // base to the stubs (the measured save-clobber).
-                        state = State.Unlocked(items.map { it.asStub() })
+                        state = State.Unlocked(env.items.map { it.asStub() })
                         stubSession = true
                     }
                     Result.Success
@@ -2021,8 +2042,16 @@ object VaultSession {
         }
         val items = (state as? State.Unlocked)?.items
             ?: return Result.Error("Session unavailable")
+        // THE EDIT = NOW: the revealed copy carries the item's OLD
+        // modifyTime — the SAME value the base holds (both from the same
+        // promote) — and the modifyTime rule's tie means the base wins,
+        // silently dropping the edit (the measured clobber: every sealed
+        // detail save died this way). The edit is happening NOW; stamp it
+        // — the empty user/pass edits stamp identically (the heroku
+        // shape) — and pass the uuid so save()'s resolution sees it.
+        edited.modifyTime = System.currentTimeMillis() / 1000
         val merged = items.map { if (it.itemUuid == edited.itemUuid) edited else it }
-        return save(merged)
+        return save(merged, edited.itemUuid)
     }
 
     private fun sealedErrorMessage(e: Exception): String {

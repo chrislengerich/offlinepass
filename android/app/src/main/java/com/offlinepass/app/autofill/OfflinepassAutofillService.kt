@@ -62,14 +62,24 @@ class OfflinepassAutofillService : AutofillService() {
             callback.onSuccess(null); return
         }
 
-        val response = when {
-            // The sealed/stub states: the targeted single-item unseal (the
-            // screenlock gate) — the stub session's memory holds no secrets,
-            // so the unseal branch must win over the unlocked branch.
-            VaultSession.screenlockUnlockEnabled() &&
-                SealedVault.manifestItems().isNotEmpty() -> sealedResponse(fields)
-            VaultSession.state is VaultSession.State.Unlocked -> unlockedResponse(fields)
-            else -> lockedResponse(fields)
+        // THE SERVICE MUST NEVER THROW INTO THE FRAMEWORK — it shares the
+        // app's process, so a throw here = the vault session dies with it
+        // (the measured crash: a zero-value dataset's build() on the
+        // password-less Google page). Any response bug degrades to no
+        // suggestions instead of a process kill.
+        val response = try {
+            when {
+                // The sealed/stub states: the targeted single-item unseal (the
+                // screenlock gate) — the stub session's memory holds no secrets,
+                // so the unseal branch must win over the unlocked branch.
+                VaultSession.screenlockUnlockEnabled() &&
+                    SealedVault.manifestItems().isNotEmpty() -> sealedResponse(fields)
+                VaultSession.state is VaultSession.State.Unlocked -> unlockedResponse(fields)
+                else -> lockedResponse(fields)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "the fill response failed — degrading to no suggestions", e)
+            null
         }
         callback.onSuccess(response)
     }
@@ -170,9 +180,10 @@ class OfflinepassAutofillService : AutofillService() {
         }
         // THE GENERATE CHIP: the registration / new-credentials case — no
         // entry matches the page. Tapping gates, generates, and the
-        // re-invoke fills the fresh password.
+        // re-invoke fills the fresh password. Only WITH a password field
+        // (a zero-value dataset = the platform build() throws).
         if (shown.none { fields.matches(it) }) {
-            builder.addDataset(generateDataset(fields))
+            generateDataset(fields)?.let { builder.addDataset(it) }
         }
         // Search-in-app dataset (covers non-matching or >5 entries). With the
         // empty-fields guard in onFillRequest, at least one id exists here.
@@ -238,7 +249,7 @@ class OfflinepassAutofillService : AutofillService() {
         // THE GENERATE CHIP: no entry matches the page (the registration
         // case) — the tap gates, generates, the re-invoke fills.
         if (ranked.none { fields.matches(it) }) {
-            builder.addDataset(generateDataset(fields, requestCode++))
+            generateDataset(fields, requestCode++)?.let { builder.addDataset(it) }
             count++
         }
         for (item in ranked.take(5)) {
@@ -323,8 +334,15 @@ class OfflinepassAutofillService : AutofillService() {
     /** The "⚡ Generate a strong password" dataset: the auth = the auth
      *  activity's GENERATE mode (the screenlock gates — the vault is
      *  touched); only the PASSWORD ids carry a placeholder, so the
-     *  re-invoke fills the generated value without touching the username. */
-    private fun generateDataset(fields: Fields, requestCode: Int = 30): Dataset {
+     *  re-invoke fills the generated value without touching the username.
+     *  Null when no password field exists — a zero-value dataset makes
+     *  the platform's build() THROW (the measured process-killer on the
+     *  password-less Google sign-in page). */
+    private fun generateDataset(fields: Fields, requestCode: Int = 30): Dataset? {
+        if (fields.password.isEmpty()) {
+            Log.i(TAG, "generate chip skipped — no password field detected")
+            return null
+        }
         val origin = fields.webDomain ?: fields.appPackage
         val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
             .putExtra(AutofillAuthActivity.EXTRA_MODE, AutofillAuthActivity.MODE_GENERATE)

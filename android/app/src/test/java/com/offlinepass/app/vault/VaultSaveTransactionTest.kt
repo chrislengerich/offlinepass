@@ -272,6 +272,47 @@ class VaultSaveTransactionTest {
     }
 
     @Test
+    fun consecutiveSealedEditsSurviveEachOther() = runBlocking {
+        // THE MEASURED CLOBBER (the sealed detail's save): saveSealed
+        // swapped the edited in and called save() WITHOUT the uuid — the
+        // revealed copy's modifyTime = the base's (the same promote), the
+        // tie = the base wins, and EVERY sealed-detail save died silently.
+        // With the now-stamp + the uuid passed, the edits survive.
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        val a = item("A").apply { password = "pw-a1"; modifyTime = 100 }
+        val b = item("B").apply { password = "pw-b0"; modifyTime = 100 }
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf(a, b)
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        // The sealed detail's save #1: edit A (the OLD modifyTime rides —
+        // exactly what the revealed copy carries).
+        val r1 = VaultSession.saveSealed(a.copy(password = "pw-a2", modifyTime = 100))
+        assertTrue("save #1: $r1", r1 is VaultSession.Result.Success)
+        // The save #2: edit B (the heroku SHAPE: the empty user/pass —
+        // only the name/urls carry the edit).
+        val r2 = VaultSession.saveSealed(b.copy(
+            password = "", username = "", note = "the heroku edit", modifyTime = 100))
+        assertTrue("save #2: $r2", r2 is VaultSession.Result.Success)
+        // The save #3: edit A again.
+        val r3 = VaultSession.saveSealed(a.copy(password = "pw-a3", modifyTime = 100))
+        assertTrue("save #3: $r3", r3 is VaultSession.Result.Success)
+        val plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        if (!plain.contains("pw-a3")) {
+            println("DEBUG the vault file: $plain")
+        }
+        assertTrue("save #1's edit must survive #2 and #3", plain.contains("pw-a3"))
+        assertTrue("the empty user/pass edit's note must survive", 
+            plain.contains("the heroku edit"))
+        assertFalse("the stale original must be replaced", plain.contains("pw-b0"))
+        assertFalse("the intermediate must be replaced", plain.contains("pw-a2"))
+    }
+
+    @Test
     fun seedParsesUnsignedHexIds() = runBlocking {
         // THE UNSIGNED-PARSE REGRESSION: the ids with the high bit set (the
         // card's own 0xF3E2… among them) overflow the signed Long —
