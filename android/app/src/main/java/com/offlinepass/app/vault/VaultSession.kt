@@ -1527,9 +1527,17 @@ object VaultSession {
                     val signer: org.eclipse.jgit.lib.Signer?
                     if (commitSigningMode() == SIGNING_YUBIKEY) {
                         signer = yubikeyCommitSignerOrNull()
-                            ?: return@withContext rollback(
-                                (sshIdentityUnavailable ?: "YubiKey signer unavailable") +
-                                    " — nothing saved.")
+                            ?: run {
+                                // THE SSH ENROLLMENT = PENDING (the fresh
+                                // creation): the commit = the unsigned — the
+                                // git accepts, the vault = on disk (the
+                                // creation's whole point), and the signed
+                                // commits begin after the checklist's
+                                // enrollment step.
+                                syncStatus = "Commit unsigned — the SSH " +
+                                    "enrollment is pending."
+                                null
+                            }
                     } else if (commitSigningMode() == SIGNING_SCREENLOCK) {
                         // Publish/re-publish the enrolled public key so any
                         // client can verify revisions (guarded: device-only
