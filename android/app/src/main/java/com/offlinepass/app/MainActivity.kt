@@ -1022,6 +1022,17 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         VaultSession.initLocalRepo()
                         if (decId != null) {
                             VaultSession.setCommitSigningMode(VaultSession.SIGNING_YUBIKEY)
+                            // THE VAULT = ON DISK AT CREATION: addCardRecipient
+                            // writes the card's raw-key record into
+                            // keys/encrypt/, re-encrypts the (empty) envelope,
+                            // and commits — the vault file exists from the
+                            // birth, so the lock + unlock loop closes (the
+                            // memory-only vault = lost at the lock; the
+                            // unlock then said "No local vault").
+                            when (val r = VaultSession.addCardRecipient()) {
+                                VaultSession.Result.Success -> {}
+                                else -> Log.w(TAG, "the creation-time encrypt: $r")
+                            }
                         }
                         // The onboarding checklist = the SAME as the
                         // load-existing flow: the SSH enroll, the remote, the
