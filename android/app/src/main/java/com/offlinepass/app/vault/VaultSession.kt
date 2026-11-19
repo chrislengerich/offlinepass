@@ -188,7 +188,7 @@ object VaultSession {
      *  command = the long-command transport experiment). Static tests
      *  prove the wire compatibility (AutKeyPathTest); the on-device
      *  self-test measures the transport before this goes default. */
-    fun sshAuthUseAut(): Boolean = prefs().getBoolean("sshAuthUseAut", false)
+    fun sshAuthUseAut(): Boolean = prefs().getBoolean("sshAuthUseAut", true)
     fun setSshAuthUseAut(on: Boolean) {
         prefs().edit().putBoolean("sshAuthUseAut", on).apply()
     }
@@ -2111,8 +2111,11 @@ object VaultSession {
                     val block = com.offlinepass.app.crypto.SshRsaPkcs1
                         .digestInfo("SHA-512", data)
                     withTouchPrompt {
+                        // The slot = the SETTING's: the SIG (the default was
+                        // the old) or the AUT (the dedicated auth key — the
+                        // padded challenge, the wire-compat proven).
                         com.offlinepass.app.crypto.YubiKitSshAuth
-                            .sign(appContext, pin, block)
+                            .sign(appContext, pin, block, useAut = sshAuthUseAut())
                     }
                 }
             }
@@ -2127,7 +2130,9 @@ object VaultSession {
                 verifier.verify(sigBlock)
             }.getOrElse { false }
             return if (verified) SshSelfTest(true,
-                "YubiKit: the card signed on the SIGNATURE slot + verified locally — the full chain works")
+                "YubiKit: the card signed on the " +
+                    (if (sshAuthUseAut()) "AUTH slot (AUT)" else "SIGNATURE slot (SIG)") +
+                    " + verified locally — the full chain works")
             else SshSelfTest(false,
                 "the card's signature did NOT verify locally against the enrolled line " +
                     "(the sig armor is saved to last-selftest-sig.asc)")
