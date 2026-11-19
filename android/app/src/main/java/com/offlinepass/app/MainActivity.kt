@@ -226,6 +226,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
             status = "Screen lock failed — unlock aborted."
             return
         }
+        // THE CARD = THE DECRYPT: the USB permission = per-plug — after the
+        // app restart it is RESET, and the unlock's card decrypt needs it.
+        // The system dialog pops here (the first time after each replug).
+        if (!ensureUsbPermission()) {
+            status = "No security key attached or permission denied — " +
+                "the unlock needs the card (PIN + touch)."
+            return
+        }
         var guard = 0
         while (guard++ < 2) {
             when (val r = VaultSession.unlock()) {
@@ -351,6 +359,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         zip.outputStream().use { ins.copyTo(it) }
                     }
                 }.onFailure { status = "Backup read failed: ${it.message}"; return@launch }
+                if (!ensureUsbPermission()) {
+                    status = "No security key attached or permission denied — " +
+                        "the backup's decrypt needs the card."
+                    return@launch
+                }
                 screen = Screen.Search
                 status = when (val r = VaultSession.importBackupZip(zip)) {
                     is VaultSession.Result.Success -> "Backup imported (rev ${VaultSession.currentRev()})."
