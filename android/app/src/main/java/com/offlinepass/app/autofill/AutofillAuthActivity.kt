@@ -21,20 +21,22 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * The autofill's auth activity, two modes:
+ * The autofill's auth activity, three modes:
  * - **reveal** (default): the sealed-state chip's tapped item — the SAME
  *   screenlock gate as the item view; the TARGETED single item unseals,
  *   the store carries it to the framework's re-invoked onFillRequest.
  *   RESULT_OK = fill; canceled = the picker stays.
- * - **generate**: the "⚡ Generate password" chip — the same gate, then a
- *   fresh [PasswordGen.password], and THE SAVE INTERSTITIAL IN THIS
- *   ACTIVITY: "Save this login to offlinepass?" [Save]/[Not now] — the
- *   user is already looking at this screen; the notification form was
- *   too noisy (the measured feedback). The Save = VaultSession.saveSealed
- *   right here, with the app's standard prompt surfaces replicated as
- *   dialogs (the security key's touch reminder, the OpenPGP PIN).
- *   NO MainActivity navigation in either mode — the control stays with
- *   the framework's fill flow.
+ * - **generate**: the "⚡ Generate password" chip — the gate, then a
+ *   fresh [PasswordGen.password] into the store; RESULT_OK → the fill.
+ *   NO save question here — the save comes AFTER the login.
+ * - **save**: launched BY THE FRAMEWORK from onSaveRequest — i.e. only
+ *   after the login completed (the user's sequencing: the interstitial
+ *   = after the credentials' use). The screenlock gate → "Save this
+ *   login to offlinepass?" [Save]/[Not now] — the save runs here with
+ *   the app's standard prompt surfaces as dialogs (the security key's
+ *   touch reminder, the OpenPGP PIN).
+ *   NO MainActivity navigation in any mode — the control stays with the
+ *   framework's flow.
  */
 class AutofillAuthActivity : ComponentActivity() {
 
@@ -54,45 +56,63 @@ class AutofillAuthActivity : ComponentActivity() {
             return
         }
         lifecycleScope.launch {
-            val ok = ScreenlockGate.promptGate(
-                this@AutofillAuthActivity,
-                if (mode == MODE_GENERATE) "Generate & fill" else "Unlock the entry",
-                if (mode == MODE_GENERATE)
-                    "The device lock authorizes filling a generated password"
-                else "Autofill: the device lock opens this item's secrets")
-            if (!ok) {
-                Log.i(TAG, "auth gate declined ($mode) — RESULT_CANCELED")
-                setResult(RESULT_CANCELED)
-                finish()
-                return@launch
+            when (mode) {
+                MODE_GENERATE -> {
+                    val ok = ScreenlockGate.promptGate(
+                        this@AutofillAuthActivity,
+                        "Generate & fill",
+                        "The device lock authorizes filling a generated password")
+                    if (!ok) {
+                        Log.i(TAG, "the generate's gate declined — RESULT_CANCELED")
+                        setResult(RESULT_CANCELED)
+                        finish()
+                        return@launch
+                    }
+                    val origin = name?.takeIf { it.isNotBlank() } ?: "Generated password"
+                    val item = ProtonItem(name = origin, password = PasswordGen.password())
+                    AutofillRevealStore.put(item, "generate")
+                    Log.i(TAG, "generated a password for $origin — RESULT_OK (the fill)")
+                    setResult(RESULT_OK)
+                    finish()
+                }
+                MODE_SAVE -> {
+                    val item = ProtonItem(
+                        name = name?.takeIf { it.isNotBlank() } ?: "Login",
+                        username = intent.getStringExtra(EXTRA_USERNAME) ?: "",
+                        password = intent.getStringExtra(EXTRA_PASSWORD) ?: "")
+                    val gate = ScreenlockGate.promptGate(
+                        this@AutofillAuthActivity,
+                        "Unlock offlinepass",
+                        "The device lock authorizes saving the login")
+                    if (!gate) {
+                        Log.i(TAG, "the save's gate declined — done")
+                        setResult(RESULT_OK)
+                        finish()
+                        return@launch
+                    }
+                    withContext(Dispatchers.Main) { showSaveInterstitial(item) }
+                }
+                else -> {
+                    val item = withContext(Dispatchers.IO) { SealedVault.reveal(uuid!!) }
+                    if (item == null) {
+                        Log.w(TAG, "the unseal failed for ${uuid?.take(8)} — RESULT_CANCELED " +
+                            "(the cache stale/missing — the app's unlock re-seals)")
+                        setResult(RESULT_CANCELED)
+                        finish()
+                        return@launch
+                    }
+                    AutofillRevealStore.put(item, uuid)
+                    Log.i(TAG, "revealed ${item.displayName} — RESULT_OK (the framework re-invokes)")
+                    setResult(RESULT_OK)
+                    finish()
+                }
             }
-            if (mode == MODE_GENERATE) {
-                val origin = name?.takeIf { it.isNotBlank() } ?: "Generated password"
-                val item = ProtonItem(name = origin, password = PasswordGen.password())
-                AutofillRevealStore.put(item, "generate")
-                Log.i(TAG, "generated a password for $origin — the save interstitial")
-                showSaveInterstitial(item)
-                return@launch
-            }
-            val item = withContext(Dispatchers.IO) { SealedVault.reveal(uuid!!) }
-            if (item == null) {
-                Log.w(TAG, "the unseal failed for ${uuid?.take(8)} — RESULT_CANCELED " +
-                    "(the cache stale/missing — the app's unlock re-seals)")
-                setResult(RESULT_CANCELED)
-                finish()
-                return@launch
-            }
-            AutofillRevealStore.put(item, uuid)
-            Log.i(TAG, "revealed ${item.displayName} — RESULT_OK (the framework re-invokes)")
-            setResult(RESULT_OK)
-            finish()
         }
     }
 
-    /** THE SAVE INTERSTITIAL: the question lives in the flow the user is
-     *  already in — [Save] = the sealed save here (the dialogs cover the
-     *  card prompts); [Not now] = the fill only. Either way RESULT_OK:
-     *  the framework fills the generated password regardless. */
+    /** THE SAVE INTERSTITIAL — after the login, on the framework's
+     *  launch: [Save] = the sealed save here (the dialogs cover the card
+     *  prompts); [Not now] = done. Either way RESULT_OK. */
     private fun showSaveInterstitial(item: ProtonItem) {
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -103,8 +123,8 @@ class AutofillAuthActivity : ComponentActivity() {
             textSize = 20f
         })
         col.addView(TextView(this).apply {
-            text = "${item.name} — the generated password.\n" +
-                "The fill continues either way."
+            text = "${item.name}\n${item.username.takeIf { it.isNotBlank() }?.let { "$it\n" } ?: ""}" +
+                "Save it with your security key's protection."
             textSize = 14f
         })
         col.addView(Button(this).apply {
@@ -112,22 +132,36 @@ class AutofillAuthActivity : ComponentActivity() {
             setOnClickListener {
                 it.isEnabled = false
                 lifecycleScope.launch {
-                    val r = VaultSession.saveSealed(item.copy(modifyTime = 0))
-                    val msg = when (r) {
-                        VaultSession.Result.Success -> "Saved ✓"
-                        else -> "The save failed: $r"
+                    val r = try {
+                        VaultSession.saveSealed(item.copy(modifyTime = 0))
+                    } catch (e: Exception) {
+                        VaultSession.Result.Error("${e.javaClass.simpleName}: ${e.message}")
                     }
-                    Log.i(TAG, "the interstitial save: $msg")
-                    Toast.makeText(this@AutofillAuthActivity, msg, Toast.LENGTH_LONG).show()
-                    setResult(RESULT_OK)
-                    finish()
+                    when (r) {
+                        VaultSession.Result.Success -> {
+                            Log.i(TAG, "the interstitial save: Saved ✓ " +
+                                "(rev ${VaultSession.currentRev()})")
+                            Toast.makeText(this@AutofillAuthActivity,
+                                "Saved ✓", Toast.LENGTH_LONG).show()
+                            setResult(RESULT_OK)
+                            finish()
+                        }
+                        else -> {
+                            // LOUD: the failure = the retry stays available
+                            // (the silence = the measured "probably not saved").
+                            Log.w(TAG, "the interstitial save FAILED: $r")
+                            Toast.makeText(this@AutofillAuthActivity,
+                                "The save failed — $r", Toast.LENGTH_LONG).show()
+                            it.isEnabled = true
+                        }
+                    }
                 }
             }
         })
         col.addView(Button(this).apply {
             text = "Not now"
             setOnClickListener {
-                Log.i(TAG, "the save declined — the fill continues")
+                Log.i(TAG, "the save declined — done")
                 setResult(RESULT_OK)
                 finish()
             }
@@ -181,7 +215,10 @@ class AutofillAuthActivity : ComponentActivity() {
         const val EXTRA_UUID = "uuid"
         const val EXTRA_NAME = "name"
         const val EXTRA_MODE = "mode"
+        const val EXTRA_USERNAME = "username"
+        const val EXTRA_PASSWORD = "password"
         const val MODE_REVEAL = "reveal"
         const val MODE_GENERATE = "generate"
+        const val MODE_SAVE = "save"
     }
 }

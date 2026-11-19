@@ -90,19 +90,34 @@ class OfflinepassAutofillService : AutofillService() {
 
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
         VaultSession.init(applicationContext)
+        SealedVault.init(applicationContext)
         val structure = request.fillContexts.lastOrNull()?.structure
         val fields = structure?.let { parse(it) }
         val pw = fields?.passwordValue
         if (pw.isNullOrBlank()) {
             Log.i(TAG, "onSaveRequest: no password captured — ignoring " +
                 "(pkg=${fields?.appPackage})")
-            callback.onSuccess()
+            callback.onFailure("offlinepass: no password in the form")
             return
         }
         val origin = fields?.webDomain ?: fields?.appPackage ?: "the login"
-        // The user-typed save: the platform's own trigger → the same offer.
-        AutofillSaveOffer.post(applicationContext, origin, fields?.usernameValue, pw)
-        callback.onSuccess()
+        // THE INTERSTITIAL, LAUNCHED BY THE FRAMEWORK: the save UI runs
+        // AFTER the login completed (the user's sequencing) — the screenlock
+        // gate → the question → the save, all in the auth activity. The
+        // values ride the intent (the app's own process).
+        val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
+            .putExtra(AutofillAuthActivity.EXTRA_MODE, AutofillAuthActivity.MODE_SAVE)
+            .putExtra(AutofillAuthActivity.EXTRA_NAME, origin)
+            .putExtra(AutofillAuthActivity.EXTRA_USERNAME, fields?.usernameValue ?: "")
+            .putExtra(AutofillAuthActivity.EXTRA_PASSWORD, pw)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        val pi = android.app.PendingIntent.getActivity(
+            appContext(), 500, intent,
+            android.app.PendingIntent.FLAG_IMMUTABLE or
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+        Log.i(TAG, "onSaveRequest: the save interstitial armed for $origin " +
+            "(username=${!fields?.usernameValue.isNullOrBlank()})")
+        callback.onSuccess(pi.intentSender)
     }
 
     /** THE SAVE CONTRACT: the declared savable fields — without this the
