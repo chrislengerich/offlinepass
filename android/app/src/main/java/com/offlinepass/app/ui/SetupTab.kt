@@ -182,7 +182,7 @@ fun SetupTabScreen(
         }
         HorizontalDivider()
 
-        Text("Recipients (from the vault ledger; adds use OpenKeyChain)", style = MaterialTheme.typography.titleSmall)
+        Text("Vault encryption keys", style = MaterialTheme.typography.titleSmall)
         if (recipientIds.isEmpty()) {
             Text("(none — add one before saving)", style = MaterialTheme.typography.bodySmall)
         }
