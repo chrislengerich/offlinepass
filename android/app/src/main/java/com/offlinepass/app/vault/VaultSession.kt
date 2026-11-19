@@ -1708,21 +1708,30 @@ object VaultSession {
                             pendingPush = true
                             lastSaveRemoteState = "pending"
                             syncStatus = "Committed locally (rev ${env.rev}); push pending — store a PAT in Setup"
-                            return@withContext Result.Success
-                        }
-                        lastSaveRemoteState = "pending"
-                        try {
-                            git.pushBranch(cfg.remoteUrl, pushPat, gitRoot())
-                            pendingPush = false
-                            lastSaveRemoteState = "synced"
-                            syncStatus = if (keysOk) "Pushed rev ${env.rev} (signed)"
-                                         else "Pushed rev ${env.rev} (signed; key files pending)"
-                        } catch (e: Exception) {
-                            Log.w(TAG, "push failed (kept local commit): ${e.message}")
-                            pendingPush = true
+                            // NO early return: the tail below (the seal +
+                            // the re-stub) must run for EVERY save — the
+                            // old early return skipped the re-seal, the
+                            // cache stayed stamped with the PRE-save vault
+                            // file's hash, and the next detail reveal
+                            // answered "Seal is outdated" → the security
+                            // key unlock instead of the screenlock (the
+                            // measured bug: the first tap = the card, the
+                            // second = the screenlock).
+                        } else {
                             lastSaveRemoteState = "pending"
-                            syncStatus = "Saved locally; push pending"
-                            // NOT an error: the change persisted locally.
+                            try {
+                                git.pushBranch(cfg.remoteUrl, pushPat, gitRoot())
+                                pendingPush = false
+                                lastSaveRemoteState = "synced"
+                                syncStatus = if (keysOk) "Pushed rev ${env.rev} (signed)"
+                                            else "Pushed rev ${env.rev} (signed; key files pending)"
+                            } catch (e: Exception) {
+                                Log.w(TAG, "push failed (kept local commit): ${e.message}")
+                                pendingPush = true
+                                lastSaveRemoteState = "pending"
+                                syncStatus = "Saved locally; push pending"
+                                // NOT an error: the change persisted locally.
+                            }
                         }
                     } else {
                         // LOCAL-ONLY: same repo dir, no remotes — history stays on-device.
