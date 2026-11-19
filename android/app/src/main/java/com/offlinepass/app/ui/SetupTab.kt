@@ -62,6 +62,8 @@ fun SetupTabScreen(
     onSshSelfTest: () -> Unit = {},
     onShowGithubAuthKey: () -> Unit = {},
     onRemoveDevice: (String) -> Unit = {},
+    securityKeyLabels: List<String> = emptyList(),
+    onSetSecurityKeyName: () -> Unit = {},
     tempRecipientLabel: String? = null,
     onScanTempRecipient: () -> Unit = {},
     onShowDeviceKey: () -> Unit = {},
@@ -70,6 +72,31 @@ fun SetupTabScreen(
 ) {
     val cfg = VaultSession.config()
     var confirmDialog by remember { mutableStateOf<String?>(null) }
+    var deviceNameDialog by remember { mutableStateOf<String?>(null) }
+    deviceNameDialog?.let { pre ->
+        var nameInput by androidx.compose.runtime.remember(pre) {
+            androidx.compose.runtime.mutableStateOf(pre)
+        }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { deviceNameDialog = null },
+            title = { Text("Name this device") },
+            text = {
+                androidx.compose.material3.OutlinedTextField(
+                    value = nameInput, onValueChange = { nameInput = it },
+                    label = { Text("Device name") }, singleLine = true)
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val v = nameInput
+                    deviceNameDialog = null
+                    if (v.isNotBlank()) onSetDeviceName(v)
+                }) { Text("Set") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deviceNameDialog = null }) { Text("Cancel") }
+            }
+        )
+    }
 
     confirmDialog?.let { what ->
         AlertDialog(
@@ -254,18 +281,22 @@ fun SetupTabScreen(
         // device-level view of the sync.
         Text("Devices", style = MaterialTheme.typography.titleSmall)
         Text("This device", style = MaterialTheme.typography.labelLarge)
-        var deviceNameInput by androidx.compose.runtime.remember {
-            androidx.compose.runtime.mutableStateOf(VaultSession.deviceName())
+        Text("Name: ${VaultSession.deviceName()}", style = MaterialTheme.typography.bodySmall)
+        Button(onClick = { deviceNameDialog = VaultSession.deviceName() },
+            enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Set device name")
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            androidx.compose.material3.OutlinedTextField(
-                value = deviceNameInput, onValueChange = { deviceNameInput = it },
-                label = { Text("Device name") }, singleLine = true,
-                modifier = Modifier.weight(1f))
-            Button(onClick = { onSetDeviceName(deviceNameInput) }, enabled = busy == null) {
-                Text("Set")
-            }
+
+        Text("Security keys", style = MaterialTheme.typography.labelLarge)
+        if (securityKeyLabels.isEmpty())
+            Text("(none known — plug a key in and set its name)",
+                style = MaterialTheme.typography.bodySmall)
+        securityKeyLabels.forEach {
+            Text(it, style = MaterialTheme.typography.bodySmall)
+        }
+        Button(onClick = onSetSecurityKeyName, enabled = busy == null,
+            modifier = Modifier.fillMaxWidth()) {
+            Text("Set security key name")
         }
         if (cfg?.remoteUrl != null) {
             Text("Registered", style = MaterialTheme.typography.labelLarge)

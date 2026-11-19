@@ -347,19 +347,102 @@ object VaultSession {
     fun setDeviceName(n: String) {
         val clean = sanitizeDeviceName(n)
         prefs().edit().putString("deviceName", clean).apply()
-        // THE REGISTRY: this device's entries rename with it — the
-        // screenlock signer (matched by the key line's device comment) and
-        // the card entry (matched by this device's signing cert). The
+        // THE REGISTRY: the SCREENLOCK entry renames with the device (the
+        // card entries answer to their own names — set in Setup). The
         // change lands in the worktree; commitDeviceRename() commits it.
-        val subkey = yubikeyAuthSubkeyId()
         var changed = false
         val entries = readDeviceRegistry().map { e ->
             val mine = e.authKey?.contains(
-                "offlinepass-screenlock device=${deviceId()}") == true ||
-                (subkey != null && e.cert == "keys/sign/%016X.pub.asc".format(subkey))
+                "offlinepass-screenlock device=${deviceId()}") == true
             if (mine && e.name != clean) { changed = true; e.copy(name = clean) } else e
         }
         if (changed) writeDeviceRegistry(entries)
+    }
+
+    /** The KNOWN security keys (the registry's card entries) — the
+     *  Devices section's Security keys rows. */
+    fun securityKeyLabels(): List<String> =
+        readDeviceRegistry().filter { it.cert?.endsWith(".pub.asc") == true }
+            .map { e ->
+                val serialTag = e.serial?.takeLast(4)?.let { " s/n…$it" } ?: ""
+                "${e.name}$serialTag — card (auth + sign)"
+            }
+
+    /** The plugged key's current name (the registry entry for the last
+     *  seen serial) — the rename dialog's prefill; a never-seen key gets
+     *  the "purple" suggestion. */
+    fun securityKeyNameSuggestion(): String =
+        readDeviceRegistry().firstOrNull {
+            it.serial != null && it.serial == prefs().getString("securityKeySerial", null)
+        }?.name ?: "purple"
+
+    /** The plugged security key's identity: the OpenPGP card serial (the
+     *  PHYSICAL key's stable id) + the AUTH slot's current public key
+     *  material. Asks for the USB permission when needed. The serial is
+     *  remembered in prefs so the repo-side card-entry maintenance can
+     *  match by key even when the card is unplugged. */
+    suspend fun readSecurityKeyIdentity(): Pair<Int, String>? {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (!com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(appContext) &&
+                    !com.offlinepass.app.crypto.YubiKitSshAuth.requestPermission(appContext)
+                ) return@withContext null
+                val serial = com.offlinepass.app.crypto.YubiKitSshAuth
+                    .cardSerial(appContext) ?: return@withContext null
+                val line = com.offlinepass.app.crypto.YubiKitSshAuth
+                    .slotSshLine(appContext, true)
+                if (line != null) {
+                    prefs().edit().putString("securityKeySerial", serial.toString()).apply()
+                }
+                serial to (line ?: "")
+            } catch (e: Exception) {
+                Log.w(TAG, "security-key identity read failed: ${e.message}")
+                null
+            }
+        }
+    }
+
+    /** Names (or renames) the PLUGGED security key: reads the card's
+     *  serial + the AUTH slot's public key material, finds the pairing in
+     *  the registry by serial (legacy entries without a serial backfill
+     *  when their material matches), creates the entry for a never-seen
+     *  key, and commits the rename. */
+    suspend fun applySecurityKeyName(name: String): String {
+        val id = readSecurityKeyIdentity()
+            ?: return "No security key attached (or USB permission denied) — plug it in, then tap again."
+        val clean = sanitizeDeviceName(name)
+        val entries = readDeviceRegistry().toMutableList()
+        val idx = entries.indexOfFirst { it.serial == id.first.toString() }
+            .let { first ->
+                if (first >= 0) first
+                else entries.indexOfFirst { e ->
+                    e.serial == null && e.cert?.endsWith(".pub.asc") == true &&
+                        (e.authKey == id.second || e.authKey == yubikeySshLine()?.trimEnd())
+                }
+            }
+        if (idx >= 0) {
+            val e = entries[idx]
+            if (e.name == clean && e.serial != null && e.authKey == id.second) {
+                return "Already named '$clean' — nothing to change."
+            }
+            entries[idx] = e.copy(name = clean, serial = id.first.toString(),
+                authKey = id.second.ifEmpty { e.authKey })
+        } else {
+            entries += DeviceRegistryEntry(clean, id.second.ifEmpty { null }, null,
+                id.first.toString())
+        }
+        writeDeviceRegistry(entries)
+        return try {
+            withContext(Dispatchers.IO) {
+                val signer = syncCommitSigner(openPgpClientFactory(appContext))
+                VaultGitClient().commitDirty(
+                    gitRoot(), "Name security key '$clean' (serial ${id.first})", signer)
+                "Named '$clean' + committed."
+            }
+        } catch (e: Exception) {
+            "Named '$clean' (the registry change rides the next save/sync: " +
+                "${e.message?.take(60)})."
+        }
     }
 
     /** The device rename's commit: the registry lives in the repo, so the
@@ -387,7 +470,8 @@ object VaultSession {
     data class DeviceRegistryEntry(
         val name: String,
         val authKey: String?,      // the OpenSSH line (inline)
-        val cert: String?          // the cert path (relative to the repo root)
+        val cert: String?,         // the cert path (relative to the repo root)
+        val serial: String? = null // the OpenPGP card serial (the PHYSICAL key's id)
     )
 
     private fun metaDevicesFile(): File = File(gitRoot(), "meta/devices.json")
@@ -412,7 +496,8 @@ object VaultSession {
                 DeviceRegistryEntry(
                     sanitizeDeviceName(o.optString("name", "")),
                     o.optString("authKey", "").ifEmpty { null },
-                    o.optString("cert", "").ifEmpty { null })
+                    o.optString("cert", "").ifEmpty { null },
+                    o.optString("serial", "").ifEmpty { null })
             }
             // SELF-HEAL: a sanitized name differing from the stored one
             // rewrites the registry so the fix persists.
@@ -437,6 +522,7 @@ object VaultSession {
             o.put("name", sanitizeDeviceName(e.name))
             if (e.authKey != null) o.put("authKey", e.authKey)
             if (e.cert != null) o.put("cert", e.cert)
+            if (e.serial != null) o.put("serial", e.serial)
             arr.put(o)
         }
         root.put("devices", arr)
@@ -448,14 +534,20 @@ object VaultSession {
      *  key line carries this device's id. */
     fun deviceListLabels(): List<String> =
         readDeviceRegistry().map { e ->
-            // The kind derives from the entry: a cert = the card (it signs
-            // and authenticates); the rest = the screenlock signers.
-            val kindLabel = if (e.cert != null) "card (auth + sign)"
-            else if (e.authKey?.contains(
-                    "offlinepass-screenlock device=${deviceId()}") == true
-            ) "screenlock (sign) — this device"
-            else "screenlock (sign)"
-            "${e.name} — $kindLabel"
+            // THE KIND = THE CERT'S SHAPE: the card's signing cert is a
+            // .pub.asc (the card's signing subkey's public key); a
+            // screenlock entry's cert is the card-signed
+            // screenlock-cert-*.meta.json. Every entry carries a cert, so
+            // the shape (not the presence) decides.
+            val kindLabel = when {
+                e.cert?.endsWith(".pub.asc") == true -> "card (auth + sign)"
+                e.authKey?.contains(
+                    "offlinepass-screenlock device=${deviceId()}") == true ->
+                    "screenlock (sign) — this device"
+                else -> "screenlock (sign)"
+            }
+            val serialTag = e.serial?.takeLast(4)?.let { " s/n…$it" } ?: ""
+            "${e.name}$serialTag — $kindLabel"
         }
 
     /** This device's screenlock enrollment per the REGISTRY (what other
@@ -509,18 +601,31 @@ object VaultSession {
                 yubikeySshLine()?.let { appendAuthorizedKey(it.trimEnd()) }
                 val entries = readDeviceRegistry().toMutableList()
                 val certPath = "keys/sign/%016X.pub.asc".format(subkeyId)
-                if (entries.none { it.cert == certPath }) {
-                    // The CARD's identity — an independent security key, not
-                    // a phone accessory: the cardholder name (or a neutral
-                    // fallback), never the device name.
-                    val holder = runCatching {
-                        com.offlinepass.app.crypto.YubiKitSshAuth
-                            .signingKeyIdentity(appContext).holderName
-                    }.getOrNull()
-                    val cardName = holder
-                        ?: "Security key %04X".format(subkeyId and 0xFFFF)
+                val serial = prefs().getString("securityKeySerial", null)
+                val currentLine = yubikeySshLine()?.trimEnd()
+                // MATCH BY SERIAL (the physical key) — the legacy cert-path
+                // match backfills the serial onto pre-serial entries. The
+                // name is the KEY's own (renamed in Setup) and is preserved;
+                // the authKey material tracks the CURRENT line (a re-keyed
+                // card keeps one entry).
+                val idx = entries.indexOfFirst { it.serial != null && it.serial == serial }
+                    .let { first ->
+                        if (first >= 0) first
+                        else entries.indexOfFirst { e -> e.cert == certPath && e.serial == null }
+                    }
+                if (idx >= 0) {
+                    val e = entries[idx]
+                    if (e.cert != certPath || e.authKey != currentLine || e.serial != serial) {
+                        entries[idx] = e.copy(
+                            cert = certPath, authKey = currentLine, serial = serial)
+                        writeDeviceRegistry(entries)
+                    }
+                } else {
+                    // A never-named key: a neutral placeholder — the naming
+                    // happens in Setup (Set security key name).
                     entries += DeviceRegistryEntry(
-                        cardName, yubikeySshLine()?.trimEnd(), certPath)
+                        "Security key %04X".format(subkeyId and 0xFFFF),
+                        currentLine, certPath, serial)
                     writeDeviceRegistry(entries)
                 }
             }

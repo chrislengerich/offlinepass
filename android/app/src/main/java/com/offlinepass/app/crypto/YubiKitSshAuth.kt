@@ -70,6 +70,31 @@ object YubiKitSshAuth {
             "permission=${usbManager.hasPermission(yubi)}"
     }
 
+    /** The OpenPGP application's serial number — the PHYSICAL key's
+     *  stable id (the last 4 bytes of the AID). Requires the USB
+     *  permission; no PIN, no touch. */
+    fun cardSerial(context: Context): Int? {
+        val device = findDevice(context) ?: return null
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: return null
+        if (!usbManager.hasPermission(device)) return null
+        val ykDevice = UsbYubiKeyDevice(usbManager, device)
+        val connection = ykDevice.openConnection(SmartCardConnection::class.java)
+        try {
+            val session = OpenPgpSession(connection as SmartCardConnection)
+            try {
+                return session.aid.serial
+            } finally {
+                session.close()
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("YubiKeySsh", "card serial read failed: ${e.message}")
+            return null
+        } finally {
+            runCatching { connection.close() }
+        }
+    }
+
     /** A YubiKey is attached AND the USB permission for it is granted. */
     fun deviceReady(context: Context): Boolean {
         val device = findDevice(context) ?: return false

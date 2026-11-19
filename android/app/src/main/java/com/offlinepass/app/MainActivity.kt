@@ -717,6 +717,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
     private var githubAuthKeyDialog by androidx.compose.runtime.mutableStateOf<String?>(null)
     /** The SSH auth self-test's verdict, shown INLINE below its button. */
     private var selfTestResult by androidx.compose.runtime.mutableStateOf<String?>(null)
+    /** The security-key naming dialog's prefill (null = closed). */
+    private var securityKeyNaming by androidx.compose.runtime.mutableStateOf<String?>(null)
 
     /** The line the copy-to-GitHub dialog carries: the AUTH slot's key
      *  unless the enrolled line already IS the AUTH key (then the SIG's
@@ -1170,6 +1172,35 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // in-app loop (copy → paste at github.com/settings/keys →
         // re-run Enroll) — the desktop gpg step is gone. Every state:
         // the first enrollment happens pre-load.
+        securityKeyNaming?.let { prefill ->
+            var skName by androidx.compose.runtime.remember(prefill) {
+                androidx.compose.runtime.mutableStateOf(prefill)
+            }
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { securityKeyNaming = null },
+                title = { androidx.compose.material3.Text("Name this security key") },
+                text = {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = skName, onValueChange = { skName = it },
+                        label = { androidx.compose.material3.Text("Key name") },
+                        singleLine = true)
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = {
+                        val v = skName
+                        securityKeyNaming = null
+                        if (v.isNotBlank()) lifecycleScope.launch {
+                            status = VaultSession.applySecurityKeyName(v)
+                        }
+                    }) { androidx.compose.material3.Text("Set") }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = {
+                        securityKeyNaming = null
+                    }) { androidx.compose.material3.Text("Cancel") }
+                }
+            )
+        }
         githubAuthKeyDialog?.let { keyLine ->
             androidx.compose.material3.AlertDialog(
                 onDismissRequest = { githubAuthKeyDialog = null },
@@ -2182,6 +2213,18 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onSetDeviceName = {
                         VaultSession.setDeviceName(it)
                         lifecycleScope.launch { status = VaultSession.commitDeviceRename() }
+                    },
+                    securityKeyLabels = VaultSession.securityKeyLabels(),
+                    onSetSecurityKeyName = {
+                        lifecycleScope.launch {
+                            val id = VaultSession.readSecurityKeyIdentity()
+                            if (id == null || id.second.isEmpty()) {
+                                status = "No security key attached (or USB permission " +
+                                    "denied) — plug it in, then tap again."
+                            } else {
+                                securityKeyNaming = VaultSession.securityKeyNameSuggestion()
+                            }
+                        }
                     },
                     onInitOkkFromRepo = {
                         lifecycleScope.launch {
