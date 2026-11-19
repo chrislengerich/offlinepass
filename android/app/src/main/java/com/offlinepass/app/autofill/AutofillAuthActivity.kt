@@ -28,6 +28,8 @@ class AutofillAuthActivity : androidx.activity.ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.offlinepass.app.vault.VaultSession.init(applicationContext)
+        com.offlinepass.app.vault.SealedVault.init(applicationContext)
         val mode = intent.getStringExtra(EXTRA_MODE) ?: MODE_REVEAL
         val uuid = intent.getStringExtra(EXTRA_UUID)
         val name = intent.getStringExtra(EXTRA_NAME)

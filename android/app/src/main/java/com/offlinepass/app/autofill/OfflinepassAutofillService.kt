@@ -51,6 +51,10 @@ class OfflinepassAutofillService : AutofillService() {
         callback: FillCallback
     ) {
         VaultSession.init(applicationContext)
+        // The service's process may be freshly spawned (a crash-restart):
+        // the SealedVault's lateinit appContext must be initialized before
+        // any manifest/cache read (the measured UninitializedPropertyAccess).
+        SealedVault.init(applicationContext)
         val structure = request.fillContexts.lastOrNull()?.structure ?: run {
             callback.onSuccess(null); return
         }

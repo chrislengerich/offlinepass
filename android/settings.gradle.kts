@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "offlinepass-android"
 include(":app")
+include(":autofilltest")
