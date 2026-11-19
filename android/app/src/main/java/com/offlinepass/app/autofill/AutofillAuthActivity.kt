@@ -75,7 +75,14 @@ class AutofillAuthActivity : ComponentActivity() {
                             listOf("https://$origin") else emptyList(),
                         password = PasswordGen.password())
                     AutofillRevealStore.put(item, "generate")
-                    Log.i(TAG, "generated a password for $origin — RESULT_OK (the fill)")
+                    // THE FLYUP = SELF-POSTED AT THE GENERATE: the platform's
+                    // save event = the user-changed-fields only — an
+                    // all-autofilled submission fires NOTHING (the measured
+                    // no-flyup). The banner = NON-BLOCKING: it sits while
+                    // the user completes the form; the tap = the yes (the
+                    // screenlock → the insert), the swipe = the no.
+                    AutofillSaveOffer.post(this@AutofillAuthActivity, origin, null, item.password)
+                    Log.i(TAG, "generated a password for $origin — RESULT_OK (the fill) + the flyup")
                     setResult(RESULT_OK)
                     finish()
                 }
