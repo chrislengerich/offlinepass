@@ -332,13 +332,16 @@ object YubiKitSshAuth {
                             " key is $liveFp, expected $expectedFingerprint — " +
                             "wrong card or stale enrollment")
                 }
-                // extended=false = verify FOR SIGNATURE (the Javadoc:
-                // "false to verify for signature use, true for other
-                // uses"). True → P2=0x82 and PSO:CDS fails 0x6982.
-                // A WRONG PIN surfaces as a readable message (attempts
-                // remaining) instead of a raw "APDU error: 0x63CX".
+                // THE FLAVOR FOLLOWS THE OPERATION: PSO:CDS (the SIG slot)
+                // needs the SIGNATURE verify (extended=false → P2=0x81);
+                // INTERNAL AUTHENTICATE (the AUT slot) needs the "OTHER
+                // USE" verify (extended=true → P2=0x82) — the same
+                // asymmetry that broke the direct decrypt (the verify's
+                // own 9000, then 0x6982 at the operation). A WRONG PIN
+                // surfaces as a readable message (attempts remaining)
+                // instead of a raw "APDU error: 0x63CX".
                 try {
-                    session.verifyUserPin(pin, false)
+                    session.verifyUserPin(pin, useAut)
                 } catch (e: com.yubico.yubikit.core.application.InvalidPinException) {
                     throw java.io.IOException(
                         "Wrong PIN — ${e.attemptsRemaining} attempt(s) remaining " +
@@ -376,7 +379,21 @@ object YubiKitSshAuth {
                     payload.copyInto(block, modulusLen - payload.size)
                     android.util.Log.i("YubiKeySsh",
                         "yubikit: challenge padded to $modulusLen B")
-                    session.authenticate(block)
+                    try {
+                        session.authenticate(block)
+                    } catch (e: com.yubico.yubikit.core.smartcard.ApduException) {
+                        if (e.sw.toInt() == 0x6982) {
+                            // The security-status failure: with the right
+                            // flavor this should be unreachable — if it
+                            // shows, name the asymmetry instead of the
+                            // raw SW.
+                            throw java.io.IOException(
+                                "the AUTH slot answered 0x6982 — the PIN is not " +
+                                    "verified for 'other use' (the INTERNAL " +
+                                    "AUTHENTICATE access condition)", e)
+                        }
+                        throw e
+                    }
                 } else {
                     session.sign(payload)
                 }
