@@ -85,6 +85,54 @@ class MergeTest {
         assertEquals(1, merged.items.size)
     }
 
+    /** THE MEASURED LOSS CASE: the locally-edited entry rides an envelope
+     *  with a LOWER rev than the other side's — the stale copy must not
+     *  overwrite the newer item (the github.com entry, rev 8-vs-9). */
+    @Test
+    fun newerItemModifyTimeInOlderEnvelopeWins() {
+        val mine = env(7, "A")
+        val theirs = env(9, "A")
+        mine.items[0].modifyTime = 200
+        theirs.items[0].modifyTime = 100
+        theirs.items[0].password = "stale-remote"
+        val merged = VaultMerge.unionMerge(mine, theirs)
+        assertEquals("pw-A", merged.items.single().password)
+    }
+
+    @Test
+    fun equalModifyTimesKeepNewerEnvelopeCopy() {
+        val mine = env(7, "A")
+        val theirs = env(9, "A")
+        mine.items[0].modifyTime = 100
+        theirs.items[0].modifyTime = 100
+        mine.items[0].username = "mine"
+        theirs.items[0].username = "theirs"
+        val merged = VaultMerge.unionMerge(mine, theirs)
+        assertEquals("theirs", merged.items.single().username)
+    }
+
+    @Test
+    fun knownModifyTimeBeatsUnknown() {
+        val mine = env(7, "A")
+        val theirs = env(9, "A")
+        mine.items[0].modifyTime = 0
+        theirs.items[0].modifyTime = 123
+        theirs.items[0].username = "theirs"
+        val merged = VaultMerge.unionMerge(mine, theirs)
+        assertEquals("theirs", merged.items.single().username)
+    }
+
+    @Test
+    fun tombstoneBeatsNewerItem() {
+        val local = env(2, "A")
+        local.deletedItemUuids.add("u-A")
+        val theirs = env(9, "A")
+        theirs.items[0].modifyTime = 999
+        val merged = VaultMerge.unionMerge(local, theirs)
+        assertTrue(merged.items.isEmpty())
+        assertTrue("u-A" in merged.deletedItemUuids)
+    }
+
     @Test
     fun emptySidesMerge() {
         val empty = Envelope(rev = 0)

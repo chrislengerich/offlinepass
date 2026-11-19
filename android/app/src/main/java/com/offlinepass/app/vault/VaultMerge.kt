@@ -19,15 +19,35 @@ object VaultMerge {
         merged.extraFields.putAll(newerIs.extraFields)
 
         val byUuid = LinkedHashMap<String, ProtonItem>()
-        fun addAll(env: Envelope) {
+        fun addAll(env: Envelope, side: String) {
             for (item in env.items) {
                 val existing = byUuid[item.itemUuid]
-                if (existing == null) byUuid[item.itemUuid] = item
-                // Same uuid on both sides: the newer envelope's copy wins.
+                if (existing == null) {
+                    byUuid[item.itemUuid] = item
+                    continue
+                }
+                // Same uuid on both sides: THE ITEM'S OWN modifyTime
+                // decides — the envelope-rev rule LOST a locally-edited
+                // entry when the other side's envelope rode a higher rev
+                // without touching that item (the measured data loss). A
+                // known modifyTime beats an unknown (0); equal/unknown on
+                // both = the deterministic envelope-order fallback (the
+                // newer envelope's copy). Tombstones still win below.
+                if (item.modifyTime > existing.modifyTime) {
+                    android.util.Log.i("VaultMerge",
+                        "merge: ${item.itemUuid.take(8)} — the $side copy wins " +
+                            "(modifyTime ${item.modifyTime} > ${existing.modifyTime})")
+                    byUuid[item.itemUuid] = item
+                } else if (item.modifyTime == existing.modifyTime && env === newerIs) {
+                    if (item !== existing) android.util.Log.i("VaultMerge",
+                        "merge: ${item.itemUuid.take(8)} — the $side copy wins " +
+                            "(modifyTime tie ${item.modifyTime}, the newer envelope)")
+                    byUuid[item.itemUuid] = item
+                }
             }
         }
-        addAll(olderIs)
-        addAll(newerIs)
+        addAll(olderIs, "older-envelope")
+        addAll(newerIs, "newer-envelope")
         merged.items = byUuid.values
             .filter { it.itemUuid !in newerIs.deletedItemUuids && it.itemUuid !in olderIs.deletedItemUuids }
             .toMutableList()
