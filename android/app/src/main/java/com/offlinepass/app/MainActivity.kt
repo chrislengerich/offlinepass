@@ -388,6 +388,21 @@ class MainActivity : androidx.activity.ComponentActivity() {
             }
         }
 
+    private val tempExportLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            if (uri == null) return@registerForActivityResult
+            lifecycleScope.launch {
+                try {
+                    val bytes = VaultSession.exportVaultToTempRecipient()
+                    contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                    status = "Exported (%d bytes) — permanent recipients + %s.".
+                        format(bytes.size, VaultSession.tempRecipientLabel ?: "?")
+                } catch (e: Exception) {
+                    status = "Export failed: ${e.message}"
+                }
+            }
+        }
+
     private val usbRestoreLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) return@registerForActivityResult
@@ -409,10 +424,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
             contentResolver.openInputStream(uri)?.use { ins ->
                 staged.outputStream().use { ins.copyTo(it) }
             }
-            // THE RECIPIENT ADOPTION: the vault file carries its recipients
-            // in its own PKESKs — adopted for the save targets (the
-            // local-only restores have no repo ledger; no OpenKeyChain).
-            VaultSession.adoptRecipientsFromVaultFile(staged)
+            // THE RECIPIENT ADOPTION — RESTORE ONLY: a LOCAL-ONLY restore
+            // (no repo configured) adopts the file's recipients (the file IS
+            // the vault's origin). A MERGE into an existing repo does NOT:
+            // the import decrypts via the PKESK set and re-saves to the
+            // phone's OWN recipient set (see the branch below).
+            if (VaultSession.config() == null)
+                VaultSession.adoptRecipientsFromVaultFile(staged)
             val restored: Envelope = run {
                 var env: VaultSession.DecryptEnvelope.Ok? = null
                 var guard = 0
@@ -1015,7 +1033,40 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         // as the USB.
                         if (payload.trimStart().startsWith("{") ||
                             payload.trimStart().startsWith("[")) {
-                            importQrftPayload(payload)
+                            // The JSON payload types precede the Proton
+                            // route: the temporary-recipient key material
+                            // and the vault-export envelope are JSON too.
+                            val jo = runCatching { org.json.JSONObject(payload.trimStart()) }.getOrNull()
+                            when (jo?.optString("type")) {
+                                "offlinepass-pubkey" -> {
+                                    val armored = jo?.optString("armored") ?: ""
+                                    if (armored.isNotBlank()) {
+                                        VaultSession.setTempRecipient(armored)
+                                        status = "Temporary recipient set: " +
+                                            (VaultSession.tempRecipientLabel ?: "?") +
+                                            " (one-off export; not saved to the repo)."
+                                    }
+                                }
+                                "offlinepass-vault-export" -> {
+                                    // The one-off handoff envelope: the
+                                    // restore path — merge into an existing
+                                    // repo (NO adoption) or adopt on a
+                                    // local-only restore (the branch inside).
+                                    val decoded = runCatching {
+                                        java.util.Base64.getDecoder()
+                                            .decode(jo?.optString("cipher") ?: "")
+                                    }.getOrNull()
+                                    if (decoded == null) {
+                                        status = "Vault export payload undecodable."
+                                    } else {
+                                        val staged = File(cacheDir, "qrft-temp-export.gpg")
+                                        staged.writeBytes(decoded)
+                                        restoreLoop(android.net.Uri.parse(
+                                            "file://" + staged.absolutePath))
+                                    }
+                                }
+                                else -> importQrftPayload(payload)
+                            }
                         } else {
                             // THE THIRD ROUTE: the repo-backup zip (the
                             // QRFT repo-export = the same zip as the USB)
@@ -1041,7 +1092,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                 } else {
                                     staged.writeText(payload)
                                 }
-                                VaultSession.adoptRecipientsFromVaultFile(staged)
+                                // (The recipient adoption now lives inside
+                                // restoreLoop's local-only branch only.)
                                 restoreLoop(android.net.Uri.parse(
                                     "file://" + staged.absolutePath))
                             }
@@ -1914,6 +1966,48 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     },
                     onImportQrft = { cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA) },
                     onPairDevice = { pairCameraLauncher.launch(android.Manifest.permission.CAMERA) },
+                    tempRecipientLabel = VaultSession.tempRecipientLabel,
+                    onScanTempRecipient = {
+                        cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+                    },
+                    onExportTempUsb = {
+                        lifecycleScope.launch {
+                            try {
+                                // The launcher's callback does the write —
+                                // pre-validate here so a bad state surfaces
+                                // before the file picker opens.
+                                if (VaultSession.tempRecipientArmored == null)
+                                    status = "Scan a recipient key first."
+                                else if (VaultSession.state !is VaultSession.State.Unlocked)
+                                    status = "Unlock the vault first."
+                                else tempExportLauncher.launch("offlinepass-export.gpg")
+                            } catch (e: Exception) {
+                                status = "Export failed: ${e.message}"
+                            }
+                        }
+                    },
+                    onExportTempQrft = {
+                        lifecycleScope.launch {
+                            try {
+                                status = "Encrypting for the handoff…"
+                                val bytes = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    VaultSession.exportVaultToTempRecipient()
+                                }
+                                // The payload is the RAW JSON (the cipher is
+                                // base64 INSIDE it) — the scanner routes on
+                                // the leading "{" and reads the type field.
+                                val payload = org.json.JSONObject()
+                                    .put("type", "offlinepass-vault-export")
+                                    .put("cipher",
+                                        java.util.Base64.getEncoder().encodeToString(bytes))
+                                    .toString()
+                                sshKeyBackScreen = screen
+                                screen = Screen.QrftPayload(payload)
+                            } catch (e: Exception) {
+                                status = "Export failed: ${e.message}"
+                            }
+                        }
+                    },
                     onEnrollFromGithubKeys = { enrollFromGithubKeys() },
                     onEnrollYubikeySsh = { line, subkeyId -> enrollYubikeySsh(line, subkeyId) },
                     onSshSelfTest = {
@@ -1923,9 +2017,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         }
                     },
                     onShowGithubAuthKey = { showGithubAuthKey() },
-                    onGenerateEcAuthKey = {
-                        lifecycleScope.launch { status = VaultSession.generateEcAuthKey() }
-                    },
                     onPickAuthSubkey = {
                         lifecycleScope.launch { pickAuthSubkey() }
                     },
@@ -2010,10 +2101,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onEnrollScreenlock = {
                         lifecycleScope.launch { status = VaultSession.enrollScreenlockSigning(this@MainActivity) }
                     },
-                    onUseOpenKeyChain = {
-                        VaultSession.setCommitSigningMode(VaultSession.SIGNING_OPENKEYCHAIN)
-                        status = "Commit signing: OpenKeyChain."
-                    }
                 )
             }
         }

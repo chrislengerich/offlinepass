@@ -2968,6 +2968,41 @@ object VaultSession {
      *  local-only restores have no repo ledger — the file's own record =
      *  the save targets, no OpenKeyChain, no repo needed. The ids are
      *  UNSIGNED 64-bit (the PKESKs with the high bit set are common). */
+    // -- the temporary recipient (one-off export) -----------------------------
+    // THE SESSION-SCOPED ADDITION: the scanned key never touches the repo's
+    // keys/ or the recipient config — it is appended to the export's
+    // recipient set only (the permanent recipients stay first) and dies with
+    // the process.
+    var tempRecipientArmored: String? = null
+    var tempRecipientLabel: String? = null
+
+    fun setTempRecipient(armored: String) {
+        val id = runCatching {
+            com.offlinepass.app.crypto.OpenPgpCardCrypto
+                .loadRecipientKeys(armored.toByteArray()).first().keyID
+        }.getOrNull()
+        tempRecipientArmored = armored.trim()
+        tempRecipientLabel = id?.let { "0x%016X".format(it) } ?: "(unparsed key)"
+    }
+
+    /** The one-off export: the CURRENT envelope encrypted to the PERMANENT
+     *  repo recipients + the scanned temporary key (appended). No rev bump,
+     *  no commit, no repo write — a pure snapshot of the vault as-is. */
+    suspend fun exportVaultToTempRecipient(): ByteArray {
+        if (state !is State.Unlocked) throw IllegalStateException("Unlock the vault first")
+        if (stubSession && !promoteIfStub()) throw IllegalStateException(
+            "The sealed cache is missing or stale — re-unlock with the key, then export")
+        val env = loadedEnvelope ?: Envelope(deviceId = config()?.deviceId ?: "")
+        val armored = tempRecipientArmored
+            ?: throw IllegalStateException("No temporary recipient scanned")
+        val keyIds = cachedRecipientKeyIds() ?: recipientKeyIds().toLongArray()
+        if (keyIds.isEmpty()) throw IllegalStateException("No permanent recipients to include")
+        val keys = loadRecipientKeysFor(gitRoot(), keyIds).toMutableList()
+        keys += com.offlinepass.app.crypto.OpenPgpCardCrypto.loadRecipientKeys(armored.toByteArray())
+        val plain = env.toJsonObject().toString().toByteArray(Charsets.UTF_8)
+        return com.offlinepass.app.crypto.OpenPgpCardCrypto.encryptToBytes(plain, "10.gpg", keys)
+    }
+
     fun adoptRecipientsFromVaultFile(file: File) {
         runCatching {
             val msg = com.offlinepass.app.vault.PgpMessageParser.parse(file.readBytes())

@@ -139,6 +139,25 @@ class MergeTest {
         val merged = VaultMerge.unionMerge(empty, env(3, "A"))
         assertEquals(listOf("A"), merged.items.map { it.name })
     }
+
+    /** THE USB/QRFT IMPORT RULE: an imported (older) envelope never
+     *  clobbers the current repo's items — the union keeps both sides,
+     *  the per-item modifyTime decides same-uuid conflicts, and the
+     *  merged rev is max+1 (a child commit on top, nothing rewritten).
+     *  The recipient adoption split rides the same path: restore
+     *  (no repo) adopts the file's recipients; a merge does not. */
+    @Test
+    fun importMergesWithoutOverwrite() {
+        val current = env(9, "A", "B")
+        current.items.first { it.name == "A" }.modifyTime = 300
+        val imported = env(4, "A", "C")
+        imported.items.first { it.name == "A" }.modifyTime = 100
+        imported.items.first { it.name == "A" }.password = "older-import"
+        val merged = VaultMerge.unionMerge(current, imported)
+        assertEquals(setOf("A", "B", "C"), merged.items.map { it.name }.toSet())
+        assertEquals("pw-A", merged.items.first { it.name == "A" }.password)
+        assertEquals(10L, merged.rev)
+    }
 }
 
 class TotpTest {

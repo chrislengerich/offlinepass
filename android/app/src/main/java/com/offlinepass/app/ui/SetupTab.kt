@@ -40,7 +40,6 @@ fun SetupTabScreen(
     onGetStarted: () -> Unit,
     deviceCredentialReady: Boolean = true,
     onEnrollScreenlock: () -> Unit = {},
-    onUseOpenKeyChain: () -> Unit = {},
     screenLockOn: Boolean,
     onScreenLockToggle: (Boolean) -> Unit,
     autoLockMinutes: Int = 5,
@@ -61,8 +60,11 @@ fun SetupTabScreen(
     onPickAuthSubkey: () -> Unit = {},
     onSshSelfTest: () -> Unit = {},
     onShowGithubAuthKey: () -> Unit = {},
-    onGenerateEcAuthKey: () -> Unit = {},
-    onRemoveDevice: (String) -> Unit = {}
+    onRemoveDevice: (String) -> Unit = {},
+    tempRecipientLabel: String? = null,
+    onScanTempRecipient: () -> Unit = {},
+    onExportTempUsb: () -> Unit = {},
+    onExportTempQrft: () -> Unit = {}
 ) {
     val cfg = VaultSession.config()
     var confirmDialog by remember { mutableStateOf<String?>(null) }
@@ -70,41 +72,16 @@ fun SetupTabScreen(
     confirmDialog?.let { what ->
         AlertDialog(
             onDismissRequest = { confirmDialog = null },
-            title = { Text(
-                when (what) {
-                    "repo" -> "Confirm reset"
-                    "ecgen" -> "Generate an EC auth key?"
-                    else -> "Confirm forget"
-                }) },
+            title = { Text("Confirm reset") },
             text = {
-                Text(
-                    when (what) {
-                        "repo" -> ("Wipe the local git clone and re-clone from the remote? "
-                            + "Unpushed work is re-applied automatically if the vault is unlocked.")
-                        "ecgen" -> ("Overwrite the AUTH slot on the security key with a new "
-                            + "ECDSA P-256 key (the admin PIN gates it). The slot's current "
-                            + "key is destroyed. The vault is NOT touched — its encryption "
-                            + "key lives in a different slot. Why: an RSA-4096 AUTH key "
-                            + "cannot authenticate over this phone's USB transport.")
-                        else -> ("Forget the configuration? The vault files stay on the device; "
-                            + "you'll return to the setup screen.")
-                    })
+                Text("Wipe the local git clone and re-clone from the remote? " +
+                    "Unpushed work is re-applied automatically if the vault is unlocked.")
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val action = confirmDialog
                     confirmDialog = null
-                    when (action) {
-                        "repo" -> onResetRepo()
-                        "ecgen" -> onGenerateEcAuthKey()
-                        else -> onForget()
-                    }
-                }) { Text(
-                    when (what) {
-                        "repo" -> "Reset"
-                        "ecgen" -> "Generate"
-                        else -> "Forget"
-                    }) }
+                    onResetRepo()
+                }) { Text("Reset") }
             },
             dismissButton = {
                 TextButton(onClick = { confirmDialog = null }) { Text("Cancel") }
@@ -161,8 +138,7 @@ fun SetupTabScreen(
             },
             supportingContent = {
                 Text("The GitHub match selects the slot — no toggle. " +
-                    "Generate an EC auth key + re-run Enroll to move the " +
-                    "transport to the AUTH slot.")
+                    "The slot swap is a desktop step: scripts/yubikey_ec_auth_key.sh.")
             })
 
         // Sync state lives directly with its button.
@@ -229,6 +205,28 @@ fun SetupTabScreen(
             Text("Add recipient (pick in OpenKeyChain)")
         }
         HorizontalDivider()
+
+        // ONE-OFF HANDOFF: a scanned key lives in the session only — it is
+        // appended to the export's recipient set (the permanent recipients
+        // stay first) and never written to the repo's keys/ or config.
+        Text("Temporary recipient (one-off export)", style = MaterialTheme.typography.titleSmall)
+        Text(
+            if (tempRecipientLabel == null) "(none scanned — scan a recipient's public key)"
+            else "Scanned: $tempRecipientLabel",
+            style = MaterialTheme.typography.bodySmall
+        )
+        Button(onClick = onScanTempRecipient, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Scan recipient key (QRFT)")
+        }
+        Button(onClick = onExportTempUsb, enabled = busy == null && tempRecipientLabel != null,
+            modifier = Modifier.fillMaxWidth()) {
+            Text("Export vault to USB (recipients + scanned)")
+        }
+        Button(onClick = onExportTempQrft, enabled = busy == null && tempRecipientLabel != null,
+            modifier = Modifier.fillMaxWidth()) {
+            Text("Export vault as QRFT (recipients + scanned)")
+        }
+        HorizontalDivider()
         Text("This device", style = MaterialTheme.typography.titleSmall)
         var deviceNameInput by androidx.compose.runtime.remember {
             androidx.compose.runtime.mutableStateOf(VaultSession.deviceName())
@@ -268,11 +266,6 @@ fun SetupTabScreen(
                     "every save prompts for the screen lock; OpenKeyChain is not involved.",
                 style = MaterialTheme.typography.bodySmall
             )
-            Button(
-                onClick = onUseOpenKeyChain,
-                enabled = busy == null,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Switch to OpenKeyChain signing") }
             if (VaultSession.yubikeyAuthSubkeyId() != null) {
                 Button(
                     onClick = onUseYubikeySigner,
@@ -293,11 +286,6 @@ fun SetupTabScreen(
                     ") — every save prompts for the OpenPGP PIN and the touch.",
                 style = MaterialTheme.typography.bodySmall
             )
-            Button(
-                onClick = onPickSigner,
-                enabled = busy == null,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Switch to OpenKeyChain signing") }
             Button(
                 onClick = onEnrollScreenlock,
                 enabled = busy == null && deviceCredentialReady,
@@ -358,9 +346,6 @@ fun SetupTabScreen(
             TextButton(onClick = onShowGithubAuthKey, enabled = busy == null) {
                 Text("Show auth key for GitHub")
             }
-            TextButton(onClick = { confirmDialog = "ecgen" }, enabled = busy == null) {
-                Text("Generate an EC auth key (AUTH slot swap)")
-            }
             TextButton(onClick = onRemoveYubikeySsh, enabled = busy == null) {
                 Text("Remove")
             }
@@ -378,7 +363,7 @@ fun SetupTabScreen(
             Text("Export whole repo (USB)")
         }
         Button(onClick = onUsbRestore, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Restore vault from USB/file (merge)")
+            Text("Import from USB/file (merge)")
         }
         HorizontalDivider()
 
@@ -390,12 +375,12 @@ fun SetupTabScreen(
         Button(onClick = onImportQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Import from QRFT (scan)")
         }
-        Button(onClick = onPairDevice, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Pair paste device (scan extension QR)")
-        }
         HorizontalDivider()
 
         Text("Paste devices (Chrome extension)", style = MaterialTheme.typography.titleSmall)
+        Button(onClick = onPairDevice, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Pair paste device (scan extension QR)")
+        }
         if (pairedDevices.isEmpty()) {
             Text(
                 "None paired. In the browser extension, choose \"Pair a security key\" " +
@@ -495,10 +480,9 @@ fun SetupTabScreen(
         }
         HorizontalDivider()
 
-        Button(onClick = { confirmDialog = "forget" }, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Forget config (keeps files)")
-        }
         if (busy != null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        HorizontalDivider()
+        Text("Log", style = MaterialTheme.typography.titleSmall)
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
     }
 }
