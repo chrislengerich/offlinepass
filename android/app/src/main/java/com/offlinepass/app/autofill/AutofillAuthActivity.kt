@@ -53,7 +53,7 @@ class AutofillAuthActivity : androidx.activity.ComponentActivity() {
                 val item = ProtonItem(
                     name = name?.takeIf { it.isNotBlank() } ?: "Generated password",
                     password = PasswordGen.password())
-                AutofillRevealStore.put(item)
+                AutofillRevealStore.put(item, "generate")
                 Log.i(TAG, "generated a password for ${item.name} — RESULT_OK")
                 setResult(RESULT_OK)
                 finish()
@@ -67,7 +67,7 @@ class AutofillAuthActivity : androidx.activity.ComponentActivity() {
                 finish()
                 return@launch
             }
-            AutofillRevealStore.put(item)
+            AutofillRevealStore.put(item, uuid)
             Log.i(TAG, "revealed ${item.displayName} — RESULT_OK (the framework re-invokes)")
             setResult(RESULT_OK)
             finish()

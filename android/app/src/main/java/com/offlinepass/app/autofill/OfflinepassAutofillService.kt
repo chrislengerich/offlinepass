@@ -204,9 +204,11 @@ class OfflinepassAutofillService : AutofillService() {
      *  second interaction to one entry). */
     private fun sealedResponse(fields: Fields): FillResponse {
         val revealed = AutofillRevealStore.peek()
+        val revealedId = AutofillRevealStore.peekDatasetId()
         val manifest = SealedVault.manifestItems()
         Log.i(TAG, "branch=sealed pkg=${fields.appPackage} domain=${fields.webDomain} " +
-            "manifest=${manifest.size} revealed=${revealed?.displayName ?: "none"}")
+            "manifest=${manifest.size} revealed=${revealed?.displayName ?: "none"} " +
+            "(datasetId=${revealedId?.take(8) ?: "none"})")
         // Rank: the URL/domain match first, then everything else.
         val ranked = manifest.sortedByDescending { item ->
             when {
@@ -219,11 +221,16 @@ class OfflinepassAutofillService : AutofillService() {
         }
         val builder = FillResponse.Builder()
         var count = 0
-        // The revealed item's REAL dataset FIRST (no auth needed — the
-        // store = the fresh unseal within the TTL).
+        // The revealed item's REAL dataset FIRST — with the SAME dataset
+        // ID as its sealed chip: the framework matches the authenticated
+        // dataset by ID across the re-invocation and AUTO-FILLS the
+        // values (no sheet re-show, no second tap — the measured 25s
+        // dead gap + the re-offered sheet).
         if (revealed != null) {
-            builder.addDataset(datasetFor(revealed, fields,
-                "✓ ${revealed.displayName} — ${revealed.identity}"))
+            builder.addDataset(datasetFor(
+                revealed, fields,
+                "✓ ${revealed.displayName} — ${revealed.identity}",
+                revealedId ?: revealed.itemUuid))
             count++
         }
         val ids = (fields.username + fields.password)
@@ -248,6 +255,7 @@ class OfflinepassAutofillService : AutofillService() {
                     "🔒 ${item.displayName} — tap, unlock, fill")
             }
             val ds = Dataset.Builder().setAuthentication(pi.intentSender)
+                .setId(item.itemUuid)
             ids.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
             builder.addDataset(ds.build())
             count++
@@ -264,6 +272,7 @@ class OfflinepassAutofillService : AutofillService() {
             setTextViewText(R.id.autofill_text, "🔒 Unlock offlinepass (touch key), then autofill again")
         }
         val ds = Dataset.Builder().setAuthentication(pi.intentSender)
+            .setId("app")
         ids.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
         builder.addDataset(ds.build())
         Log.i(TAG, "sealed response: $count entry datasets + the app fallback")
@@ -288,11 +297,19 @@ class OfflinepassAutofillService : AutofillService() {
         return FillResponse.Builder().addDataset(ds.build()).build()
     }
 
-    private fun datasetFor(item: ProtonItem, fields: Fields, label: String): Dataset {
+    private fun datasetFor(
+        item: ProtonItem,
+        fields: Fields,
+        label: String,
+        /** The dataset id — the framework's re-invocation matches the
+         *  authenticated dataset by ID (the auto-fill after the auth). */
+        id: String? = null
+    ): Dataset {
         val view = RemoteViews(packageName, R.layout.autofill_item).apply {
             setTextViewText(R.id.autofill_text, label)
         }
         val ds = Dataset.Builder()
+        id?.let { ds.setId(it) }
         // THE NO-IDENTITY CASE (the generated password): the username ids
         // stay UNSET — the re-invoke must never clobber the user's typed
         // username with an empty value.
@@ -321,8 +338,9 @@ class OfflinepassAutofillService : AutofillService() {
             setTextViewText(R.id.autofill_text, "⚡ Generate a strong password")
         }
         val ds = Dataset.Builder().setAuthentication(pi.intentSender)
+            .setId("generate")
         fields.password.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
-        Log.i(TAG, "generate chip offered for $origin")
+        Log.i(TAG, "generate chip offered for $origin (id=generate)")
         return ds.build()
     }
 

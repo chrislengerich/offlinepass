@@ -12,10 +12,15 @@ import com.offlinepass.app.vault.ProtonItem
 object AutofillRevealStore {
 
     @Volatile private var item: ProtonItem? = null
+    @Volatile private var datasetId: String? = null
     @Volatile private var at: Long = 0
 
-    fun put(i: ProtonItem) {
+    /** [id] = the DATASET id the offering chip carried ("generate" or the
+     *  item's uuid) — the framework's re-invocation matches the
+     *  authenticated dataset by id; the fill response must reuse it. */
+    fun put(i: ProtonItem, id: String? = null) {
         item = i
+        datasetId = id
         at = System.currentTimeMillis()
     }
 
@@ -24,8 +29,14 @@ object AutofillRevealStore {
     fun peek(maxAgeMs: Long = 60_000): ProtonItem? =
         item?.takeIf { System.currentTimeMillis() - at < maxAgeMs }
 
+    /** The dataset id of the current reveal (the auto-fill match key). */
+    fun peekDatasetId(): String? = datasetId?.takeIf {
+        item != null && System.currentTimeMillis() - at < 60_000
+    }
+
     fun clear() {
         item = null
+        datasetId = null
         at = 0
     }
 }
