@@ -362,10 +362,16 @@ object VaultSession {
     /** The KNOWN security keys (the registry's card entries) — the
      *  Devices section's Security keys rows. */
     fun securityKeyLabels(): List<String> =
-        readDeviceRegistry().filter { it.cert?.endsWith(".pub.asc") == true }
+        readDeviceRegistry()
+            .filter {
+                it.cert?.endsWith(".pub.asc") == true ||
+                    (it.authKey != null && !it.authKey.contains("offlinepass-screenlock"))
+            }
             .map { e ->
                 val serialTag = e.serial?.takeLast(4)?.let { " s/n…$it" } ?: ""
-                "${e.name}$serialTag — card (auth + sign)"
+                val kind = if (e.cert?.endsWith(".pub.asc") == true) "card (auth + sign)"
+                else "card (auth; sign pending)"
+                "${e.name}$serialTag — $kind"
             }
 
     /** The plugged key's current name (the registry entry for the last
@@ -544,6 +550,11 @@ object VaultSession {
                 e.authKey?.contains(
                     "offlinepass-screenlock device=${deviceId()}") == true ->
                     "screenlock (sign) — this device"
+                // Material-bearing but no cert yet (a freshly named key
+                // before the next sync materializes its signing cert):
+                // still the CARD — the screenlock comment is the decider.
+                e.authKey != null && !e.authKey.contains("offlinepass-screenlock") ->
+                    "card (auth; sign pending)"
                 else -> "screenlock (sign)"
             }
             val serialTag = e.serial?.takeLast(4)?.let { " s/n…$it" } ?: ""
