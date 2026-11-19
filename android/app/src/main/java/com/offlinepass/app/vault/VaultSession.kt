@@ -894,9 +894,12 @@ object VaultSession {
     fun yubikeyCommitSignerOrNull(): org.eclipse.jgit.lib.Signer? {
         val keyId = yubikeyAuthSubkeyId()
         if (keyId == null) {
-            sshIdentityUnavailable =
-                "Enroll the YubiKey SSH key first (Setup → Choose key)."
-            return null
+            // The subkey id = absent only when the SSH enrollment hasn't
+            // matched the card yet — the SIGNING still works: the card's
+            // SIG slot is read directly below (the unauthenticated
+            // fingerprint read gives the id). The SSH line = the sync's
+            // TRANSPORT requirement, not the signing's.
+            sshIdentityUnavailable = null
         }
         if (!com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(appContext)) {
             sshIdentityUnavailable = usbPermissionPromptOrMissing()
@@ -904,8 +907,16 @@ object VaultSession {
             return null
         }
         sshIdentityUnavailable = null
+        // THE SIGNING KEY ID = the card's SIG slot's id — read from the
+        // card (no SSH enrollment required). The fallback chain (the
+        // screenlock) picks this up when the signer can't be built.
+        val signId = keyId ?: run {
+            sshIdentityUnavailable = null
+            com.offlinepass.app.crypto.YubiKitSshAuth.signingKeyIdentity(appContext).keyId
+        }
+        sshIdentityUnavailable = null
         return com.offlinepass.app.crypto.YubiKitCommitSigner(
-            appContext, keyId,
+            appContext, signId,
             prompt = { yubikeyPin() },
             rememberPin = { yubikeyPinRemember(it) },
             cardSign = { pin, payload -> withTouchPrompt {
