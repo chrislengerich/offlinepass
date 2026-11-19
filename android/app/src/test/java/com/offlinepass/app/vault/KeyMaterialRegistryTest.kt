@@ -162,7 +162,7 @@ class KeyMaterialRegistryTest {
         assertTrue(labels[0].contains("Pixel 8 — screenlock (sign) — this device"))
         assertTrue(labels[1].contains("Laptop — screenlock (sign)") &&
             !labels[1].contains("this device"))
-        assertTrue(labels[2].contains("card (auth + sign)"))
+        assertTrue(labels[2].contains("security key (auth + sign)"))
     }
 
     // -- The signing protocol (the enrollment order + the revocation) -------
