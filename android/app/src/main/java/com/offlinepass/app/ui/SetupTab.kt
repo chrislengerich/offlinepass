@@ -507,13 +507,20 @@ fun SetupTabScreen(
                 checked = screenlockUnlockOn,
                 onCheckedChange = { onScreenlockUnlockToggle(it) })
         }
+        Button(onClick = onLock, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
+            Text("Lock vault (zero decrypted data)")
+        }
+        HorizontalDivider()
+
+        HorizontalDivider()
+        // The OpenKeyChain seeding: the repo's materialized recipient keys
+        // get imported into OKK so decrypt/encrypt work without a manual
+        // per-key import on this phone.
+        Text("OpenKeyChain export", style = MaterialTheme.typography.titleSmall)
         Button(onClick = onInitOkkFromRepo,
             enabled = busy == null,
             modifier = Modifier.fillMaxWidth()
         ) { Text("Initialize OpenKeyChain from this repo's keys") }
-        Button(onClick = onLock, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Lock vault (zero decrypted data)")
-        }
         HorizontalDivider()
 
         if (busy != null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
