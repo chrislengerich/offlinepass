@@ -297,11 +297,6 @@ fun SetupTabScreen(
         // (seeding the repo's keys into OKK) belongs with it, not with the
         // device identity.
         Text("Commit signer", style = MaterialTheme.typography.titleSmall)
-        Button(
-            onClick = onInitOkkFromRepo,
-            enabled = busy == null,
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Initialize OpenKeyChain from this repo's keys") }
         if (VaultSession.commitSigningMode() == VaultSession.SIGNING_SCREENLOCK) {
             // Screenlock mode: OpenKeyChain signing is not used at all.
             Text(
@@ -512,6 +507,10 @@ fun SetupTabScreen(
                 checked = screenlockUnlockOn,
                 onCheckedChange = { onScreenlockUnlockToggle(it) })
         }
+        Button(onClick = onInitOkkFromRepo,
+            enabled = busy == null,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Initialize OpenKeyChain from this repo's keys") }
         Button(onClick = onLock, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Lock vault (zero decrypted data)")
         }
