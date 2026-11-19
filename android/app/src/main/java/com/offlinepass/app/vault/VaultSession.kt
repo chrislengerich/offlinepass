@@ -369,8 +369,8 @@ object VaultSession {
             }
             .map { e ->
                 val serialTag = e.serial?.takeLast(4)?.let { " s/n…$it" } ?: ""
-                val kind = if (e.cert?.endsWith(".pub.asc") == true) "card (auth + sign)"
-                else "card (auth; sign pending)"
+                val kind = if (e.cert?.endsWith(".pub.asc") == true)
+                    "security key (auth + sign)" else "security key (auth; sign pending)"
                 "${e.name}$serialTag — $kind"
             }
 
@@ -546,7 +546,7 @@ object VaultSession {
             // screenlock-cert-*.meta.json. Every entry carries a cert, so
             // the shape (not the presence) decides.
             val kindLabel = when {
-                e.cert?.endsWith(".pub.asc") == true -> "card (auth + sign)"
+                e.cert?.endsWith(".pub.asc") == true -> "security key (auth + sign)"
                 e.authKey?.contains(
                     "offlinepass-screenlock device=${deviceId()}") == true ->
                     "screenlock (sign) — this device"
@@ -554,7 +554,7 @@ object VaultSession {
                 // before the next sync materializes its signing cert):
                 // still the CARD — the screenlock comment is the decider.
                 e.authKey != null && !e.authKey.contains("offlinepass-screenlock") ->
-                    "card (auth; sign pending)"
+                    "security key (auth; sign pending)"
                 else -> "screenlock (sign)"
             }
             val serialTag = e.serial?.takeLast(4)?.let { " s/n…$it" } ?: ""
