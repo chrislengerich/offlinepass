@@ -101,23 +101,17 @@ class OfflinepassAutofillService : AutofillService() {
             return
         }
         val origin = fields?.webDomain ?: fields?.appPackage ?: "the login"
-        // THE FLYUP = ONLY ON THE FORM SUBMISSION: the framework launches
-        // the SAVE-mode's bottom card over the form (the translucent
-        // theme + the bottom gravity) — the yes = the screenlock → the
-        // insert; the outside tap = the no.
-        val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
-            .putExtra(AutofillAuthActivity.EXTRA_MODE, AutofillAuthActivity.MODE_SAVE)
-            .putExtra(AutofillAuthActivity.EXTRA_NAME, origin)
-            .putExtra(AutofillAuthActivity.EXTRA_USERNAME, fields?.usernameValue ?: "")
-            .putExtra(AutofillAuthActivity.EXTRA_PASSWORD, pw)
-            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        val pi = android.app.PendingIntent.getActivity(
-            appContext(), 500, intent,
-            android.app.PendingIntent.FLAG_IMMUTABLE or
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT)
-        Log.i(TAG, "onSaveRequest: the flyup armed for $origin " +
-            "(username=${!fields?.usernameValue.isNullOrBlank()})")
-        callback.onSuccess(pi.intentSender)
+        // THE DEDUP: the generated password = ALREADY SAVED at the
+        // generate (the store holds it) — the framework's save request
+        // for the SAME password = acked silently (no duplicate entry, no
+        // second prompt). The genuinely new/typed logins = the flyup.
+        if (AutofillRevealStore.peek()?.password == pw) {
+            Log.i(TAG, "onSaveRequest: the generated password = already saved — acked")
+            callback.onSuccess()
+            return
+        }
+        AutofillSaveOffer.post(applicationContext, origin, fields?.usernameValue, pw)
+        callback.onSuccess()
     }
 
     /** THE SAVE CONTRACT: the declared savable fields — without this the

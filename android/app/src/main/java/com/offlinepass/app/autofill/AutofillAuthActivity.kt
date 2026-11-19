@@ -75,9 +75,26 @@ class AutofillAuthActivity : ComponentActivity() {
                             listOf("https://$origin") else emptyList(),
                         password = PasswordGen.password())
                     AutofillRevealStore.put(item, "generate")
-                    // NO save question here — the flyup = ONLY on the form
-                    // submission (the framework's save request → the SAVE
-                    // mode's bottom card).
+                    // THE SAVE = AT THE GENERATE: the chip's tap = the
+                    // confirmation (the screenlock = the ONE interaction).
+                    // The platform's save event = the user-typed-delta
+                    // only — the all-autofilled submissions fire NOTHING
+                    // (the measured no-save), so the entry is inserted
+                    // NOW; the username gets added later in the app. The
+                    // framework's save request for the SAME password (the
+                    // typed-username case) = acked by the store-matching
+                    // dedup in onSaveRequest.
+                    val saved = try {
+                        VaultSession.addSealed(item.copy(modifyTime = 0))
+                    } catch (e: Exception) {
+                        VaultSession.Result.Error("${e.javaClass.simpleName}: ${e.message}")
+                    }
+                    Log.i(TAG, "the generate's save: $saved")
+                    Toast.makeText(this@AutofillAuthActivity,
+                        when (saved) {
+                            VaultSession.Result.Success -> "Saved ✓"
+                            else -> "The save failed — $saved"
+                        }, Toast.LENGTH_LONG).show()
                     Log.i(TAG, "generated a password for $origin — RESULT_OK (the fill)")
                     setResult(RESULT_OK)
                     finish()
