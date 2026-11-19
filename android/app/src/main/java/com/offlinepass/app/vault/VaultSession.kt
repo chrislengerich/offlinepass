@@ -1880,8 +1880,13 @@ object VaultSession {
                 if (!ok) return Result.Error("Screen lock declined")
                 SealedVault.unsealAll()
             }
+            // THE EMPTY-VAULT EDGE: the sealed-empty cache = the newly
+            // created vault's state — the promote SUCCEEDS with the empty
+            // session (the screenlock covers it; the card = pointless for
+            // an empty vault). The stale cache = the unseal = the empty =
+            // the same shape — the freshness check above already gated it.
             if (items.isEmpty())
-                return Result.NeedsKeyDecrypt("Sealed cache unreadable — re-seal via the key unlock")
+                return Result.Success
             // The tombstones = carried across the promote: the batch
             // unseal's new envelope resets them, and the stub-session's
             // deletes must survive the re-seal.

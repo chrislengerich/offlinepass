@@ -1180,7 +1180,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 // required before ANY content (fresh start or post-timeout).
                 VaultSession.screenLockRequired() && !entryGateDone &&
                         VaultSession.screenlockUnlockEnabled() &&
-                        VaultSession.sealedManifestItems().isNotEmpty() -> {
+                        com.offlinepass.app.vault.SealedVault.hasCache() -> {
                     androidx.compose.runtime.LaunchedEffect(Unit) {
                         // Launching a BiometricPrompt before the window is
                         // focusable gets it canceled before it ever shows
@@ -1196,7 +1196,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         // present (the screenlock unlocks); otherwise the
                         // security-key fallback (the cache empty/stale).
                         sealedAvailable = VaultSession.screenlockUnlockEnabled() &&
-                            VaultSession.sealedManifestItems().isNotEmpty(),
+                            com.offlinepass.app.vault.SealedVault.hasCache(),
                         onUnlock = { lifecycleScope.launch { entryGate() } }
                     )
                 }
