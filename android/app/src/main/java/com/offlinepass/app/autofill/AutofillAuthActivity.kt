@@ -69,16 +69,30 @@ class AutofillAuthActivity : ComponentActivity() {
                         return@launch
                     }
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Generated password"
-                    val item = ProtonItem(name = origin, password = PasswordGen.password())
+                    val item = ProtonItem(
+                        name = origin,
+                        // THE URL = THE ORIGIN's (the domain-shaped origins
+                        // become the entry's urls).
+                        urls = if (origin.contains('.') && !origin.contains(' '))
+                            listOf("https://$origin") else emptyList(),
+                        password = PasswordGen.password())
                     AutofillRevealStore.put(item, "generate")
-                    Log.i(TAG, "generated a password for $origin — RESULT_OK (the fill)")
-                    setResult(RESULT_OK)
-                    finish()
+                    // THE INTERSTITIAL = right after choosing the password
+                    // (the user's sequencing: "after logging in / choosing
+                    // the password") — the add path (the entry = brand-new;
+                    // the edit path would no-op). Either way RESULT_OK: the
+                    // fill continues.
+                    withContext(Dispatchers.Main) { showSaveInterstitial(item) }
                 }
                 MODE_SAVE -> {
+                    val origin = name?.takeIf { it.isNotBlank() } ?: "Login"
                     val item = ProtonItem(
-                        name = name?.takeIf { it.isNotBlank() } ?: "Login",
+                        name = origin,
                         username = intent.getStringExtra(EXTRA_USERNAME) ?: "",
+                        // THE URL = THE ORIGIN's (the domain-shaped origins
+                        // become the entry's urls — the add path's item).
+                        urls = if (origin.contains('.') && !origin.contains(' '))
+                            listOf("https://$origin") else emptyList(),
                         password = intent.getStringExtra(EXTRA_PASSWORD) ?: "")
                     val gate = ScreenlockGate.promptGate(
                         this@AutofillAuthActivity,
@@ -132,8 +146,12 @@ class AutofillAuthActivity : ComponentActivity() {
             setOnClickListener {
                 it.isEnabled = false
                 lifecycleScope.launch {
+                    // THE ADD PATH: the generated entry = brand-new — the
+                    // EDIT path (saveSealed) silently no-ops for it (the
+                    // swap-by-uuid never matched — the measured "Saved ✓
+                    // but 3 items sealed").
                     val r = try {
-                        VaultSession.saveSealed(item.copy(modifyTime = 0))
+                        VaultSession.addSealed(item.copy(modifyTime = 0))
                     } catch (e: Exception) {
                         VaultSession.Result.Error("${e.javaClass.simpleName}: ${e.message}")
                     }

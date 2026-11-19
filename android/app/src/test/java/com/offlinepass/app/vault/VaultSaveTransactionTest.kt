@@ -313,6 +313,34 @@ class VaultSaveTransactionTest {
     }
 
     @Test
+    fun addSealedAppendsBrandNewEntry() = runBlocking {
+        // THE MEASURED NO-OP: the generated entry went through the EDIT
+        // path (the swap-by-uuid never matched) — "Saved ✓" with the
+        // entry missing. The add path must append and land the secrets.
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf(item("A").apply { password = "pw-a" })
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        val gen = item("com.offlinepass.autofilltest").apply {
+            password = "gen-pw-123"
+            urls = listOf("https://com.offlinepass.autofilltest")
+        }
+        val r = VaultSession.addSealed(gen)
+        assertTrue("addSealed: $r", r is VaultSession.Result.Success)
+        val plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertTrue("the generated entry's secret must be in the vault", plain.contains("gen-pw-123"))
+        assertTrue("the original must survive", plain.contains("pw-a"))
+        // The app's list = the stubs INCLUDING the new entry.
+        val after = (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
+        assertTrue("the new entry must be in the session", after.any { it.name == "com.offlinepass.autofilltest" })
+    }
+
+    @Test
     fun seedParsesUnsignedHexIds() = runBlocking {
         // THE UNSIGNED-PARSE REGRESSION: the ids with the high bit set (the
         // card's own 0xF3E2… among them) overflow the signed Long —

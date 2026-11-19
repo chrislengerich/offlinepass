@@ -2054,6 +2054,21 @@ object VaultSession {
         return save(merged, edited.itemUuid)
     }
 
+    /** THE ADD path for the sealed session (the autofill's generated
+     *  entry): unlike [saveSealed] (the EDIT semantics — the swap by
+     *  uuid, which SILENTLY NO-OPs for a brand-new item), this appends.
+     *  The item must carry its secrets (the full item, not a stub). */
+    suspend fun addSealed(newItem: ProtonItem): Result {
+        when (val p = promoteSealedSession()) {
+            is Result.Success -> {}
+            else -> return p
+        }
+        val items = (state as? State.Unlocked)?.items
+            ?: return Result.Error("Session unavailable")
+        newItem.modifyTime = System.currentTimeMillis() / 1000
+        return save(items + newItem, newItem.itemUuid)
+    }
+
     private fun sealedErrorMessage(e: Exception): String {
         Log.w(TAG, "sealed op failed: ${e.javaClass.name}: ${e.message}", e)
         return if (SealedVault.isAuthError(e)) "Screen lock required — try again"
