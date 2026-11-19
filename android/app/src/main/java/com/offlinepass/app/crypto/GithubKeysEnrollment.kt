@@ -33,19 +33,23 @@ object GithubKeysEnrollment {
     }
 
     /** The candidate line whose public key verifies the card's signature
-     *  over [nonce], or null when nothing matches. The signature is the
-     *  raw RSA result over the SHA-256 DigestInfo of the nonce (the card's
-     *  PSO:CDS output). RSA lines are candidates; non-RSA lines cannot
-     *  verify an RSA signature and are skipped. */
+     *  over [nonce], or null when nothing matches. RSA cards answer with
+     *  the raw RSA result over the SHA-256 DigestInfo; EC cards answer
+     *  with the DER ECDSA over the raw digest — the verifier follows the
+     *  LINE's algorithm, so a mixed GitHub key list matches either. */
     fun match(lines: List<String>, nonce: ByteArray, rawSig: ByteArray): String? {
         for (line in lines) {
             val parsed = runCatching { PgpSshBridge.parsePublicKeyLine(line) }.getOrNull()
                 ?: continue
-            if (parsed.algorithm != "ssh-rsa") continue
+            val verifyAlg = when (parsed.algorithm) {
+                "ssh-rsa" -> "SHA256withRSA"
+                "ecdsa-sha2-nistp256" -> "SHA256withECDSA"
+                else -> continue
+            }
             val pub = runCatching { PgpSshBridge.publicKeyFromLine(parsed) }.getOrNull()
                 ?: continue
             val verifier = runCatching {
-                java.security.Signature.getInstance("SHA256withRSA")
+                java.security.Signature.getInstance(verifyAlg)
                     .apply { initVerify(pub); update(nonce) }
             }.getOrNull() ?: continue
             if (runCatching { verifier.verify(rawSig) }.getOrDefault(false)) return line

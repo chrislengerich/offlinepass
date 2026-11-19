@@ -170,6 +170,17 @@ object YubiKitSshAuth {
         }
     }
 
+    /** The YubiKit curve → the SSH curve name (the wire's "nistpNNN"). */
+    fun curveSshName(
+        curve: com.yubico.yubikit.core.keys.EllipticCurveValues,
+    ): String = when (curve) {
+        com.yubico.yubikit.core.keys.EllipticCurveValues.SECP256R1 -> "nistp256"
+        com.yubico.yubikit.core.keys.EllipticCurveValues.SECP384R1 -> "nistp384"
+        com.yubico.yubikit.core.keys.EllipticCurveValues.SECP521R1 -> "nistp521"
+        else -> throw java.io.IOException(
+            "the curve ${curve.name} has no SSH mapping (only the NIST curves do)")
+    }
+
     /** The ACTIVE slot's full OpenSSH line — "ssh-rsa AAAA…
      *  offlinepass-<holder>" — for the copy-to-GitHub flow. The same
      *  unauthenticated reads as [slotKeyFingerprint] (no PIN, no touch);
@@ -206,6 +217,37 @@ object YubiKitSshAuth {
                     is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa ->
                         com.offlinepass.app.crypto.PgpSshBridge
                             .rsaSshLine(pub.modulus, pub.publicExponent, comment)
+                    is com.yubico.yubikit.core.keys.PublicKeyValues.Ec ->
+                        com.offlinepass.app.crypto.PgpSshBridge.ecSshLine(
+                            curveSshName(pub.curveParams), pub.encodedPoint, comment)
+                    else -> null
+                }
+            } finally {
+                session.close()
+            }
+        } finally {
+            runCatching { connection.close() }
+        }
+    }
+
+    /** The ACTIVE (SIG) slot's key type — "RSA" | "EC" | null. The commit
+     *  signer's one unauthenticated read per signature (the sig packet's
+     *  body format branches on it). */
+    fun slotKeyType(context: Context, useAut: Boolean = false): String? {
+        val device = findDevice(context) ?: return null
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: return null
+        if (!usbManager.hasPermission(device)) return null
+        val ykDevice = UsbYubiKeyDevice(usbManager, device)
+        val connection = ykDevice.openConnection(SmartCardConnection::class.java)
+        try {
+            val session = OpenPgpSession(connection as SmartCardConnection)
+            try {
+                return when (session.getPublicKey(
+                    if (useAut) com.yubico.yubikit.openpgp.KeyRef.AUT
+                    else com.yubico.yubikit.openpgp.KeyRef.SIG)) {
+                    is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa -> "RSA"
+                    is com.yubico.yubikit.core.keys.PublicKeyValues.Ec -> "EC"
                     else -> null
                 }
             } finally {
@@ -280,6 +322,9 @@ object YubiKitSshAuth {
                     is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa ->
                         com.offlinepass.app.crypto.PgpSshBridge
                             .rsaFingerprint(pub.modulus, pub.publicExponent)
+                    is com.yubico.yubikit.core.keys.PublicKeyValues.Ec ->
+                        com.offlinepass.app.crypto.PgpSshBridge.ecFingerprint(
+                            curveSshName(pub.curveParams), pub.encodedPoint)
                     else -> null
                 }
             } finally {
@@ -346,17 +391,20 @@ object YubiKitSshAuth {
                 // when the caller passes an expected fingerprint (the
                 // enrolled line's), a mismatch REFUSES to sign by name —
                 // the sig GitHub would reject is never produced, and the
-                // PIN attempt is never spent.
-                val liveFp: String = runCatching {
-                    when (val pub = session.getPublicKey(
-                        if (useAut) com.yubico.yubikit.openpgp.KeyRef.AUT
-                        else com.yubico.yubikit.openpgp.KeyRef.SIG)) {
-                        is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa ->
-                            com.offlinepass.app.crypto.PgpSshBridge
-                                .rsaFingerprint(pub.modulus, pub.publicExponent)
-                        else -> "non-RSA (${pub.javaClass.simpleName})"
-                    }
-                }.getOrElse { "unreadable" }
+                // PIN attempt is never spent. THE READ DOUBLES AS THE
+                // KEY-TYPE BRANCH for the signature operation below.
+                val slotRef = if (useAut) com.yubico.yubikit.openpgp.KeyRef.AUT
+                else com.yubico.yubikit.openpgp.KeyRef.SIG
+                val slotPub = runCatching { session.getPublicKey(slotRef) }.getOrNull()
+                val liveFp: String = when (val pub = slotPub) {
+                    is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa ->
+                        com.offlinepass.app.crypto.PgpSshBridge
+                            .rsaFingerprint(pub.modulus, pub.publicExponent)
+                    is com.yubico.yubikit.core.keys.PublicKeyValues.Ec ->
+                        com.offlinepass.app.crypto.PgpSshBridge.ecFingerprint(
+                            curveSshName(pub.curveParams), pub.encodedPoint)
+                    else -> "unreadable/" + (slotPub?.javaClass?.simpleName ?: "empty")
+                }
                 android.util.Log.i("YubiKeySsh",
                     "yubikit: auth key " + (if (useAut) "AUT" else "SIG") + " fp=$liveFp")
                 if (expectedFingerprint != null && liveFp != expectedFingerprint) {
@@ -398,79 +446,79 @@ object YubiKitSshAuth {
                         (if (useAut) "INTERNAL AUTHENTICATE on the AUTH slot"
                         else "PSO:CDS on the SIGNATURE slot") +
                         " (touch the key if its LED blinks)")
-                val sig = if (useAut) {
-                    // The AUT path branches on the slot's KEY TYPE:
-                    // - RSA: the challenge = the FULL PKCS#1 block padded
-                    //   to the modulus (no on-card padding). NOTE: a
-                    //   4096-bit modulus = a 512-byte command, which the
-                    //   phone's USB transport CANNOT carry (no extended
-                    //   APDUs over USB; the applet doesn't chain INS 0x88)
-                    //   — the card answers 0x6581. RSA-2048 fits (256B).
-                    // - EC: the challenge = the RAW digest — the caller's
-                    //   RSA-shaped DigestInfo is stripped here (the
-                    //   callers never branch on the key type).
-                    when (val autPub = session.getPublicKey(com.yubico.yubikit.openpgp.KeyRef.AUT)) {
-                        is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa -> {
-                            val modulusLen = (autPub.modulus.bitLength() + 7) / 8
-                            require(payload.size <= modulusLen) {
-                                "the payload (${payload.size}B) exceeds the AUT modulus ($modulusLen B)"
-                            }
-                            val block = ByteArray(modulusLen) { 0 }
-                            payload.copyInto(block, modulusLen - payload.size)
-                            android.util.Log.i("YubiKeySsh",
-                                "yubikit: challenge padded to $modulusLen B")
-                            try {
-                                session.authenticate(block)
-                            } catch (e: com.yubico.yubikit.core.smartcard.ApduException) {
-                                if (e.sw.toInt() == 0x6982) {
-                                    throw java.io.IOException(
-                                        "the AUTH slot answered 0x6982 — the PIN is not " +
-                                            "verified for 'other use' (the INTERNAL " +
-                                            "AUTHENTICATE access condition)", e)
-                                }
-                                if (e.sw.toInt() == 0x6581) {
-                                    // THE DEAD END, named: a long challenge
-                                    // over a transport that can't carry it.
-                                    throw java.io.IOException(
-                                        "the AUTH slot answered 0x6581 (command too long): " +
-                                            "an RSA-${
-                                                autPub.modulus.bitLength()
-                                            } challenge ($modulusLen B) exceeds this USB " +
-                                            "transport's INTERNAL AUTHENTICATE limit. " +
-                                            "Use the SIGNATURE slot, or move an EC (P-256) " +
-                                            "or RSA-2048 key into the AUTH slot.", e)
-                                }
-                                throw e
-                            }
+                val sig = when (val pub = slotPub) {
+                    is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa -> if (useAut) {
+                        // The padded-challenge path (no on-card padding).
+                        // NOTE: a 4096-bit modulus = a 512-byte command,
+                        // which the phone's USB transport CANNOT carry (no
+                        // extended APDUs over USB; the applet doesn't chain
+                        // INS 0x88) — the card answers 0x6581. RSA-2048
+                        // fits (256B).
+                        val modulusLen = (pub.modulus.bitLength() + 7) / 8
+                        require(payload.size <= modulusLen) {
+                            "the payload (${payload.size}B) exceeds the AUT modulus ($modulusLen B)"
                         }
-                        is com.yubico.yubikit.core.keys.PublicKeyValues.Ec -> {
-                            // ECDSA: the raw digest in, the DER (r,s) out —
-                            // YubiKit formats SEQUENCE(INTEGER r, INTEGER s).
-                            val hash = com.offlinepass.app.crypto.SshRsaPkcs1
-                                .digestWithin(payload)
-                                ?: throw java.io.IOException(
-                                    "the EC AUT slot needs the hashed payload — " +
-                                        "the caller sent an unrecognized form")
-                            android.util.Log.i("YubiKeySsh",
-                                "yubikit: EC challenge = the raw digest (${hash.size}B)")
-                            try {
-                                session.authenticate(hash)
-                            } catch (e: com.yubico.yubikit.core.smartcard.ApduException) {
-                                if (e.sw.toInt() == 0x6982) {
-                                    throw java.io.IOException(
-                                        "the AUTH slot answered 0x6982 — the PIN is not " +
-                                            "verified for 'other use' (the INTERNAL " +
-                                            "AUTHENTICATE access condition)", e)
-                                }
-                                throw e
+                        val block = ByteArray(modulusLen) { 0 }
+                        payload.copyInto(block, modulusLen - payload.size)
+                        android.util.Log.i("YubiKeySsh",
+                            "yubikit: challenge padded to $modulusLen B")
+                        try {
+                            session.authenticate(block)
+                        } catch (e: com.yubico.yubikit.core.smartcard.ApduException) {
+                            if (e.sw.toInt() == 0x6982) {
+                                throw java.io.IOException(
+                                    "the AUTH slot answered 0x6982 — the PIN is not " +
+                                        "verified for 'other use' (the INTERNAL " +
+                                        "AUTHENTICATE access condition)", e)
                             }
+                            if (e.sw.toInt() == 0x6581) {
+                                // THE DEAD END, named: a long challenge over
+                                // a transport that can't carry it.
+                                throw java.io.IOException(
+                                    "the AUTH slot answered 0x6581 (command too long): " +
+                                        "an RSA-${pub.modulus.bitLength()} challenge " +
+                                        "($modulusLen B) exceeds this USB transport's " +
+                                        "INTERNAL AUTHENTICATE limit. Use the SIGNATURE " +
+                                        "slot, or move an EC (P-256) or RSA-2048 key " +
+                                        "into the AUTH slot.", e)
+                            }
+                            throw e
                         }
-                        else -> throw java.io.IOException(
-                            "the AUT slot's key type is unsupported for SSH auth " +
-                                "(${autPub.javaClass.simpleName})")
+                    } else {
+                        // PSO:CDS — the card pads the DigestInfo on-device.
+                        session.sign(payload)
                     }
-                } else {
-                    session.sign(payload)
+                    is com.yubico.yubikit.core.keys.PublicKeyValues.Ec -> {
+                        // ECDSA: BOTH operations take the RAW digest — the
+                        // caller's RSA-shaped DigestInfo is stripped here
+                        // (the callers never branch on the key type). The
+                        // card's output = the DER (r, s) either way.
+                        val hash = com.offlinepass.app.crypto.SshRsaPkcs1
+                            .digestWithin(payload)
+                            ?: throw java.io.IOException(
+                                "the EC slot needs the hashed payload — " +
+                                    "the caller sent an unrecognized form")
+                        require(hash.size * 8 <= pub.curveParams.bitLength) {
+                            "the digest (${hash.size}B) exceeds the EC key's " +
+                                "${pub.curveParams.bitLength}-bit key"
+                        }
+                        android.util.Log.i("YubiKeySsh",
+                            "yubikit: EC challenge = the raw digest (${hash.size}B)")
+                        try {
+                            if (useAut) session.authenticate(hash) else session.sign(hash)
+                        } catch (e: com.yubico.yubikit.core.smartcard.ApduException) {
+                            if (e.sw.toInt() == 0x6982) {
+                                throw java.io.IOException(
+                                    (if (useAut) "the AUTH" else "the SIGNATURE") +
+                                        " slot answered 0x6982 — the PIN is not verified " +
+                                        "for " + (if (useAut) "'other use'" else "signing"), e)
+                            }
+                            throw e
+                        }
+                    }
+                    else -> throw java.io.IOException(
+                        "the slot's key type is unsupported for SSH auth " +
+                            "(" + (slotPub?.javaClass?.simpleName ?: "empty slot") + ")")
                 }
                 android.util.Log.i("YubiKeySsh", "yubikit: card signed (${sig.size} bytes)")
                 return sig

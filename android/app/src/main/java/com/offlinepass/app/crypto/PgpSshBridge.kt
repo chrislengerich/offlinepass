@@ -596,7 +596,23 @@ object PgpSshBridge {
      *  ssh-rsa → RSA(n, e); ssh-ed25519 → the Ed25519 point. Used for the
      *  LOCAL signature verification (the self-test verifies the card's
      *  signature in-app — no server needed). */
-    /** THE ECDSA SSH SIG VALUE from a DER-encoded signature (the card's
+    /** The ECDSA SSH line from a LIVE EC public key (the card slot's
+     *  read): the wire blob = string("ecdsa-sha2-<curve>") +
+     *  string(<curve>) + string(the uncompressed point). */
+    fun ecSshLine(curveName: String, encodedPoint: ByteArray, comment: String): String {
+        val alg = "ecdsa-sha2-$curveName"
+        val blob = sshString(alg.toByteArray()) +
+            sshString(curveName.toByteArray()) + sshString(encodedPoint)
+        return "$alg " + java.util.Base64.getEncoder().encodeToString(blob) +
+            (if (comment.isBlank()) "" else " " + comment)
+    }
+
+    /** The same ssh-keygen fingerprint for a LIVE EC public key — the
+     *  direct comparable of the enrolled EC line's [fingerprintOf]. */
+    fun ecFingerprint(curveName: String, encodedPoint: ByteArray): String =
+        fingerprintOf(ecSshLine(curveName, encodedPoint, ""))
+
+    /** The ECDSA SSH SIG VALUE from a DER-encoded signature (the card's
      *  EC output = SEQUENCE(INTEGER r, INTEGER s)): the SSH wire wants
      *  string("nistpNNN") + string(r) + string(s), each padded to the
      *  field size. Returns the inner sig-blob (the caller adds the

@@ -47,16 +47,25 @@ class YubiKitCommitSigner(
         val armored = kotlinx.coroutines.runBlocking {
             val pin = prompt()
                 ?: throw IOException("OpenPGP PIN cancelled — commit aborted")
+            // The sig packet's body = the KEY TYPE's (one unauthenticated
+            // read): RSA = the one-MPI padded block; EC = the r/s MPIs
+            // from the card's DER. Unknown = RSA (the legacy default).
+            val pubkeyAlg = runCatching {
+                if (YubiKitSshAuth.slotKeyType(context) == "EC")
+                    PgpSigBuilder.PUB_ALG_ECDSA else PgpSigBuilder.PUB_ALG_RSA
+            }.getOrDefault(PgpSigBuilder.PUB_ALG_RSA)
             val packet = try {
                 // The v4 hash (content+trailer) and the packet share the
                 // same prefix by construction; the card signs the hash's
-                // DigestInfo.
+                // DigestInfo (RSA pads it on-device; EC signs the raw
+                // digest — sign() strips it by the slot's key type).
                 PgpSigBuilder.detachedSignature(
                     content, keyId,
                     createdAt = (System.currentTimeMillis() / 1000).toInt(),
                     sign = { digestInfo ->
                         kotlinx.coroutines.runBlocking { cardSign(pin, digestInfo) }
-                    })
+                    },
+                    pubkeyAlg = pubkeyAlg)
             } catch (e: Exception) {
                 throw IOException("YubiKey commit signing: ${e.message}", e)
             }

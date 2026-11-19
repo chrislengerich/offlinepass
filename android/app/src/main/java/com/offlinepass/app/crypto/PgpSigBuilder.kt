@@ -20,6 +20,7 @@ import java.math.BigInteger
 object PgpSigBuilder {
 
     const val PUB_ALG_RSA = 1
+    const val PUB_ALG_ECDSA = 19
     const val HASH_SHA256 = 8
     const val SIG_TYPE_BINARY = 0
     const val SUB_CREATION_TIME = 2
@@ -50,10 +51,34 @@ object PgpSigBuilder {
 
         val raw = sign(SshRsaPkcs1.digestInfoFromDigest(hashName(hashAlg), digest))
         val unhashed = subpacket(SUB_ISSUER_KEY_ID, u64(keyId))
+        // The sig body = the ALGORITHM's: RSA = one MPI (the padded block);
+        // ECDSA = MPI(r) || MPI(s) from the card's DER SEQUENCE.
+        val sigBody = if (pubkeyAlg == PUB_ALG_ECDSA) ecdsaMpis(raw) else mpi(raw)
         val body = prefix +
             u16(unhashed.size) + unhashed +
-            digest.copyOfRange(0, 2) + mpi(raw)
+            digest.copyOfRange(0, 2) + sigBody
         return packet(tag = 2, body = body)
+    }
+
+    /** The card's ECDSA output = the DER SEQUENCE(INTEGER r, INTEGER s) —
+     *  the PGP packet wants the two raw MPIs. */
+    private fun ecdsaMpis(der: ByteArray): ByteArray {
+        require(der.isNotEmpty() && (der[0].toInt() and 0xFF) == 0x30) {
+            "the ECDSA signature is not a DER SEQUENCE"
+        }
+        var p = 2
+        if ((der[1].toInt() and 0x80) != 0) p = 2 + (der[1].toInt() and 0x7F)
+        fun readInt(): ByteArray {
+            require(p + 2 <= der.size) { "truncated DER INTEGER" }
+            val len = der[p + 1].toInt() and 0xFF
+            require(p + 2 + len <= der.size) { "truncated DER INTEGER body" }
+            val v = der.copyOfRange(p + 2, p + 2 + len)
+            p += 2 + len
+            return v
+        }
+        val r = readInt()
+        val s = readInt()
+        return mpi(r) + mpi(s)
     }
 
     /** The ASCII armor, byte-identical in shape to gpg's detached

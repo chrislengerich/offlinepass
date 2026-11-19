@@ -440,6 +440,36 @@ class PgpSshBridgeTest {
     }
 
     @org.junit.Test
+    fun `ecSshLine round-trips and fingerprints like the enrolled form`() {
+        val ekp = java.security.KeyPairGenerator.getInstance("EC").apply {
+            initialize(java.security.spec.ECGenParameterSpec("secp256r1"))
+        }.generateKeyPair()
+        val pub = ekp.public as java.security.interfaces.ECPublicKey
+        fun pad(v: java.math.BigInteger, n: Int): ByteArray {
+            val b = v.toByteArray()
+            val body = if (b.size > n) b.copyOfRange(b.size - n, b.size) else b
+            return ByteArray(n - body.size) + body
+        }
+        val point = byteArrayOf(0x04) + pad(pub.w.affineX, 32) + pad(pub.w.affineY, 32)
+        val line = PgpSshBridge.ecSshLine("nistp256", point, "offlinepass-test")
+        val parsed = PgpSshBridge.parsePublicKeyLine(line)
+        assertEquals("ecdsa-sha2-nistp256", parsed.algorithm)
+        assertEquals("offlinepass-test", parsed.comment)
+        assertEquals(
+            PgpSshBridge.ecFingerprint("nistp256", point),
+            PgpSshBridge.fingerprintOf(line))
+        // The parsed line yields a JCE key that verifies the card's DER.
+        val jcePub = PgpSshBridge.publicKeyFromLine(parsed)
+        val data = "offlinepass ec sig slot".toByteArray()
+        val der = java.security.Signature.getInstance("SHA256withECDSA").apply {
+            initSign(ekp.private); update(data)
+        }.sign()
+        assertTrue(java.security.Signature.getInstance("SHA256withECDSA").apply {
+            initVerify(jcePub); update(data)
+        }.verify(der))
+    }
+
+    @org.junit.Test
     fun `ecdsaSshSigValue converts a real DER signature and verifies back`() {
         val kp = java.security.KeyPairGenerator.getInstance("EC").apply {
             initialize(java.security.spec.ECGenParameterSpec("secp256r1"))
