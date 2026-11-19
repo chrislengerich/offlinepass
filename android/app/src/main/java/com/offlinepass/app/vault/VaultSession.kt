@@ -605,6 +605,12 @@ object VaultSession {
         return f.readLines().any { it.split(" ").getOrNull(1) == blob }
     }
 
+    /** The card's DEC slot's key id for the Setup's display — the
+     *  unauthenticated read; null = the card not attached/readable. */
+    fun cardDecIdForDisplay(): Long? = runCatching {
+        com.offlinepass.app.crypto.YubiKitCardDecrypt.decKeyId(appContext)
+    }.getOrNull()
+
     /** The repo's public-key material OKK could import (the sign/encrypt
      *  certs present on disk). */
     fun repoKeyMaterialFiles(): List<File> {

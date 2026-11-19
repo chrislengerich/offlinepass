@@ -25,7 +25,6 @@ fun SetupTabScreen(
     onUsbRestore: () -> Unit,
     onEnableAutofill: () -> Unit,
     onForget: () -> Unit,
-    patSave: (String) -> Unit,
     autofillEnabled: Boolean,
     recipientIds: List<Long>,
     onAddRecipient: () -> Unit,
@@ -65,7 +64,6 @@ fun SetupTabScreen(
     onRemoveDevice: (String) -> Unit = {}
 ) {
     val cfg = VaultSession.config()
-    var patInput by remember { mutableStateOf("") }
     var confirmDialog by remember { mutableStateOf<String?>(null) }
 
     confirmDialog?.let { what ->
@@ -130,18 +128,35 @@ fun SetupTabScreen(
                 style = MaterialTheme.typography.bodySmall
             )
         }
-        // The SSH-auth slot: the SIG (the default) vs the AUT (the
-        // dedicated authentication key — the transport experiment). The
-        // same pref the commit-signer's cardSign reads.
+        // The SSH-auth slot: the SIG (the default was the old) vs the AUT
+        // (the dedicated authentication key — the transport experiment).
+        // The display = the SETTING-aware: the AUT's on = the AUT slot's
+        // id (the card's AUT fingerprint's low half — the unauthenticated
+        // read, the card attached); the off = the SIG's (the enrolled one).
+        val autOn = VaultSession.sshAuthUseAut()
+        val displayedSubkeyId = if (autOn) VaultSession.cardDecIdForDisplay() else null
         androidx.compose.material3.ListItem(
-            headlineContent = { Text("SSH auth subkey: use the AUT key") },
-            supportingContent = { Text("Off = the SIG signing subkey answers " +
-                "the SSH handshake (the card pads the digest). On = the AUT " +
-                "authentication subkey (the raw-RSA challenge, the caller " +
-                "pads — the 512-byte transport experiment).") },
+            headlineContent = {
+                Text(if (autOn) "SSH auth: the AUT key (the dedicated authentication subkey)"
+                     else "SSH auth: the SIG key (the signing subkey)")
+            },
+            supportingContent = {
+                androidx.compose.foundation.layout.Column {
+                    Text(if (autOn)
+                        "The raw-RSA challenge, the caller pads — the 512-byte " +
+                        "transport experiment."
+                    else
+                        "Off = the SIG signing subkey answers the SSH handshake " +
+                        "(the card pads the digest).")
+                    displayedSubkeyId?.let { id ->
+                        Text("id 0x%016X".format(id),
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
             trailingContent = {
                 androidx.compose.material3.Switch(
-                    checked = VaultSession.sshAuthUseAut(),
+                    checked = autOn,
                     onCheckedChange = { VaultSession.setSshAuthUseAut(it) })
             })
 
@@ -469,22 +484,6 @@ fun SetupTabScreen(
         Button(onClick = onLock, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Lock vault (zero decrypted data)")
         }
-        HorizontalDivider()
-
-        Text(
-            "PAT: ${if (VaultSession.hasPat()) "stored (encrypted in Android Keystore)" else "not stored"}",
-            style = MaterialTheme.typography.titleSmall
-        )
-        OutlinedTextField(
-            value = patInput, onValueChange = { patInput = it },
-            label = { Text("New fine-grained PAT") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Button(
-            onClick = { if (patInput.isNotBlank()) patSave(patInput.trim()); patInput = "" },
-            enabled = patInput.isNotBlank(),
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Save PAT") }
         HorizontalDivider()
 
         Button(onClick = { confirmDialog = "forget" }, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {

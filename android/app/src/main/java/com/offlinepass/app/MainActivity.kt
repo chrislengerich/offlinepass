@@ -1790,7 +1790,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         }
                     },
                     onForget = { VaultSession.forgetConfig(); screen = Screen.SetupChoice },
-                    patSave = { VaultSession.savePat(it); status = "PAT stored (encrypted)." },
                     autofillEnabled = isAutofillEnabled(),
                     recipientIds = VaultSession.recipientKeyIds(),
                     onAddRecipient = { lifecycleScope.launch { pickRecipientsUntilDone() } },
