@@ -48,6 +48,21 @@ object PgpSshBridge {
             .encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(parsed.wireBlob))
     }
 
+    /** The same ssh-keygen fingerprint for a LIVE RSA public key (the
+     *  card slot's read at auth time): builds the ssh-rsa wire blob from
+     *  the modulus + exponent and digests it — the same value the
+     *  enrolled line's [fingerprintOf] yields, so live-vs-enrolled and
+     *  card-vs-GitHub-security-log comparisons are direct. */
+    fun rsaFingerprint(modulus: java.math.BigInteger, exponent: java.math.BigInteger): String {
+        // The ssh-rsa wire order: string(e) THEN string(n) (RFC 4253 §6.6 —
+        // the same order the existing sshBlobFor emits).
+        val blob = sshString("ssh-rsa".toByteArray()) +
+            sshString(sshMpint(exponent.toByteArray())) +
+            sshString(sshMpint(modulus.toByteArray()))
+        return "SHA256:" + java.util.Base64.getEncoder().withoutPadding()
+            .encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(blob))
+    }
+
     fun parsePublicKeyLine(line: String): SshPublicKeyLine {
         val parts = line.trim().split(" ").filter { it.isNotBlank() }
         if (parts.size < 2) throw PgpSshBridgeException("SSH public key line needs at least: <alg> <b64blob>")

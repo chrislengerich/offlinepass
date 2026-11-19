@@ -2135,13 +2135,30 @@ object VaultSession {
                 verifier.initVerify(pub); verifier.update(data)
                 verifier.verify(sigBlock)
             }.getOrElse { false }
+            // THE WHICH-KEY VERDICT: the slot's LIVE key fingerprint vs
+            // the enrolled line's — the verdict names the key, not just
+            // the slot (a card holding a different key = a named mismatch,
+            // not an opaque verification failure).
+            val liveFp = kotlinx.coroutines.withContext(
+                kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    com.offlinepass.app.crypto.YubiKitSshAuth
+                        .slotKeyFingerprint(appContext, sshAuthUseAut())
+                }.getOrNull()
+            } ?: "unreadable"
+            val enrolledFp = runCatching { PgpSshBridge.fingerprintOf(line) }
+                .getOrNull() ?: "unparsable"
+            val keyMatch = liveFp == enrolledFp
             return if (verified) SshSelfTest(true,
                 "YubiKit: the card signed on the " +
                     (if (sshAuthUseAut()) "AUTH slot (AUT)" else "SIGNATURE slot (SIG)") +
-                    " + verified locally — the full chain works")
+                    " + verified locally — auth key $liveFp " +
+                    (if (keyMatch) "matches the enrolled line"
+                        else "MISMATCH vs the enrolled line $enrolledFp"))
             else SshSelfTest(false,
                 "the card's signature did NOT verify locally against the enrolled line " +
-                    "(the sig armor is saved to last-selftest-sig.asc)")
+                    "(live auth key $liveFp" + (if (keyMatch) "" else ", enrolled $enrolledFp") +
+                    "; the sig armor is saved to last-selftest-sig.asc)")
         }
 
         // No YubiKey attached: the OKK fallback (the software keys; OKK's

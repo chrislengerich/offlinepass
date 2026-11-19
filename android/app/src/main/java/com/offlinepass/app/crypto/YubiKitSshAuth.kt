@@ -169,6 +169,39 @@ object YubiKitSshAuth {
      * (the pre-built PKCS#1 v1.5 block) with the card's SIGNATURE slot.
      * The YubiKey's slot touch policy applies on the hardware side.
      */
+    /** The slot's LIVE public key as the ssh-keygen SHA256 fingerprint
+     *  (no PIN, no touch — the unauthenticated GET DATA path): the
+     *  "which key" answer for the auth logs and the self-test verdict —
+     *  the same format GitHub's security log shows, so a live-vs-enrolled
+     *  mismatch is detectable in one comparison. RSA only (the AUT path
+     *  is RSA-mandatory); null when the read fails or the slot is
+     *  non-RSA. */
+    fun slotKeyFingerprint(context: Context, useAut: Boolean): String? {
+        val device = findDevice(context) ?: return null
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: return null
+        if (!usbManager.hasPermission(device)) return null
+        val ykDevice = UsbYubiKeyDevice(usbManager, device)
+        val connection = ykDevice.openConnection(SmartCardConnection::class.java)
+        try {
+            val session = OpenPgpSession(connection as SmartCardConnection)
+            try {
+                val ref = if (useAut) com.yubico.yubikit.openpgp.KeyRef.AUT
+                else com.yubico.yubikit.openpgp.KeyRef.SIG
+                return when (val pub = session.getPublicKey(ref)) {
+                    is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa ->
+                        com.offlinepass.app.crypto.PgpSshBridge
+                            .rsaFingerprint(pub.modulus, pub.publicExponent)
+                    else -> null
+                }
+            } finally {
+                session.close()
+            }
+        } finally {
+            runCatching { connection.close() }
+        }
+    }
+
     /**
      * Verifies the OpenPGP user PIN on the applet, then signs or
      * authenticates. The slot choice:
@@ -245,6 +278,25 @@ object YubiKitSshAuth {
                         (if (useAut) "INTERNAL AUTHENTICATE on the AUTH slot"
                         else "PSO:CDS on the SIGNATURE slot") +
                         " (touch the key if its LED blinks)")
+                // THE WHICH-KEY LOG: the live public key of the slot about
+                // to answer — the ssh-keygen fingerprint (GitHub's security
+                // log format). A card holding a different key than the
+                // enrolled line shows up here instead of as an opaque
+                // verification failure downstream.
+                runCatching {
+                    when (val pub = session.getPublicKey(
+                        if (useAut) com.yubico.yubikit.openpgp.KeyRef.AUT
+                        else com.yubico.yubikit.openpgp.KeyRef.SIG)) {
+                        is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa ->
+                            com.offlinepass.app.crypto.PgpSshBridge
+                                .rsaFingerprint(pub.modulus, pub.publicExponent)
+                        else -> "non-RSA (${pub.javaClass.simpleName})"
+                    }
+                }.let { fp ->
+                    android.util.Log.i("YubiKeySsh",
+                        "yubikit: auth key " + (if (useAut) "AUT" else "SIG") +
+                            " fp=" + (fp.getOrNull() ?: "unreadable"))
+                }
                 val sig = if (useAut) {
                     // The raw-RSA path: the challenge = the FULL PKCS#1
                     // block padded to the AUT modulus (no on-card padding).

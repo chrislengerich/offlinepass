@@ -422,4 +422,27 @@ class PgpSshBridgeTest {
         assertArrayEquals(n, nWire.copyOfRange(1, 5))
     }
 
+    @org.junit.Test
+    fun `rsaFingerprint matches the enrolled line's fingerprint`() {
+        // The live-card read (modulus + exponent BigIntegers) must produce
+        // the SAME "SHA256:…" fingerprint as the enrolled SSH line — the
+        // auth-log's which-key comparison depends on it.
+        val n = java.math.BigInteger(1, byteArrayOf(
+            0xC6.toByte(), 0x11, 0x7F.toByte(), 0x33, 0x44))
+        val e = java.math.BigInteger(1, byteArrayOf(0x01, 0x00, 0x01))
+        val blob = "ssh-rsa " + java.util.Base64.getEncoder().encodeToString(
+            // string("ssh-rsa") + mpint(e) + mpint(n) — the wire order.
+            run {
+                fun s(b: ByteArray) = byteArrayOf(
+                    ((b.size ushr 24) and 0xFF).toByte(), ((b.size ushr 16) and 0xFF).toByte(),
+                    ((b.size ushr 8) and 0xFF).toByte(), (b.size and 0xFF).toByte()) + b
+                fun mpint(v: ByteArray) =
+                    if ((v[0].toInt() and 0x80) != 0) byteArrayOf(0) + v else v
+                s("ssh-rsa".toByteArray()) + s(mpint(e.toByteArray())) + s(mpint(n.toByteArray()))
+            }) + " test"
+        assertEquals(
+            PgpSshBridge.fingerprintOf(publicKeyLine = blob),
+            PgpSshBridge.rsaFingerprint(n, e))
+    }
+
 }
