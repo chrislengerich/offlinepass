@@ -345,8 +345,39 @@ object VaultSession {
     fun deviceName(): String =
         prefs().getString("deviceName", null) ?: android.os.Build.MODEL
     fun setDeviceName(n: String) {
-        prefs().edit().putString("deviceName",
-            sanitizeDeviceName(n)).apply()
+        val clean = sanitizeDeviceName(n)
+        prefs().edit().putString("deviceName", clean).apply()
+        // THE REGISTRY: this device's entries rename with it — the
+        // screenlock signer (matched by the key line's device comment) and
+        // the card entry (matched by this device's signing cert). The
+        // change lands in the worktree; commitDeviceRename() commits it.
+        val subkey = yubikeyAuthSubkeyId()
+        var changed = false
+        val entries = readDeviceRegistry().map { e ->
+            val mine = e.authKey?.contains(
+                "offlinepass-screenlock device=${deviceId()}") == true ||
+                (subkey != null && e.cert == "keys/sign/%016X.pub.asc".format(subkey))
+            if (mine && e.name != clean) { changed = true; e.copy(name = clean) } else e
+        }
+        if (changed) writeDeviceRegistry(entries)
+    }
+
+    /** The device rename's commit: the registry lives in the repo, so the
+     *  rename rides its own signed commit (best effort — the change stays
+     *  in the worktree and rides the next save/sync on any failure). */
+    suspend fun commitDeviceRename(): String {
+        val cfg = config() ?: return "Renamed (local-only — no repo to commit to)."
+        return try {
+            withContext(Dispatchers.IO) {
+                val signer = syncCommitSigner(openPgpClientFactory(appContext))
+                VaultGitClient().commitDirty(
+                    gitRoot(), "Rename device to '${deviceName()}'", signer)
+                "Renamed + committed."
+            }
+        } catch (e: Exception) {
+            "Renamed (the registry change rides the next save/sync: " +
+                "${e.message?.take(60)})."
+        }
     }
 
     /** The minimal registry entry: the device NAME mapped to its public

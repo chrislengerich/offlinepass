@@ -2181,7 +2181,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     },
                     onSetDeviceName = {
                         VaultSession.setDeviceName(it)
-                        status = "Device name set: $it"
+                        lifecycleScope.launch { status = VaultSession.commitDeviceRename() }
                     },
                     onInitOkkFromRepo = {
                         lifecycleScope.launch {
