@@ -269,24 +269,18 @@ fun GetStartedScreen(
         // (the remote accepts the paired key). The remote's order = FIRST:
         // the enrollment derives the username from it.
         Text("1. GitHub remote", style = MaterialTheme.typography.titleSmall)
+        // The remote field = the screen's live state (pre-populated from
+        // the load-existing's seeded draft) — no button: the step 2's
+        // enrollment consumes it directly.
+        var ownerRepo by remember { mutableStateOf(VaultSession.connectDraftOwnerRepo() ?: "") }
         if (remoteAttached) {
             Text("✅ Remote attached: ${VaultSession.config()?.remoteUrl ?: ""}",
                 style = MaterialTheme.typography.bodySmall)
         } else {
-            var ownerRepo by remember { mutableStateOf(VaultSession.connectDraftOwnerRepo() ?: "") }
             androidx.compose.material3.OutlinedTextField(
                 value = ownerRepo, onValueChange = { ownerRepo = it },
                 label = { Text("owner/repo") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth())
-            Button(
-                onClick = {
-                    VaultSession.saveConnectDraft(ownerRepo.trim(), "card")
-                    VaultSession.loadRemoteState.value = "git@github.com:$ownerRepo"
-                },
-                enabled = busy == null && ownerRepo.contains("/") &&
-                    !ownerRepo.startsWith("/") && !ownerRepo.endsWith("/"),
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Use this repository") }
         }
         HorizontalDivider()
 
@@ -331,22 +325,23 @@ fun GetStartedScreen(
                     // wrong user's keys.
                     // The draft = seeded by the load flow (the configured
                     // remote); the enrollment derives the username from it.
-                    val draft = VaultSession.connectDraftOwnerRepo() ?: ""
+                    val draft = ownerRepo.trim()
                     if (draft.contains("/") && !draft.startsWith("/") &&
                         !draft.endsWith("/")
                     ) {
-                        VaultSession.saveConnectDraft(draft, "ssh")
+                        VaultSession.saveConnectDraft(draft, "card")
                         VaultSession.loadRemoteState.value = "git@github.com:$draft"
                         onEnrollFromGithubKeys()
                     }
                 },
-                enabled = busy == null &&
-                    VaultSession.connectDraftOwnerRepo()?.contains("/") == true,
+                enabled = busy == null && ownerRepo.contains("/") &&
+                    !ownerRepo.startsWith("/") && !ownerRepo.endsWith("/"),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Enroll from GitHub keys (one touch)")
             }
-            if (VaultSession.connectDraftOwnerRepo()?.contains("/") != true) {
+            if (!ownerRepo.contains("/") || ownerRepo.startsWith("/") ||
+                ownerRepo.endsWith("/")) {
                 // The local-only vault: no remote = no username to derive —
                 // the SSH enroll happens when the remote is attached (the
                 // sync = the remote's flow); the screenlock + the keys are
