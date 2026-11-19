@@ -281,7 +281,6 @@ fun SetupTabScreen(
         // device-level view of the sync.
         Text("Devices", style = MaterialTheme.typography.titleSmall)
         Text("This device", style = MaterialTheme.typography.labelLarge)
-        Text("Name: ${VaultSession.deviceName()}", style = MaterialTheme.typography.bodySmall)
         Button(onClick = { deviceNameDialog = VaultSession.deviceName() },
             enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Set device name")
