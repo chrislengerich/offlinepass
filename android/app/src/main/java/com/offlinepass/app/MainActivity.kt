@@ -82,6 +82,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
     /** Entry-gate auto-prompt waits for this — a BiometricPrompt launched
      *  before the window is focusable is canceled before it shows. */
     private var hasWindowFocus by mutableStateOf(false)
+    /** The screen the GetStarted was entered from — the Done/back returns
+     *  there (the vault set up); the fresh state falls back to Search. */
+    private var screenBeforeGetStarted: Screen? = null
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
@@ -1046,7 +1049,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         // The onboarding checklist = the SAME as the
                         // load-existing flow: the SSH enroll, the remote, the
                         // screenlock enrollment (the at-rest seal).
-                        screen = Screen.GetStarted
+                        screenBeforeGetStarted = screen
+                    screen = Screen.GetStarted
                         status = "Local-only vault created — the onboarding checklist:" +
                             (if (decId != null) " the card's key = the first recipient." else "")
                     }
@@ -1690,7 +1694,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         }
                     },
                     onShowSshKey = { showSshKeyQr(Screen.GetStarted) },
-                    onDone = { screen = Screen.Search })
+                    onDone = { screen = screenBeforeGetStarted ?: Screen.Search })
                 Screen.Setup -> SetupTabScreen(
                     status = status,
                     busy = VaultSession.busy,
@@ -1814,7 +1818,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             status = VaultSession.openOkkImportFromRepo(this@MainActivity)
                         }
                     },
-                    onGetStarted = { screen = Screen.GetStarted },
+                    onGetStarted = {
+                        screenBeforeGetStarted = screen
+                        screen = Screen.GetStarted
+                    },
                     onUseYubikeySigner = {
                         if (VaultSession.yubikeyAuthSubkeyId() == null) {
                             status = "Enroll the YubiKey SSH key first (Setup → Choose key)."
