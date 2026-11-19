@@ -55,7 +55,6 @@ fun SetupTabScreen(
     onPairDevice: () -> Unit = {},
     pairedDevices: List<com.offlinepass.app.vault.DeviceRecord> = emptyList(),
     onShowDeviceQr: (com.offlinepass.app.vault.DeviceRecord) -> Unit = {},
-    onConnectRemote: (String, String) -> Unit = { _, _ -> },
     onShowSshKey: () -> Unit = {},
     onEnrollFromGithubKeys: () -> Unit = {},
     onRotateSshKey: () -> Unit = {},
@@ -111,17 +110,10 @@ fun SetupTabScreen(
         // cross-device sync) without touching the local history.
         // Auto-reopen the connect dialog when a draft exists (the SSH-key QR
         // detour returns here to finish the flow).
-        var showConnect by remember { mutableStateOf(VaultSession.connectDraftOwnerRepo() != null) }
-        var showYubikey by remember { mutableStateOf(false) }
         if (cfg?.remoteUrl == null) {
-            Text("Local-only: entries commit on this device only.",
+            Text("Local-only: entries commit on this device only. " +
+                "Attach a remote via Get started.",
                 style = MaterialTheme.typography.bodySmall)
-            Button(onClick = { showConnect = true }, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-                Text("Connect remote (sync online)")
-            }
-            Button(onClick = { showYubikey = true }, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-                Text("Sync via YubiKey SSH (OpenKeyChain)")
-            }
             Button(onClick = onGetStarted, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
                 Text("Get started (the setup checklist)")
             }
@@ -138,182 +130,6 @@ fun SetupTabScreen(
                 style = MaterialTheme.typography.bodySmall
             )
         }
-        if (showYubikey) {
-            var sshLine by remember(VaultSession.yubikeySshLineDraft) {
-                mutableStateOf(VaultSession.yubikeySshLineDraft
-                    ?: VaultSession.yubikeySshLine() ?: "")
-            }
-            var subkeyId by remember(VaultSession.pickedAuthSubkeyId) {
-                mutableStateOf(VaultSession.pickedAuthSubkeyId?.let { "%016X".format(it) }
-                    ?: VaultSession.yubikeyAuthSubkeyId()?.toString() ?: "")
-            }
-            AlertDialog(
-                onDismissRequest = { showYubikey = false },
-                title = { Text("YubiKey SSH auth") },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("1. Choose key in OpenKeyChain — its picker lists all " +
-                            "keys (hardware-backed badged). Pick the YubiKey and touch — " +
-                            "the subkey's key id fills in.",
-                            style = MaterialTheme.typography.bodySmall)
-                        Button(
-                            onClick = onPickAuthSubkey,
-                            enabled = busy == null,
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Choose key in OpenKeyChain") }
-                        OutlinedTextField(
-                            value = subkeyId, onValueChange = { subkeyId = it },
-                            label = { Text("Subkey key id (auto-filled by the picker)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Text("2. The subkey's OpenSSH line is fetched from " +
-                            "OpenKeyChain automatically. GitHub must have the SAME line " +
-                            "enrolled (deploy key with write access, or the account SSH key) " +
-                            "— if your desktop pushes used a different subkey, re-add.",
-                            style = MaterialTheme.typography.bodySmall)
-                    }
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = { showYubikey = false },
-                        enabled = sshLine.contains(" ") && subkeyId.trim().length == 16
-                    ) { Text("Use this key") }
-                },
-                dismissButton = { TextButton(onClick = { showYubikey = false }) { Text("Cancel") } }
-            )
-        }
-        if (showConnect) {
-            // Short form: owner/repo. The full remote URL is derived per the
-            // chosen auth scheme (git@github.com:owner/repo for the
-            // screenlock key, https://github.com/owner/repo for a PAT). The
-            // draft persists across the QR detour and reopens the dialog.
-            var ownerRepo by remember {
-                mutableStateOf(VaultSession.connectDraftOwnerRepo() ?: "")
-            }
-            var pat by remember { mutableStateOf("") }
-            var auth by remember {
-                mutableStateOf(VaultSession.connectDraftAuth() ?: "card")
-            }
-            val isSsh = auth == "ssh"
-            val built = if (isSsh) "git@github.com:$ownerRepo" else "https://github.com/$ownerRepo"
-            val ownerRepoValid = ownerRepo.contains("/") &&
-                !ownerRepo.startsWith("/") && !ownerRepo.endsWith("/")
-            AlertDialog(
-                onDismissRequest = { showConnect = false },
-                title = { Text("Connect remote") },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("The existing local history connects to the remote and merges.",
-                            style = MaterialTheme.typography.bodySmall)
-                        OutlinedTextField(
-                            value = ownerRepo, onValueChange = { ownerRepo = it },
-                            label = { Text("GitHub owner/repo (e.g. you/offlinepass)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(
-                                modifier = Modifier.weight(1f),
-                                selected = auth == "card",
-                                onClick = { auth = "card" },
-                                label = { Text("Security key SSH", maxLines = 1) }
-                            )
-                            FilterChip(
-                                modifier = Modifier.weight(1f),
-                                selected = isSsh,
-                                onClick = { auth = "ssh" },
-                                label = { Text("Screenlock SSH (deprecated)", maxLines = 1) }
-                            )
-                            FilterChip(
-                                modifier = Modifier.weight(1f),
-                                selected = auth == "pat",
-                                onClick = { auth = "pat" },
-                                label = { Text("PAT (deprecated)", maxLines = 1) }
-                            )
-                        }
-                        Text("Remote: $built", style = MaterialTheme.typography.bodySmall)
-                        if (auth == "card") {
-                            // THE SECURITY KEY = THE SSH AGENT: the line =
-                            // pulled from GitHub and matched to the card
-                            // (one touch — the SAME flow as the load-existing's
-                            // enrollment), so the remote is guaranteed to
-                            // accept the paired key. The connect = the sync's
-                            // auth = the card (the PIN + the touch).
-                            if (VaultSession.yubikeySshLine() == null) {
-                                Text("One touch: the card's SSH line is pulled " +
-                                    "from your GitHub keys and matched to the " +
-                                    "attached card — the remote will accept the " +
-                                    "paired key (the same enrollment as the " +
-                                    "load-existing flow).",
-                                    style = MaterialTheme.typography.bodySmall)
-                                Button(
-                                    onClick = {
-                                        VaultSession.saveConnectDraft(ownerRepo.trim(), "card")
-                                        onEnrollFromGithubKeys()
-                                    },
-                                    enabled = ownerRepoValid,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) { Text("Enroll from GitHub keys (one touch)") }
-                            } else {
-                                Text("✅ The auth = your card's SSH line " +
-                                    "(enrolled — published in the repo's " +
-                                    "authorized keys). Every sync = the PIN " +
-                                    "+ the touch.",
-                                    style = MaterialTheme.typography.bodySmall)
-                            }
-                        } else if (isSsh) {
-                            Text("1. Create & show the public key; scan it with the " +
-                                "offlinepass extension and Copy the key.",
-                                style = MaterialTheme.typography.bodySmall)
-                            Button(
-                                onClick = {
-                                    // Persist the draft: the QR detour closes
-                                    // this dialog — the draft reopens it.
-                                    VaultSession.saveConnectDraft(ownerRepo.trim(), auth)
-                                    onShowSshKey()
-                                },
-                                enabled = ownerRepoValid,
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text("Create & show public key") }
-                            Text("2. GitHub → the vault repo → Settings → Deploy keys → " +
-                                "Add deploy key → paste → ☑ Allow write access → Add.",
-                                style = MaterialTheme.typography.bodySmall)
-                            Text("3. Connect — every sync opens with your screen lock. " +
-                                "The private key never leaves this device.",
-                                style = MaterialTheme.typography.bodySmall)
-                        } else {
-                            OutlinedTextField(
-                                value = pat, onValueChange = { pat = it },
-                                label = { Text("Fine-grained PAT (Contents: read/write)") },
-                                singleLine = true,
-                                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Text("Deprecated: prefer the screenlock SSH key — it is stronger " +
-                                "(per-repo deploy key, screenlock-gated signatures) and there is no " +
-                                "token to leak. The PAT is still stored encrypted by the Connect " +
-                                "action itself.",
-                                style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            showConnect = false
-                            if (auth == "card") {
-                                VaultSession.setSshSyncMode(VaultSession.SSH_SYNC_YUBIKEY)
-                            }
-                            onConnectRemote(built.trim(), if (auth == "pat") pat.trim() else "")
-                        },
-                        enabled = ownerRepoValid && (auth != "pat" || pat.isNotBlank())
-                    ) { Text("Connect") }
-                },
-                dismissButton = { TextButton(onClick = { showConnect = false }) { Text("Cancel") } }
-            )
-        }
-
         // Sync state lives directly with its button.
         // The commit summaries = the LOCAL-ONLY too (the git history = on-device).
         val commits = VaultSession.recentCommits()

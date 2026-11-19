@@ -1717,33 +1717,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onExportQrft = { screen = Screen.ExportPick },
                     onImportQrft = { cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA) },
                     onPairDevice = { pairCameraLauncher.launch(android.Manifest.permission.CAMERA) },
-                    onConnectRemote = { remote, pat ->
-                        lifecycleScope.launch {
-                            status = when (val r = VaultSession.connectRemote(remote, pat)) {
-                                VaultSession.Result.Success -> {
-                                    VaultSession.clearConnectDraft()
-                                    "Remote connected — synced."
-                                }
-                                else -> r.toString()
-                            }
-                        }
-                    },
-                    onRotateSshKey = {
-                        lifecycleScope.launch {
-                            status = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                runCatching {
-                                    val m = com.offlinepass.app.crypto.SshKeyManager()
-                                    m.removeKeyPair(); m.ensureKeyPair()
-                                    "SSH key rotated — re-add the deploy key on GitHub with the new fingerprint."
-                                }.getOrElse { "Rotation failed: ${it.message}" }
-                            }
-                        }
-                    },
-                    onRemoveYubikeySsh = {
-                        VaultSession.clearYubikeySsh()
-                        status = "YubiKey SSH enrollment removed (screenlock mode active)."
-                    },
-                    onShowSshKey = { showSshKeyQr(Screen.Setup) },
                     onEnrollFromGithubKeys = { enrollFromGithubKeys() },
                     onEnrollYubikeySsh = { line, subkeyId -> enrollYubikeySsh(line, subkeyId) },
                     onSshSelfTest = {
