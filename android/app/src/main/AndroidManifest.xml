@@ -59,17 +59,19 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- THE TASK AFFINITY = EMPTY + THE TRANSLUCENT THEME: the auth
-             lives in the framework's own launch (the finish = back to the
-             form), the SAVE mode = the bottom flyup card over the form
-             (the reveal/generate = no content = nothing flashes). -->
+        <!-- THE TASK AFFINITY = EMPTY: the auth lives in the framework's
+             own launch (the finish = back to the form). The theme = the
+             APP's (opaque): the TRANSLUCENT experiment broke the
+             framework's post-auth fill (the measured no-re-invoke, the
+             empty placeholders applied) — the black flash = the accepted
+             trade until the fill's verified on the translucent config. -->
         <activity
             android:name=".autofill.AutofillAuthActivity"
             android:exported="false"
             android:taskAffinity=""
             android:noHistory="true"
             android:excludeFromRecents="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+            android:theme="@style/Theme.Offlinepass" />
         <service
             android:name=".autofill.OfflinepassAutofillService"
             android:exported="false"
