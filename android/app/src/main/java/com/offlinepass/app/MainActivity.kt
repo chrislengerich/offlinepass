@@ -379,6 +379,15 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
 
     private suspend fun restoreLoop(uri: android.net.Uri) {
+        // THE CARD = THE DECRYPT: the USB permission first (the FILE grant
+        // ≠ the CARD grant — the restore's decrypt = the card = the
+        // permission was the blocker the user hit on the saved-USB-vault
+        // load; the QRFT's file route = the same shared loop).
+        if (!ensureUsbPermission()) {
+            status = "No security key attached or permission denied — " +
+                "the vault decrypt needs the card."
+            return
+        }
         val staged = File(cacheDir, "restored.gpg")
         try {
             contentResolver.openInputStream(uri)?.use { ins ->

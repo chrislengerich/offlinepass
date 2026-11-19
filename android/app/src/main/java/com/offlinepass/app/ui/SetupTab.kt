@@ -130,6 +130,21 @@ fun SetupTabScreen(
                 style = MaterialTheme.typography.bodySmall
             )
         }
+        // The SSH-auth slot: the SIG (the default) vs the AUT (the
+        // dedicated authentication key — the transport experiment). The
+        // same pref the commit-signer's cardSign reads.
+        androidx.compose.material3.ListItem(
+            headlineContent = { Text("SSH auth subkey: use the AUT key") },
+            supportingContent = { Text("Off = the SIG signing subkey answers " +
+                "the SSH handshake (the card pads the digest). On = the AUT " +
+                "authentication subkey (the raw-RSA challenge, the caller " +
+                "pads — the 512-byte transport experiment).") },
+            trailingContent = {
+                androidx.compose.material3.Switch(
+                    checked = VaultSession.sshAuthUseAut(),
+                    onCheckedChange = { VaultSession.setSshAuthUseAut(it) })
+            })
+
         // Sync state lives directly with its button.
         // The commit summaries = the LOCAL-ONLY too (the git history = on-device).
         val commits = VaultSession.recentCommits()
@@ -339,11 +354,14 @@ fun SetupTabScreen(
         HorizontalDivider()
 
         Text("QRFT transfer (phone ↔ phone, via camera)", style = MaterialTheme.typography.titleSmall)
+        // The USB export = the WHOLE REPO (the git-state clone: the vault +
+        // the keys + the signed history) — the backup/restore. The QRFT =
+        // the picked entries only (the transfer format).
         Button(onClick = onExportBackupZip, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Export backup (zip — the vault + the keys + the history)")
+            Text("Export whole repo (USB)")
         }
         Button(onClick = onExportQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
-            Text("Export as QRFT (pick entries)")
+            Text("Export entries as QRFT")
         }
         Button(onClick = onImportQrft, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Import from QRFT (scan)")
