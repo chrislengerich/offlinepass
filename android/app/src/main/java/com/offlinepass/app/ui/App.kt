@@ -135,7 +135,7 @@ fun SetupChoiceScreen(
             ) { Text("From Proton export") }
         } else {
             // 1. Load sources first.
-            Text("Load vault from", style = MaterialTheme.typography.titleSmall)
+            Text("Load vault backup from", style = MaterialTheme.typography.titleSmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { onLoadGitHub(remote.trim(), emptyList(), "") },
