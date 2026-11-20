@@ -1579,8 +1579,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         lifecycleScope.launch {
                             when (val r = VaultSession.saveSealed(edited)) {
                                 VaultSession.Result.Success -> {
-                                    sealedReveal = null
-                                    screen = Screen.Search
+                                    // STAY ON THE DETAIL: the save keeps the
+                                    // revealed copy (the dirty flag clears) —
+                                    // the same behavior the full-session
+                                    // detail save has. Back dismisses.
+                                    sealedReveal = edited
                                     saveToast("Saved")
                                     status = "Saved (rev ${VaultSession.currentRev()})."
                                 }
@@ -1599,8 +1602,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             when (val r = VaultSession.saveSealed(
                                 base.copy(totpUri = secret, modifyTime = nowSeconds()))) {
                                 VaultSession.Result.Success -> {
-                                    sealedReveal = null
-                                    screen = Screen.Search
+                                    sealedReveal = base
                                     saveToast("TOTP enrolled")
                                     status = "TOTP enrolled (rev ${VaultSession.currentRev()})."
                                 }
