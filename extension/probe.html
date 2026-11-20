@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Card probe</title>
+<style>body{font-family:monospace;max-width:60em;margin:2em}pre{background:#f4f4f4;padding:1em;white-space:pre-wrap}</style>
+</head>
+<body>
+<h1>Card-over-WebUSB probe</h1>
+<p>The phase-1 prototype: the OpenPGP applet over the CCID — the reads,
+the PIN verify, and the PSO:DEC on a test envelope.</p>
+<button id="connect">Connect the card</button>
+<button id="decrypt" disabled>PSO:DEC on the test envelope</button>
+<pre id="log"></pre>
+<script type="module" src="probe.js"></script>
+</body>
+</html>

@@ -9,8 +9,13 @@
   "background": {
     "service_worker": "bg.js"
   },
-  "permissions": ["storage", "scripting", "activeTab"],
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'none'"
-  }
+  },
+  "web_accessible_resources": []
 }
