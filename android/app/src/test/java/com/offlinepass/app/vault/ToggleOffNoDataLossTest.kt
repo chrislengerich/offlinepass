@@ -187,6 +187,45 @@ class ToggleOffNoDataLossTest {
     }
 
     @Test
+    fun sealedPromoteNeverTouchesTheCardDecrypt() {
+        // THE TRIPWIRE: the sealed fast unlock (the idle-locked re-unlock)
+        // must work from the cache alone — the decrypt seam is pinned
+        // dead; if the promote EVER reaches for the card, this fails.
+        SealedVault.cryptoHook = fakeCrypto()
+        seedCache(
+            ProtonItem(name = "A", username = "ua", password = "pa", itemUuid = "u-a"))
+        VaultSession.vaultDecryptBytes = { error("no card under test") }
+
+        val r = kotlinx.coroutines.runBlocking { VaultSession.promoteSealedSession() }
+
+        assertTrue("the promote works from the cache alone ($r)",
+            r is VaultSession.Result.Success)
+        val stubs = (VaultSession.state as VaultSession.State.Unlocked).items
+        assertTrue("the promoted session is stubbed", stubs.first().password.isEmpty())
+    }
+
+    @Test
+    fun toggleOnGatesImmediately_noAppRestartNeeded() {
+        SealedVault.cryptoHook = fakeCrypto()
+        seedCache(
+            ProtonItem(name = "A", username = "ua", password = "pa", itemUuid = "u-a"))
+        // The toggle-off leaves the FULL session (the secrets in memory,
+        // the cache wiped) — then the toggle-ON must re-stub NOW.
+        kotlinx.coroutines.runBlocking { VaultSession.setScreenlockUnlockEnabled(false) }
+        VaultSession.fullSessionForTest(listOf(
+            ProtonItem(name = "A", username = "ua", password = "pa", itemUuid = "u-a")))
+
+        val msg = kotlinx.coroutines.runBlocking {
+            VaultSession.setScreenlockUnlockEnabled(true)
+        }
+
+        assertTrue(msg.contains("re-stubbed now"))
+        val stubs = (VaultSession.state as VaultSession.State.Unlocked).items
+        assertTrue("the secrets left the memory", stubs.first().password.isEmpty())
+        assertTrue("the cache holds them again", SealedVault.hasCache())
+    }
+
+    @Test
     fun toggleOffWhileLockedWipesSafely() {
         // No session (Locked): the cache is a mirror of the last save —
         // the repo envelope holds the same data — the wipe is safe.

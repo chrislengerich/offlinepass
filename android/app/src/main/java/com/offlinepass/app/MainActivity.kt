@@ -226,6 +226,17 @@ class MainActivity : androidx.activity.ComponentActivity() {
             status = "Screen lock failed — unlock aborted."
             return
         }
+        // THE SEALED FAST PATH: a sealed cache + the toggle on = the
+        // SCREENLOCK suffices — no card, no USB permission. The idle-locked
+        // re-unlock (the cache intact + fresh) never touches the key; the
+        // card is only for the genuinely-needed decrypts (no cache, a
+        // sync pulled a newer vault, a key mismatch).
+        if (VaultSession.screenlockUnlockEnabled() && SealedVault.hasCache()) {
+            when (VaultSession.promoteSealedSession()) {
+                is VaultSession.Result.Success -> { finishUnlock(); return }
+                else -> { /* fall through to the card decrypt below */ }
+            }
+        }
         // THE CARD = THE DECRYPT: the USB permission = per-plug — after the
         // app restart it is RESET, and the unlock's card decrypt needs it.
         // The system dialog pops here (the first time after each replug).
@@ -237,34 +248,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         var guard = 0
         while (guard++ < 2) {
             when (val r = VaultSession.unlock()) {
-                VaultSession.Result.Success -> {
-                    android.widget.Toast.makeText(this, "Vault unlocked", android.widget.Toast.LENGTH_SHORT).show()
-                    if (screen == Screen.SetupChoice) screen = Screen.Search
-                    // A sealed-detail edit that waited for the key unlock.
-                    pendingSealedEdit?.let { edited ->
-                        pendingSealedEdit = null
-                        edited.modifyTime = nowSeconds()
-                        val items = unlockedItems().map {
-                            if (it.itemUuid == edited.itemUuid) edited else it
-                        }
-                        when (saveLoop(items)) {
-                            VaultSession.Result.Success -> {
-                                saveToast("Saved (after key unlock)")
-                                status = "Saved (rev ${VaultSession.currentRev()})."
-                                screen = Screen.Detail(edited.itemUuid)
-                            }
-                            else -> status = "Save failed after the key unlock — edit again in the list."
-                        }
-                    }
-                    sealedReveal = null
-                    entryGateDone = true
-                    rescheduleAutoLock()
-                    afterUnlock?.let { action ->
-                        afterUnlock = null
-                        action()
-                    }
-                    return
-                }
+                VaultSession.Result.Success -> { finishUnlock(); return }
                 is VaultSession.Result.Interaction -> { launchInteraction(r.pendingIntent); awaitInteraction() }
                 is VaultSession.Result.Error -> {
                     if (!File(VaultSession.vaultFilePath()).exists()) {
@@ -283,6 +267,37 @@ class MainActivity : androidx.activity.ComponentActivity() {
             }
         }
         status = "Unlock aborted after interaction retry."
+    }
+
+    /** The post-unlock tail (shared by the sealed fast path and the card
+     *  decrypt): the pending sealed edit's save, the entry gate's arm, the
+     *  auto-lock reschedule, the afterUnlock action. */
+    private suspend fun finishUnlock() {
+        android.widget.Toast.makeText(this, "Vault unlocked", android.widget.Toast.LENGTH_SHORT).show()
+        if (screen == Screen.SetupChoice) screen = Screen.Search
+        // A sealed-detail edit that waited for the key unlock.
+        pendingSealedEdit?.let { edited ->
+            pendingSealedEdit = null
+            edited.modifyTime = nowSeconds()
+            val items = unlockedItems().map {
+                if (it.itemUuid == edited.itemUuid) edited else it
+            }
+            when (saveLoop(items)) {
+                VaultSession.Result.Success -> {
+                    saveToast("Saved (after key unlock)")
+                    status = "Saved (rev ${VaultSession.currentRev()})."
+                    screen = Screen.Detail(edited.itemUuid)
+                }
+                else -> status = "Save failed after the key unlock — edit again in the list."
+            }
+        }
+        sealedReveal = null
+        entryGateDone = true
+        rescheduleAutoLock()
+        afterUnlock?.let { action ->
+            afterUnlock = null
+            action()
+        }
     }
 
     private suspend fun saveLoop(

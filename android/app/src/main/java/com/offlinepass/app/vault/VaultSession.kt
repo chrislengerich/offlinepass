@@ -1356,6 +1356,17 @@ object VaultSession {
         registerConnectivityWatch()
     }
 
+    /** Test-only: put the session in the FULL state (the toggle-off's
+     *  shape: the secrets in memory, the toggle on, no stubbing). */
+    internal fun fullSessionForTest(items: List<ProtonItem>) {
+        val env = Envelope(rev = 5, deviceId = "d1")
+        env.items = items.toMutableList()
+        loadedEnvelope = env
+        rev = env.rev
+        state = State.Unlocked(items.toMutableList())
+        stubSession = false
+    }
+
     /** Test-only: put the session in the stub state (the unlock's shape:
      *  stubs in memory, the secrets only in the sealed cache). */
     internal fun stubSessionForTest() {
@@ -2095,6 +2106,18 @@ object VaultSession {
     suspend fun setScreenlockUnlockEnabled(on: Boolean): String {
         if (on) {
             prefs().edit().putBoolean("screenlockUnlock", true).apply()
+            // THE LIVE GATE: a running FULL session re-stubs NOW — the
+            // secrets move into the sealed cache (the awaited seal, the
+            // save tail's race-safe pattern) and the clicks gate from this
+            // moment, not after the next app restart.
+            val env = loadedEnvelope
+            if (state is State.Unlocked && !stubSession && env != null) {
+                SealedVault.sealNowAwait(env.items, env, File(vaultFilePath()))
+                state = State.Unlocked(env.items.map { it.asStub() })
+                stubSession = true
+                return "Item encryption while in use ON — the session re-stubbed now; " +
+                    "clicks reveal with a screen-lock prompt."
+            }
             return "Item encryption while in use ON — search works on the sealed list; " +
                 "clicks reveal with a screen-lock prompt."
         }
