@@ -43,10 +43,10 @@ algorithm); the card-side decrypt/sign needs per-algorithm support:
 |---|---|---|---|
 | RSA-3072/4096 (DEC, SIG) | ✓ | ✓ | supported (the PSO:DEC RSA path) |
 | ECDSA NIST P-256 (SIG/AUT) | ✓ | n/a | supported (the commit signing, the SSH auth via OpenKeyChain/YubiKit) |
-| ECDH NIST P-256 (DEC) | — | ✓ (this release) | the card PSO:DEC with the ephemeral point; the card performs the RFC 6637 KDF + the AES-key-unwrap |
+| ECDH NIST P-256 (DEC) | — | ✓ | the card PSO:DEC with the ephemeral point; the card performs the RFC 6637 KDF + the AES-key-unwrap |
+| ECDH NIST P-384/P-521 (DEC) | — | ✓ | the same flow; the point length follows the card's reported key |
+| ECDH Curve25519 (DEC) | — | ✓ | the same flow (the v6-era packets; the card applet 5.7+ / the OpenPGP 3.4 cards) |
 | Ed25519 (SIG/AUT) | planned | n/a | the card + YubiKit support it; the sign path = the same PSO:DEC shape (the 32-byte challenges) |
-| Curve25519 (ECDH, DEC) | — | planned | the OpenPGP card 3.4 + YubiKit 3.3 support it; the same ECDH PSO:DEC flow with the X25519 point encoding |
-| NIST P-384/P-521 (ECDSA/ECDH) | planned | planned | the card + YubiKit support them; the same code paths with the longer coordinates |
 | RSA-2048 (any slot) | supported | supported | the same paths as RSA-4096 (the shorter moduli) |
 | secp256k1 | not planned | not planned | the niche OpenPGP use |
 

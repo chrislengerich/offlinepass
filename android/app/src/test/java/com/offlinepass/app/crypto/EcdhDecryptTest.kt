@@ -31,9 +31,13 @@ import java.util.Date
  */
 class EcdhDecryptTest {
 
-    private fun ecdhRecipient(): Pair<PGPPublicKey, PGPPrivateKey> {
+    /** The ECDH recipient on the requested curve — the app's flow is
+     *  curve-agnostic (the point length comes from the card's reported
+     *  key; the KDF + the AES-key-unwrap happen on-card; the session
+     *  key's algorithm byte rides the PKESK's M). */
+    private fun ecdhRecipient(curve: String = "secp256r1"): Pair<PGPPublicKey, PGPPrivateKey> {
         val kpg = KeyPairGenerator.getInstance("EC")
-        kpg.initialize(ECGenParameterSpec("secp256r1"), SecureRandom())
+        kpg.initialize(ECGenParameterSpec(curve), SecureRandom())
         val kp = kpg.generateKeyPair()
         val converter = JcaPGPKeyConverter()
         val pub = converter.getPGPPublicKey(
@@ -85,8 +89,22 @@ class EcdhDecryptTest {
 
     @Test
     fun `encrypt to an ECDH recipient and decrypt via the fake card`() {
-        val (pub, priv) = ecdhRecipient()
-        val plain = "the EC round-trip plaintext".toByteArray()
+        ecdhRoundTrip("secp256r1")
+    }
+
+    @Test
+    fun `ecdh round-trip on P-384`() {
+        ecdhRoundTrip("secp384r1")
+    }
+
+    @Test
+    fun `ecdh round-trip on P-521`() {
+        ecdhRoundTrip("secp521r1")
+    }
+
+    private fun ecdhRoundTrip(curve: String) {
+        val (pub, priv) = ecdhRecipient(curve)
+        val plain = "the EC round-trip plaintext ($curve)".toByteArray()
         val msg = encrypt(listOf(pub), plain)
 
         // The PKESK dispatch: the message's recipient key ids include the
@@ -125,6 +143,27 @@ class EcdhDecryptTest {
         val recovered = kotlinx.coroutines.runBlocking {
             OpenPgpCardCrypto.decrypt(
                 msg, longArrayOf(ecPub.keyID), fakeCardEcdh(ecPriv))
+        }
+        assertArrayEquals(plain, recovered)
+    }
+
+    @Test
+    fun `ecdh round-trip on curve25519 - probes the BC and JVM support`() {
+        // The OpenPGP X25519 = the v6-era packets (bcpg 1.79 has partial
+        // support). If this passes, the app's decrypt path handles it;
+        // if the JVM/BC refuses, the roadmap's "planned" stands.
+        val kpg = KeyPairGenerator.getInstance("X25519")
+        kpg.initialize(255)
+        val kp = kpg.generateKeyPair()
+        val converter = JcaPGPKeyConverter()
+        val pub = converter.getPGPPublicKey(
+            PublicKeyAlgorithmTags.ECDH, kp.public, Date())
+        val priv = converter.getPGPPrivateKey(pub, kp.private)
+        val plain = "the x25519 plaintext".toByteArray()
+        val msg = encrypt(listOf(pub), plain)
+        val recovered = kotlinx.coroutines.runBlocking {
+            OpenPgpCardCrypto.decrypt(
+                msg, longArrayOf(pub.keyID), fakeCardEcdh(priv))
         }
         assertArrayEquals(plain, recovered)
     }
