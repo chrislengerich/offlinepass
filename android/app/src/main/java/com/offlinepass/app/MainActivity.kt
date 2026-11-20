@@ -225,6 +225,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
         com.offlinepass.app.crypto.ScreenlockGate.promptGate(this, title, subtitle, strongOrCredential)
 
     private suspend fun unlockLoop() {
+        android.util.Log.i("UnlockTiming", "unlockLoop START")
         // THE AUTO-LOCK TIMER OFF DURING THE GATE: the user's idle time
         // before the prompt consumes the idle budget, and the timer fires
         // DURING the auth — lockNow re-locks the state the unlock is
@@ -233,19 +234,25 @@ class MainActivity : androidx.activity.ComponentActivity() {
         autoLockJob?.cancel()
         autoLockJob = null
         if (!biometricGate()) {
+            android.util.Log.i("UnlockTiming", "gate FAILED")
             status = "Screen lock failed — unlock aborted."
             rescheduleAutoLock()
             return
         }
+        android.util.Log.i("UnlockTiming", "gate OK")
         // THE SEALED FAST PATH: a sealed cache + the toggle on = the
         // SCREENLOCK suffices — no card, no USB permission. The idle-locked
         // re-unlock (the cache intact + fresh) never touches the key; the
         // card is only for the genuinely-needed decrypts (no cache, a
         // sync pulled a newer vault, a key mismatch).
         if (VaultSession.screenlockUnlockEnabled() && SealedVault.hasCache()) {
+            android.util.Log.i("UnlockTiming", "sealed fast path: promoting…")
             when (VaultSession.promoteSealedSession()) {
-                is VaultSession.Result.Success -> { finishUnlock(); return }
-                else -> { /* fall through to the card decrypt below */ }
+                is VaultSession.Result.Success -> {
+                    android.util.Log.i("UnlockTiming", "promote OK")
+                    finishUnlock(); return
+                }
+                else -> { Log.i("UnlockTiming", "promote failed — the card path"); }
             }
         }
         // THE CARD = THE DECRYPT: the USB permission = per-plug — after the
@@ -284,6 +291,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
      *  decrypt): the pending sealed edit's save, the entry gate's arm, the
      *  auto-lock reschedule, the afterUnlock action. */
     private suspend fun finishUnlock() {
+        android.util.Log.i("UnlockTiming", "finishUnlock START")
         android.widget.Toast.makeText(this, "Vault unlocked", android.widget.Toast.LENGTH_SHORT).show()
         if (screen == Screen.SetupChoice) screen = Screen.Search
         // A sealed-detail edit that waited for the key unlock.
