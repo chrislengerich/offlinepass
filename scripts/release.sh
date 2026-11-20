@@ -90,34 +90,34 @@ cmd_build() {
 ## offlinepass v$VERSION
 
 ### Android (com.offlinepass.app)
-- **Autofill (new)** — offlinepass is now an Android autofill service:
-  entry suggestions from the device-local sealed manifest (fully
-  searchable while the app is locked; never synced), one-tap fill behind
-  the screen-lock prompt
-- **Autofill generate & save** — the ⚡ chip generates a strong password
-  and fills it into the form after one screen-lock prompt; saving a
-  login goes through the platform's save dialog (or the silent tray
-  trigger for username-less generated logins) → one screenlock → the
-  entry is **upserted by site + username**: the same site and username =
-  the password update (the entry's notes/other fields preserved), a new
-  username at the same site = a new entry; the entry's URL is
-  pre-populated from the site origin
-- **EC (ECC) YubiKey auth keys** — generate an EC P-256 auth key on the
-  card from Setup (the RSA-4096-over-USB path is a hardware dead end);
-  the enrolled slot is shown in Setup and used for the GitHub
-  enrollment's SSH discovery
-- Save-pipeline hardening: sealed-save clobber fixes (the stub base vs
-  the full envelope), modifyTime-based conflict resolution, per-item
-  tombstones surviving the sealed-session promotion
-- Sync-auth options: screenlock SSH key (default, deploy-key least
-  privilege), YubiKey OpenPGP SSH, HTTPS+PAT (deprecated)
-- Screenlock commit signing (keystore-gated, public key published to
-  keys/ for verification)
-- QRFT phone↔phone transfer (multi-entry export + camera import with
-  dedupe), encrypted pastes to the paired Chrome extension
-- Signing: android/sign.sh — hardware-key PKCS11 via apksigner (same
-  security key as offlinecam); the release APK is the device-install
-  artifact
+- **Security keys are named entities** — each physical key gets a name
+  (per-key, identified by its OpenPGP card serial; renamed from Setup),
+  tracked in the repo's device registry and synced; device renames too
+- **The Proton handoff** — export the vault as plaintext Proton Pass
+  JSON (the native shape; importable by Proton and offlinepass), and
+  import a Proton export OpenKeyChain-free: the recipients are picked
+  in the Import tab (the card's key), the first commit is unsigned
+  until a signer is configured
+- **The import landings** — the repo-backup imports (USB/QRFT zip) and
+  the Proton import land on the Getting-Started checklist; a repo zip
+  pre-fills the GitHub remote from its own origin and seeds the
+  recipients; the vault-file imports (QRFT/USB .gpg) are data-only and
+  never touch the recipient set
+- **The layered save invariant** — the repo (signed commits,
+  re-encrypted to the current recipients) is the only durable truth;
+  the sealed cache is derived: saves re-seal only the affected item's
+  blob, and a cache wipe is always recoverable by a repo decrypt
+- **Idle lock decoupled from the entry gate** — "Enable idle lock?" is
+  its own toggle; the entry gate ("Require screenlock at unlock") is
+  optional independently
+- **The item-encryption toggle-off is loss-free** — it promotes (or
+  falls back to a fresh repo decrypt) before wiping the sealed cache,
+  and the toggle-ON pulls the decrypt forward so the next unlock stays
+  screenlock-only
+- The sync line shows the repo state: ahead/behind origin/main counts
+- The setup reorganization: Share vault / Backups / Devices / Vault
+  encryption keys / Commit signer; the delete warns; the biometric
+  prompts name the change being authenticated
 
 ### Artifacts
 - \`offlinepass-vX.Y.Z-release.apk\` — minified release build, signed with
