@@ -124,9 +124,6 @@ fun SetupChoiceScreen(
         } else if (mode == "import") {
             // Import = a FOREIGN format (a Proton export); the vault material
             // from this app's own format travels via Load existing.
-            Text("Import a Proton export — pick the recipients (who can open " +
-                "the imported entries) first, then the export file.",
-                style = MaterialTheme.typography.bodySmall)
             RecipientsEditor(recipientIds, onAddCardRecipient, null, onRemoveRecipient)
             Button(
                 onClick = { importPicker.launch(arrayOf("*/*")) },
