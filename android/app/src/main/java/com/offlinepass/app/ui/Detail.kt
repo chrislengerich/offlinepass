@@ -187,9 +187,7 @@ fun EntryDetailScreen(
             AlertDialog(
                 onDismissRequest = { showDeleteConfirm = false },
                 title = { Text("Delete \"${item.displayName}\"?") },
-                text = { Text("The entry is tombstoned and removed on the next save " +
-                    "(the deletion syncs to every device). This can be undone only " +
-                    "before the save.") },
+                text = { Text("This cannot be undone after the save.") },
                 confirmButton = {
                     TextButton(onClick = { showDeleteConfirm = false; onDelete() }) {
                         Text("Delete") }
