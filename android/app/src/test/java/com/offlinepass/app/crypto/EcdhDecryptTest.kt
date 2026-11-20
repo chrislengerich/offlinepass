@@ -190,14 +190,17 @@ class EcdhDecryptTest {
         // 2. Recover the session data via the fake card once (the v3 path)
         //    — the bytes that the v6 PKESK will carry.
         val factory = BcPublicKeyDataDecryptorFactory(priv)
-        val pkesks = parseFirstPkesk(v3msg)
+        val parsed = parseFirstPkesk(v3msg)
+        // The v3-recover takes the STRIPPED value (the app's mpiValue
+        // hands the card exactly that) — proves the parse against the
+        // BC's own math.
         val sessionData = factory.recoverSessionData(
-            PublicKeyAlgorithmTags.ECDH, arrayOf(pkesks.second), 3)
+            PublicKeyAlgorithmTags.ECDH, arrayOf(parsed.mpiValue), parsed.version)
 
         // 3. The v6 PKESK via BC's public constructor (the salted-fp form).
         val v6Pkesk = org.bouncycastle.bcpg.PublicKeyEncSessionPacket
             .createV6PKESKPacket(6, ByteArray(20), PublicKeyAlgorithmTags.ECDH,
-                arrayOf(pkesks.second))
+                arrayOf(parsed.mpiField))
         val v6Bytes = kotlinx.coroutines.runBlocking {
             val sink = java.io.ByteArrayOutputStream()
             v6Pkesk.encode(org.bouncycastle.bcpg.BCPGOutputStream(sink))
@@ -205,7 +208,7 @@ class EcdhDecryptTest {
         }
 
         // 4. The re-assembled message: the v6 PKESK + the SEIPD body.
-        val seipdStart = pkesks.first
+        val seipdStart = parsed.seipdOffset
         val seipdBody = v3msg.copyOfRange(seipdStart, v3msg.size)
         val msg = ByteArray(v6Bytes.size + seipdBody.size).also {
             v6Bytes.copyInto(it, 0); seipdBody.copyInto(it, v6Bytes.size)
@@ -237,11 +240,17 @@ class EcdhDecryptTest {
 
     /** The first PKESK's (packet-body offset, MPI value) in an OpenPGP
      *  message: the packet-body walk to locate the SEIPD that follows. */
-    private fun parseFirstPkesk(msg: ByteArray): Pair<Int, ByteArray> {
-        println("V6DBG: msg=${msg.size} head=${msg.take(12).joinToString(" ") { "%02x".format(it) }}")
+    data class PkeskParse(val version: Int, val mpiValue: ByteArray,
+                          val mpiField: ByteArray, val seipdOffset: Int)
+
+    /** The first PKESK's parse: the packet version, the MPI's stripped
+     *  value, the MPI's full encoded field, and the SEIPD's start. The
+     *  v3 PKESK's body = the version(1) + the keyid(8) + the
+     *  algorithm(1) + the MPI field (the 2-byte bit-length prefix +
+     *  the value). */
+    private fun parseFirstPkesk(msg: ByteArray): PkeskParse {
         val pkeskStart = msg.indexOfFirst { it == 0xC1.toByte() }
         assertTrue("the v3 PKESK packet found", pkeskStart >= 0)
-        // The new-format length: the 0xC1's length byte(s).
         var off = pkeskStart + 1
         var len = msg[off].toInt() and 0xFF
         off += 1
@@ -251,17 +260,15 @@ class EcdhDecryptTest {
                 (msg[off + 1].toInt() and 0xFF)) + 192
             off += 2
         }
-        // The body: the version(1) + the keyid(8) + the MPI(2+len).
         val body = msg.copyOfRange(off, off + len)
-        println("V6DBG: pkeskStart=$pkeskStart len=$len off=$off body=${body.take(12).joinToString(" ") { "%02x".format(it) }}")
-        // The v3 PKESK's body: the version(1) + the keyid(8) + the
-        // ALGORITHM(1 — 0x12 = ECDH) + the MPI (the 2-byte bit-len prefix
-        // + the value).
+        // The body: the version(1) + the keyid(8) + the ALGORITHM(1) +
+        // the MPI field (the 2-byte bit-length prefix + the value).
+        val version = body[0].toInt() and 0xFF
         val mpiLen = ((body[10].toInt() and 0xFF) shl 8) or (body[11].toInt() and 0xFF)
         val mpiBits = (mpiLen + 7) / 8
         val mpi = body.copyOfRange(12, 12 + mpiBits)
-        // The SEIPD starts right after the PKESK packet.
-        return (off + len) to mpi
+        val mpiField = body.copyOfRange(10, 12 + mpiBits)
+        return PkeskParse(version, mpi, mpiField, off + len)
     }
 
     @Test
