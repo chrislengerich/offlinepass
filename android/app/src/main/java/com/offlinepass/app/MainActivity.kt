@@ -2559,7 +2559,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
             android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show()
             return
         }
-        screen = Screen.Search
+        screen = if (VaultSession.config() == null) Screen.GetStarted else Screen.Search
         status = when (val r = saveLoop(unlockedItems() + fresh)) {
             VaultSession.Result.Success -> {
                 saveToast("Imported ${fresh.size} new entr${if (fresh.size == 1) "y" else "ies"}" +
