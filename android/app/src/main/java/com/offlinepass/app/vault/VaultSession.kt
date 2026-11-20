@@ -989,37 +989,12 @@ object VaultSession {
         // activates at the next unlock (never silently deferred without
         // saying so).
         setCommitSigningMode(SIGNING_SCREENLOCK)
-        setScreenlockUnlockEnabled(true)
-        val items = (state as? State.Unlocked)?.items
-        val env = loadedEnvelope
-        if (items != null && env != null) {
-            val gated = if (activity != null)
-                com.offlinepass.app.crypto.ScreenlockGate.promptGate(
-                    activity,
-                    "Seal the vault",
-                    "The device lock encrypts the item secrets at rest")
-            else true
-            if (gated) {
-                sealIfEnabled(items, env)
-                // THE STUB MODEL: the enrollment happened while the load
-                // session was full (the screenlock was OFF at the unlock —
-                // the stub conversion never ran) — convert NOW: the secrets
-                // = in the sealed cache (just written) + the vault file.
-                env.items = items.map { it.asStub() }.toMutableList()
-                state = State.Unlocked(env.items)
-                stubSession = true
-                return "Screenlock protection enrolled (security-key-signed " +
-                    "locally): commits now sign with the screenlock key, and " +
-                    "the item secrets are sealed at rest — effective immediately."
-            }
-            return "Screenlock protection enrolled (security-key-signed " +
-                "locally): commits now sign with the screenlock key. The " +
-                "screen-lock prompt was declined — the item secrets seal at " +
-                "your next unlock."
-        }
-        return "Screenlock protection enrolled (security-key-signed " +
-            "locally): commits now sign with the screenlock key. The item " +
-            "secrets seal at your next unlock (the key + the touch)."
+        // THE SEAL ACTIVATES VIA THE SETTER: its live gate prompts (one
+        // screen-lock press), seals, and re-stubs the full session; on a
+        // locked session it activates at the next unlock. The setter's
+        // message carries the outcome — surface it.
+        return "Screenlock protection enrolled (security-key-signed locally): " +
+            "commits now sign with the screenlock key. " + setScreenlockUnlockEnabled(true)
     }
 
     /** Post-load signing-role resolution: the screenlock stays the local
@@ -1486,6 +1461,12 @@ object VaultSession {
 
     fun clearSigningKey() {
         prefs().edit().remove("signingKeyId").remove("signingKeyUserId").apply()
+    }
+
+    /** Test-only: configure the OK signing key (the pick-once flow is
+     *  gone — the Setup's explicit pick or this seam sets it). */
+    internal fun signingKeyForTest(keyId: Long) {
+        prefs().edit().putString("signingKeyId", keyId.toString()).apply()
     }
 
     /**
@@ -2115,7 +2096,23 @@ object VaultSession {
             // moment, not after the next app restart.
             val env = loadedEnvelope
             if (state is State.Unlocked && !stubSession && env != null) {
-                SealedVault.sealNowAwait(env.items, env, File(vaultFilePath()))
+                // THE SEAL NEEDS THE AUTH WINDOW (the keystore key is
+                // screenlock-gated): prompt via the seal gate — the crash
+                // (the unprompted seal) is the UserNotAuthenticated trap.
+                val gated = sealGate?.invoke(
+                    "Encrypt items in memory",
+                    "The device lock encrypts the item secrets at rest") ?: true
+                if (!gated)
+                    return "Encrypt items in memory ON — but the screen lock was " +
+                        "declined: the seal happens on the next save/unlock."
+                val sealResult = runCatching {
+                    SealedVault.sealNowAwait(env.items, env, File(vaultFilePath()))
+                }
+                if (sealResult.isFailure) {
+                    return "Encrypt items in memory ON — but the seal failed " +
+                        "(${sealResult.exceptionOrNull()?.message?.take(60)}): the " +
+                        "seal happens on the next save/unlock."
+                }
                 state = State.Unlocked(env.items.map { it.asStub() })
                 stubSession = true
                 return "Encrypt items in memory ON — the session re-stubbed now; " +

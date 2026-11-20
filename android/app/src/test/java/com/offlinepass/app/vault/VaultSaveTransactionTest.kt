@@ -722,6 +722,7 @@ class VaultSaveTransactionTest {
     fun signPreflightFailureRollsBackFileAndState() = runBlocking {
         val head = seedRepo("PREVIOUS".toByteArray())
         fake.signResult = OpenPgpClient.SignDetached.Error("sign key locked")
+        VaultSession.signingKeyForTest(FakeOpenPgp.KEY_ID)
 
         val r = VaultSession.save(listOf(item("New")))
 
@@ -763,7 +764,11 @@ class VaultSaveTransactionTest {
 
     @Test
     fun firstEverSaveFailureLeavesNoVaultFile() = runBlocking {
+        // The signing FAILURE contract: the signer CONFIGURED (the Setup's
+        // pick — the save's auto-pick is gone), the fake fails the sign →
+        // the rollback → no vault file survives.
         fake.signResult = OpenPgpClient.SignDetached.Error("sign key locked")
+        VaultSession.signingKeyForTest(FakeOpenPgp.KEY_ID)
 
         val r = VaultSession.save(listOf(item("New")))
 
@@ -771,6 +776,22 @@ class VaultSaveTransactionTest {
         assertFalse("no vault file may survive a failed first save", vaultFile().exists())
         assertNull("repo has no commits", headId())
         assertFalse(VaultSession.state is VaultSession.State.Unlocked)
+    }
+
+    @Test
+    fun firstSaveWithoutSignerCommitsUnsigned() = runBlocking {
+        // THE FRESH-IMPORT PATH: no signing key configured, the OKK mode —
+        // the commit is UNSIGNED and the save SUCCEEDS (no OpenKeyChain
+        // picker ever opens).
+        fake.signResult = OpenPgpClient.SignDetached.Error("sign key locked")
+        VaultSession.clearSigningKey()
+
+        val r = VaultSession.save(listOf(item("New").apply { password = "p" }))
+
+        assertTrue("the unsigned first save succeeds ($r)",
+            r is VaultSession.Result.Success)
+        assertTrue("the vault file written", vaultFile().exists())
+        assertNotNull("the commit landed", headId())
     }
 
     // -- post-commit durability ----------------------------------------------

@@ -226,6 +226,52 @@ class ToggleOffNoDataLossTest {
     }
 
     @Test
+    fun toggleOnWithDeclinedGateDoesNotCrash() {
+        // THE ENROLLMENT CRASH: the live gate's seal ran WITHOUT the auth
+        // window (UserNotAuthenticatedException — the uncaught crash). The
+        // gate must prompt first; a decline = an honest message, no seal,
+        // no crash.
+        SealedVault.cryptoHook = fakeCrypto()
+        seedCache(ProtonItem(name = "A", username = "ua", password = "pa", itemUuid = "u-a"))
+        kotlinx.coroutines.runBlocking { VaultSession.setScreenlockUnlockEnabled(false) }
+        VaultSession.fullSessionForTest(listOf(
+            ProtonItem(name = "A", username = "ua", password = "pa", itemUuid = "u-a")))
+        VaultSession.sealGate = { _, _ -> false }
+
+        val msg = kotlinx.coroutines.runBlocking {
+            VaultSession.setScreenlockUnlockEnabled(true)
+        }
+
+        assertTrue(msg.contains("declined"))
+        assertFalse("no seal happened", SealedVault.hasCache())
+        assertTrue(VaultSession.screenlockUnlockEnabled())
+    }
+
+    @Test
+    fun toggleOnWithFailingSealDoesNotCrash() {
+        SealedVault.cryptoHook = fakeCrypto()
+        seedCache(ProtonItem(name = "A", username = "ua", password = "pa", itemUuid = "u-a"))
+        kotlinx.coroutines.runBlocking { VaultSession.setScreenlockUnlockEnabled(false) }
+        VaultSession.fullSessionForTest(listOf(
+            ProtonItem(name = "A", username = "ua", password = "pa", itemUuid = "u-a")))
+        VaultSession.sealGate = { _, _ -> true }
+        // The keystore refuses (the auth window closed): the seal throws.
+        SealedVault.cryptoHook = object : SealedVault.SealCrypto {
+            override fun seal(plain: ByteArray, aad: ByteArray): Pair<ByteArray, ByteArray> =
+                throw android.security.keystore.UserNotAuthenticatedException("User not authenticated")
+            override fun unseal(iv: ByteArray, ct: ByteArray, aad: ByteArray): ByteArray =
+                throw android.security.keystore.UserNotAuthenticatedException("User not authenticated")
+        }
+
+        val msg = kotlinx.coroutines.runBlocking {
+            VaultSession.setScreenlockUnlockEnabled(true)
+        }
+
+        assertTrue(msg.contains("the seal failed"))
+        assertFalse(SealedVault.hasCache())
+    }
+
+    @Test
     fun toggleOffWhileLockedWipesSafely() {
         // No session (Locked): the cache is a mirror of the last save —
         // the repo envelope holds the same data — the wipe is safe.
