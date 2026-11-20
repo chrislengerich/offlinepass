@@ -2052,11 +2052,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     },
                     screenlockUnlockOn = VaultSession.screenlockUnlockEnabled(),
                     onScreenlockUnlockToggle = { on ->
-                        VaultSession.setScreenlockUnlockEnabled(on)
-                        if (!on) sealedReveal = null
-                        status = if (on) "Item encryption while in use ON — search works on the sealed list;" +
-                            " clicks reveal with a screen-lock prompt."
-                        else "Item encryption while in use OFF — sealed cache wiped."
+                        lifecycleScope.launch {
+                            status = VaultSession.setScreenlockUnlockEnabled(on)
+                            if (!on) sealedReveal = null
+                        }
                     },
                     onLock = { lockNow("") },
                     onExportBackupZip = {

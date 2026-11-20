@@ -1356,6 +1356,13 @@ object VaultSession {
         registerConnectivityWatch()
     }
 
+    /** Test-only: put the session in the stub state (the unlock's shape:
+     *  stubs in memory, the secrets only in the sealed cache). */
+    internal fun stubSessionForTest() {
+        state = State.Unlocked(SealedVault.manifestItems())
+        stubSession = true
+    }
+
     /** Test-only: the singleton holds memory across Robolectric tests —
      * reset it to pristine defaults for [context] (no connectivity watch). */
     internal fun resetForTest(context: Context) {
@@ -1933,20 +1940,15 @@ object VaultSession {
                     // THE TAIL SEALS THE ENVELOPE'S FULL ITEMS — never the
                     // caller's list: in the stub-mode save the caller's
                     // list = THE STUBS (+ the edited), and sealing those
-                    // wrote EMPTY secrets into the cache — the next
-                    // promote made them the base, and the next save
-                    // encrypted them into the vault file (the measured
-                    // clobber; also the autofill's "only the username"
-                    // reveals). The envelope = the just-saved full state.
-                    sealIfEnabled(env.items, env)
-                    // THE STUB MODEL: the save's batch unseal brought the
-                    // full items into memory — re-seal AWAITED (the async
-                    // seal would race the re-stub: a tap right after the
-                    // save would read the stale cache and demand the card
-                    // per item), then re-stub immediately. The seal's
-                    // closure captured the full list, so this is race-safe.
+                    // wrote EMPTY secrets into the cache (the measured
+                    // clobber). The envelope = the just-saved full state.
+                    // THE INCREMENTAL SEAL: only the affected item's blob
+                    // is re-sealed (the AAD binds the uuid; the keystore key
+                    // is unchanged) — the cache stays a derived mirror, and
+                    // the repo commit has already landed, so a kill here is
+                    // stale-but-reconstructable by the repo decrypt.
                     if (screenlockUnlockEnabled()) {
-                        SealedVault.sealNowAwait(env.items, env, File(vaultFilePath()))
+                        SealedVault.syncAfterSaveAwait(env, File(vaultFilePath()), editedUuid)
                         // THE MODELS SEPARATED (see the promote): the state =
                         // a FRESH stub list; loadedEnvelope (env) KEEPS the
                         // just-saved full items — the next save's base. The
@@ -2081,9 +2083,40 @@ object VaultSession {
     fun screenlockUnlockEnabled(): Boolean =
         prefs().getBoolean("screenlockUnlock", false)
 
-    fun setScreenlockUnlockEnabled(on: Boolean) {
-        prefs().edit().putBoolean("screenlockUnlock", on).apply()
-        if (!on) SealedVault.wipe()
+    suspend fun setScreenlockUnlockEnabled(on: Boolean): String {
+        if (on) {
+            prefs().edit().putBoolean("screenlockUnlock", true).apply()
+            return "Item encryption while in use ON — search works on the sealed list; " +
+                "clicks reveal with a screen-lock prompt."
+        }
+        // THE INVARIANT: never wipe the cache while it is the sole live
+        // copy. The promote (the same primitive every save uses) unseals
+        // the secrets and lands them in loadedEnvelope — but it RE-STUBS
+        // the session by design (the browsing gate). The toggle-off then
+        // lifts the session to FULL from the loaded envelope (no re-stub)
+        // and only THEN wipes the cache. After ANY successful save the
+        // cache is a mirror, so this catch-up covers the unlock→first-save
+        // window; a corrupt cache refuses (the promote fails honestly).
+        if (stubSession) {
+            when (val p = promoteSealedSession()) {
+                is Result.Success -> {}
+                else -> return "Could not disable item encryption (" +
+                    (p as? Result.Error)?.message?.take(80) +
+                    "): the sealed cache holds the only copy of the secrets. " +
+                    "Re-unlock with the key, then toggle off. Nothing was lost."
+            }
+            // THE FULL SESSION (no re-stub): the loaded envelope carries
+            // the unsealed items — the secrets live in memory now.
+            val env = loadedEnvelope
+                ?: return "Could not disable item encryption: the promote left " +
+                    "no envelope — re-unlock, then toggle off."
+            state = State.Unlocked(env.items)
+            stubSession = false
+        }
+        prefs().edit().putBoolean("screenlockUnlock", false).apply()
+        SealedVault.wipe()
+        return "Item encryption while in use OFF — the session keeps the full items; " +
+            "the sealed cache is cleared."
     }
 
     /** Re-seals the cache when the toggle is on. Fire-and-forget; failures
@@ -2173,10 +2206,18 @@ object VaultSession {
             // THE EMPTY-VAULT EDGE: the sealed-empty cache = the newly
             // created vault's state — the promote SUCCEEDS with the empty
             // session (the screenlock covers it; the card = pointless for
-            // an empty vault). The stale cache = the unseal = the empty =
-            // the same shape — the freshness check above already gated it.
-            if (items.isEmpty())
-                return Result.Success
+            // an empty vault). THE CORRUPT-CACHE GUARD: an unseal that
+            // fails per-item ALSO returns empty — but its manifest still
+            // lists the items; treating that as the empty-vault success
+            // would wipe real secrets. Empty succeeds ONLY when the
+            // manifest is genuinely empty; otherwise the promote fails
+            // honestly (the cache stays; the repo decrypt can rebuild).
+            if (items.isEmpty()) {
+                if (SealedVault.manifestItems().isEmpty()) return Result.Success
+                return Result.Error(
+                    "The sealed cache's secrets failed to open — refusing to proceed " +
+                        "with an empty session (the vault file is untouched).")
+            }
             // THE TOMBSTONES carried across the promote (the batch unseal's
             // new envelope resets them; the stub-session's deletes must
             // survive the re-seal).

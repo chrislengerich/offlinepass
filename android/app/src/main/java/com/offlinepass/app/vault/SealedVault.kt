@@ -270,25 +270,32 @@ object SealedVault {
             .put("v", FORMAT_VERSION)
             .put("vaultSha256", vaultSha)
             .put("items", arr)
-        // Envelope PUBLIC bookkeeping (non-secret: pairing records are
-        // public keys, tombstones are uuids) — lets a save/edit promote
-        // to a full session without GPG.
-        out.put("meta", JSONObject()
-            .put("rev", env.rev)
-            .put("deviceId", env.deviceId)
-            .put("deletedItemUuids", JSONArray().apply { env.deletedItemUuids.forEach { put(it) } })
-            .put("devices", JSONArray().apply { env.devices.forEach { put(it.toJsonObject()) } })
-            .put("removedDeviceIds", JSONArray().apply { env.removedDeviceIds.forEach { put(it) } })
-            .put("extraFields", JSONObject().apply {
-                env.extraFields.forEach { (k, v) ->
-                    when (v) {
-                        is JSONObject, is JSONArray, JSONObject.NULL -> put(k, v)
-                        null -> put(k, JSONObject.NULL)
-                        else -> put(k, v.toString())
-                    }
+            .put("meta", metaJson(env))
+        atomicWriteCache(out)
+        Log.i(TAG, "sealed ${items.size} entries (vault sha ${vaultSha.take(8)})")
+    }
+
+    /** Envelope PUBLIC bookkeeping (non-secret: pairing records are public
+     *  keys, tombstones are uuids) — lets a save/edit promote to a full
+     *  session without GPG. */
+    private fun metaJson(env: Envelope): JSONObject = JSONObject()
+        .put("rev", env.rev)
+        .put("deviceId", env.deviceId)
+        .put("deletedItemUuids", JSONArray().apply { env.deletedItemUuids.forEach { put(it) } })
+        .put("devices", JSONArray().apply { env.devices.forEach { put(it.toJsonObject()) } })
+        .put("removedDeviceIds", JSONArray().apply { env.removedDeviceIds.forEach { put(it) } })
+        .put("extraFields", JSONObject().apply {
+            env.extraFields.forEach { (k, v) ->
+                when (v) {
+                    is JSONObject, is JSONArray, JSONObject.NULL -> put(k, v)
+                    null -> put(k, JSONObject.NULL)
+                    else -> put(k, v.toString())
                 }
-            }))
-        // Atomic write: tmp + rename; the tmp never survives a failure.
+            }
+        })
+
+    /** Atomic write: tmp + rename; the tmp never survives a failure. */
+    private fun atomicWriteCache(out: JSONObject) {
         val target = cacheFile()
         target.parentFile?.mkdirs()
         val tmp = File(target.parentFile, target.name + ".tmp")
@@ -298,10 +305,81 @@ object SealedVault {
                 target.delete()
                 if (!tmp.renameTo(target)) throw IOException("rename failed")
             }
-            Log.i(TAG, "sealed ${items.size} entries (vault sha ${vaultSha.take(8)})")
         } finally {
             if (tmp.exists()) tmp.delete()
         }
+    }
+
+    /** THE INCREMENTAL SEAL (the save's tail): only the AFFECTED item's
+     *  blob is re-sealed — the other entries reuse their blobs (the AAD
+     *  binds the uuid; the keystore key is unchanged), never-seen items
+     *  get fresh blobs, removed items' rows drop, and the bookkeeping
+     *  (rev, vaultSha, the manifest rows) refreshes. The repo commit has
+     *  ALREADY landed when this runs: the cache is derived — a kill here
+     *  leaves it stale-but-reconstructable by the repo decrypt. */
+    suspend fun syncAfterSaveAwait(env: Envelope, vaultFile: File, editedUuid: String?) =
+        withContext(Dispatchers.IO) {
+            sealMutex.withLock {
+                try {
+                    syncNow(env, vaultFile, editedUuid)
+                    runCatching {
+                        java.io.File(appContext.filesDir, "debug-sync.log").appendText(
+                            "[${System.currentTimeMillis()}] seal: incremental " +
+                                "(edited=${editedUuid ?: "-"}, ${env.items.size} items)\n")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "incremental seal failed: ${e.javaClass.simpleName}: ${e.message}")
+                    runCatching {
+                        java.io.File(appContext.filesDir, "debug-sync.log").appendText(
+                            "[${System.currentTimeMillis()}] incremental seal FAILED: " +
+                                "${e.javaClass.simpleName}: ${e.message}\n")
+                    }
+                }
+            }
+        }
+
+    private fun syncNow(env: Envelope, vaultFile: File, editedUuid: String?) {
+        val crypto = cryptoHook ?: (ensureAesKey()?.let { KeystoreSealCrypto(it) }) ?: return
+        // No cache (or a retired format) → nothing to increment: the next
+        // unlock's GPG fallback re-seals from scratch.
+        val cache = readCache() ?: return
+        if (cache.optInt("v", 1) != FORMAT_VERSION) return
+        val vaultSha = sha256Hex(vaultFile.takeIf { it.exists() }?.readBytes() ?: ByteArray(0))
+        val existing = cache.optJSONArray("items")?.let { arr ->
+            (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i) }
+                .associateBy { it.optString("uuid") }
+        } ?: emptyMap()
+        val desired = env.items.associateBy { it.itemUuid }
+        val arr = JSONArray()
+        for (item in env.items) {
+            val prev = existing[item.itemUuid]
+            if (prev != null && item.itemUuid != editedUuid) {
+                // REUSE the blob (the secrets unchanged); the metadata row
+                // still refreshes (the name/username ride the envelope).
+                arr.put(itemJson(item)
+                    .put("iv", prev.getString("iv"))
+                    .put("ct", prev.getString("ct")))
+            } else {
+                val aad = (ITEM_AAD_PREFIX + item.itemUuid).toByteArray()
+                val secrets = JSONObject()
+                    .put("password", item.password)
+                    .put("note", item.note)
+                    .put("totpUri", item.totpUri)
+                val (iv, ct) = crypto.seal(secrets.toString().toByteArray(), aad)
+                arr.put(itemJson(item)
+                    .put("iv", Base64.getEncoder().encodeToString(iv))
+                    .put("ct", Base64.getEncoder().encodeToString(ct)))
+            }
+        }
+        // The tombstoned/gone items' rows drop (the cache = the mirror).
+        val out = JSONObject()
+            .put("v", FORMAT_VERSION)
+            .put("vaultSha256", vaultSha)
+            .put("items", arr)
+            .put("meta", metaJson(env))
+        atomicWriteCache(out)
+        Log.i(TAG, "incremental seal: ${env.items.size} items " +
+            "(edited=${editedUuid ?: "-"}, new=${desired.count { existing[it.key] == null }})")
     }
 
     private fun itemJson(item: ProtonItem): JSONObject = JSONObject()

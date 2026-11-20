@@ -1,4 +1,5 @@
 package com.offlinepass.app.vault
+import android.content.Context
 
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -184,19 +185,89 @@ class SealedVaultTest {
     // -- The encryption-at-rest DEFAULT --------------------------------------
 
     @Test
-    fun atRestEncryptionIsOnByDefault() {
-        // A fresh state (no explicit pref) → the sealed cache is ON.
-        assertTrue(VaultSession.screenlockUnlockEnabled())
+    fun atRestOffUntilEnrollmentTurnsItOn() {
+        VaultSession.resetForTest(RuntimeEnvironment.getApplication() as Context)
+        // The documented default: OFF until the screenlock ENROLLMENT
+        // turns it on (a cache gating the vault on nothing set up = wrong).
+        assertFalse("the fresh state is OFF", VaultSession.screenlockUnlockEnabled())
+        kotlinx.coroutines.runBlocking { VaultSession.setScreenlockUnlockEnabled(true) }
+        assertTrue("the enrollment's act turns it on", VaultSession.screenlockUnlockEnabled())
     }
 
     @Test
     fun explicitOffStaysOff() {
-        VaultSession.setScreenlockUnlockEnabled(false)
+        VaultSession.resetForTest(RuntimeEnvironment.getApplication() as Context)
+        kotlinx.coroutines.runBlocking { VaultSession.setScreenlockUnlockEnabled(true) }
+        kotlinx.coroutines.runBlocking { VaultSession.setScreenlockUnlockEnabled(false) }
         assertFalse(VaultSession.screenlockUnlockEnabled())
-        // Turning it off wipes the sealed cache (the existing contract).
-        // Back on re-enables without resurrecting anything.
-        VaultSession.setScreenlockUnlockEnabled(true)
+        // Turning it off wipes the sealed cache (the locked state: the
+        // cache mirrors the repo). Back on re-enables without resurrecting.
+        kotlinx.coroutines.runBlocking { VaultSession.setScreenlockUnlockEnabled(true) }
         assertTrue(VaultSession.screenlockUnlockEnabled())
     }
 
+
+    // -- THE INCREMENTAL SEAL (the save's tail) --------------------------------
+
+    private fun blobsByUuid(): Map<String, Pair<String, String>> {
+        val raw = File(
+            RuntimeEnvironment.getApplication().filesDir,
+            "sealed/sealed.json").readText()
+        val arr = org.json.JSONObject(raw).getJSONArray("items")
+        val out = mutableMapOf<String, Pair<String, String>>()
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            out[o.getString("uuid")] = o.getString("iv") to o.getString("ct")
+        }
+        return out
+    }
+
+    @Test
+    fun syncAfterSaveTouchesOnlyTheAffectedBlob() {
+        val a = item("A", "ua", "pa").apply { itemUuid = "u-a" }
+        val b = item("B", "ub", "pb").apply { itemUuid = "u-b" }
+        val c = item("C", "uc", "pc").apply { itemUuid = "u-c" }
+        kotlinx.coroutines.runBlocking {
+            SealedVault.sealNowAwait(listOf(a, b, c), env(a, b, c), vaultFile)
+        }
+        val before = blobsByUuid()
+
+        // The save: b's password changed (the edit), c dropped (the delete),
+        // d added — the cache must re-seal ONLY b.
+        val b2 = item("B", "ub", "pb2").apply { itemUuid = "u-b" }
+        val d = item("D", "ud", "pd").apply { itemUuid = "u-d" }
+        val env2 = Envelope(rev = 8, deviceId = "dev-1")
+        env2.items = mutableListOf(a, b2, d)
+        kotlinx.coroutines.runBlocking {
+            SealedVault.syncAfterSaveAwait(env2, vaultFile, "u-b")
+        }
+
+        val after = blobsByUuid()
+        assertEquals("u-a's blob reused verbatim", before["u-a"], after["u-a"])
+        assertTrue("u-b's blob re-sealed", before["u-b"] != after["u-b"])
+        assertTrue("u-c's row dropped", !after.containsKey("u-c"))
+        assertTrue("u-d sealed fresh", after.containsKey("u-d"))
+        // The round-trip: the unseal returns the NEW secrets and no ghosts.
+        val items = kotlinx.coroutines.runBlocking { SealedVault.unsealAll() }
+        assertEquals("pb2", items.first { it.itemUuid == "u-b" }.password)
+        assertEquals("pa", items.first { it.itemUuid == "u-a" }.password)
+        assertEquals("pd", items.first { it.itemUuid == "u-d" }.password)
+        assertNull(items.firstOrNull { it.itemUuid == "u-c" })
+        // The bookkeeping: the rev + the vault sha refreshed.
+        val raw = org.json.JSONObject(File(
+            RuntimeEnvironment.getApplication().filesDir,
+            "sealed/sealed.json").readText())
+        assertEquals(8, raw.getJSONObject("meta").getLong("rev"))
+    }
+
+    @Test
+    fun syncAfterSaveWithoutCacheIsANoOp() {
+        val a = item("A", "ua", "pa").apply { itemUuid = "u-a" }
+        val env = Envelope(rev = 1, deviceId = "d")
+        env.items = mutableListOf(a)
+        kotlinx.coroutines.runBlocking {
+            SealedVault.syncAfterSaveAwait(env, vaultFile, null)
+        }
+        assertFalse(SealedVault.hasCache())
+    }
 }
