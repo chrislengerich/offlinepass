@@ -111,10 +111,6 @@ fun SetupChoiceScreen(
         }
 
         if (mode == "new") {
-            Text("New vault — local-only: everything is stored and committed on this " +
-                 "device. The card's key is the first recipient; more can be added " +
-                 "later from Setup.",
-                style = MaterialTheme.typography.bodySmall)
             RecipientsEditor(recipientIds, onAddCardRecipient, null, onRemoveRecipient)
             Button(
                 onClick = { onNewVault() },
@@ -210,9 +206,7 @@ private fun RecipientsEditor(
     onPickRecipients: (() -> Unit)? = null,
     onRemoveRecipient: (Long) -> Unit
 ) {
-    Text("Recipients (from the vault ledger; adds use the card" +
-        if (onPickRecipients != null) " or OpenKeyChain)" else ")",
-        style = MaterialTheme.typography.titleSmall)
+    Text("Recipients", style = MaterialTheme.typography.titleSmall)
     if (recipientIds.isEmpty()) {
         Text("(none — add at least one before creating/importing)",
             style = MaterialTheme.typography.bodySmall)
