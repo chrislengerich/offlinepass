@@ -1350,6 +1350,9 @@ object VaultSession {
         registerConnectivityWatch()
     }
 
+    /** Test-only: the vault file's path as a File (the fixtures). */
+    internal fun vaultFileForTest(): File = File(vaultFilePath())
+
     /** Test-only: put the session in the FULL state (the toggle-off's
      *  shape: the secrets in memory, the toggle on, no stubbing). */
     internal fun fullSessionForTest(items: List<ProtonItem>) {
@@ -2305,7 +2308,21 @@ object VaultSession {
             // manifest is genuinely empty; otherwise the promote fails
             // honestly (the cache stays; the repo decrypt can rebuild).
             if (items.isEmpty()) {
-                if (SealedVault.manifestItems().isEmpty()) return Result.Success
+                if (SealedVault.manifestItems().isEmpty()) {
+                    // THE GENUINELY-EMPTY VAULT: the success — but the
+                    // state MUST be set (the early-return skipped it and
+                    // the session stayed Locked forever: the "unlock
+                    // doesn't navigate" bug — the empty vault never
+                    // exercised this path before).
+                    val env = SealedVault.toEnvelope(emptyList())
+                    loadedEnvelope = env
+                    rev = env.rev
+                    state = State.Unlocked(emptyList())
+                    stubSession = true
+                    android.util.Log.i("UnlockTiming",
+                        "promote: the empty-vault edge -> Unlocked")
+                    return Result.Success
+                }
                 return Result.Error(
                     "The sealed cache's secrets failed to open — refusing to proceed " +
                         "with an empty session (the vault file is untouched).")
@@ -2347,6 +2364,7 @@ object VaultSession {
             val stubs = items.map { it.asStub() }.toMutableList()
             state = State.Unlocked(stubs)
             stubSession = true
+            android.util.Log.i("UnlockTiming", "promote: state->Unlocked (${stubs.size} items, devices=${env.devices.size})")
             Log.i(TAG, "promoted sealed session (stubs): ${stubs.size} items, rev=${env.rev}")
             Result.Success
         } catch (e: Exception) {
@@ -3478,6 +3496,9 @@ object VaultSession {
     @Volatile private var stashedRemovedDeviceIds: List<String>? = null
 
     fun zero() {
+        android.util.Log.i("UnlockTiming", "zero() called-from: " +
+            Throwable().stackTrace.drop(1).take(4)
+                .joinToString(" ← ") { "${it.className.substringAfterLast('.')}.${it.methodName}(${it.lineNumber})" })
         loadedEnvelope?.items?.clear()
         loadedEnvelope?.deletedItemUuids?.clear()
         loadedEnvelope?.extraFields?.clear()

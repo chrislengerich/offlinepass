@@ -139,6 +139,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
      *  leftover + return to the default screen. Also re-arms the entry
      *  gate: the next foreground entry needs the screenlock prompt again. */
     private fun lockNow(statusMsg: String) {
+        android.util.Log.i("UnlockTiming", "lockNow: $statusMsg called-from: " +
+            Throwable().stackTrace
+                .drop(1).take(4)
+                .joinToString(" ← ") { "${it.className.substringAfterLast('.')}.${it.methodName}(${it.lineNumber})" })
         VaultSession.zero()
         sealedReveal = null
         pendingSealedEdit = null
@@ -1378,6 +1382,17 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 unlockLoop()
             }
         }
+        // RENDER-TRACES + THE GATE'S AUTO-UNLOCK: the entry gate's done
+        // auth covers the card's unlock — the old chain handed the user a
+        // SECOND unlock screen after the gate ("doesn't navigate").
+        androidx.compose.runtime.LaunchedEffect(entryGateDone) {
+            if (entryGateDone && VaultSession.state is VaultSession.State.Locked &&
+                VaultSession.screenlockUnlockEnabled() &&
+                com.offlinepass.app.vault.SealedVault.hasCache()) {
+                unlockLoop()
+            }
+        }
+        android.util.Log.i("RenderNav", "render: state=${VaultSession.state} screen=$screen gate=${entryGateDone}")
         when (VaultSession.state) {
             VaultSession.State.NoConfig -> SetupChoiceScreen(
                 defaultRemote = "https://github.com/planetaltitude/offlinepass-storage-test.git",
