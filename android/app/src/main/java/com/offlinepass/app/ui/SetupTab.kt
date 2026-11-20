@@ -48,6 +48,7 @@ fun SetupTabScreen(
     onScreenlockUnlockToggle: (Boolean) -> Unit = {},
     onLock: () -> Unit,
     onExportBackupZip: () -> Unit = {},
+    onExportProton: () -> Unit = {},
     onImportQrft: () -> Unit,
     onPairDevice: () -> Unit = {},
     pairedDevices: List<com.offlinepass.app.vault.DeviceRecord> = emptyList(),
@@ -435,6 +436,15 @@ fun SetupTabScreen(
             Text("YubiKey SSH: not enrolled.", style = MaterialTheme.typography.bodySmall)
         }
         Text("Active mode: " + VaultSession.sshSyncMode(), style = MaterialTheme.typography.bodySmall)
+        HorizontalDivider()
+
+        HorizontalDivider()
+
+        Text("Export", style = MaterialTheme.typography.titleSmall)
+        Button(onClick = onExportProton, enabled = busy == null,
+            modifier = Modifier.fillMaxWidth()) {
+            Text("To Proton (plaintext JSON)")
+        }
         HorizontalDivider()
 
         Text("Paste devices (Chrome extension)", style = MaterialTheme.typography.titleSmall)

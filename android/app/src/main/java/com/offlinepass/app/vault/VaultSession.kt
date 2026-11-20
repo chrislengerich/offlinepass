@@ -374,6 +374,19 @@ object VaultSession {
                 "${e.name}$serialTag — $kind"
             }
 
+    /** THE PROTON EXPORT: the password material in PLAINTEXT, in the
+     *  native Proton Pass JSON shape (the same the importer reads) — an
+     *  array of login items. Requires a full (promoted) session: the
+     *  secrets leave the app in the clear by explicit request. */
+    suspend fun exportProtonJson(): String? {
+        if (state !is State.Unlocked) return null
+        if (stubSession && !promoteIfStub()) return null
+        val env = loadedEnvelope ?: return null
+        val arr = org.json.JSONArray()
+        env.items.forEach { arr.put(it.toProtonJson()) }
+        return arr.toString(2)
+    }
+
     /** The plugged key's current name (the registry entry for the last
      *  seen serial) — the rename dialog's prefill; a never-seen key gets
      *  the "purple" suggestion. */
