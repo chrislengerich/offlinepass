@@ -240,8 +240,16 @@ class VaultGitClient {
 
     fun pushBranch(remote: String, pat: String, root: File, branch: String = "main") {
         Git.open(root).use { git ->
+            // THE PUSH BY NAME: when the repo's origin matches the requested
+            // remote, push via the configured NAME — a push-by-URL never
+            // advances refs/remotes/origin/*, so the ahead/behind counters
+            // (and the pulls) kept reading the last-fetched ref and the
+            // Setup line showed "ahead (unpushed)" after every successful
+            // sync.
+            val originUrl = git.repository.config.getString("remote", "origin", "url")
+            val remoteName = if (originUrl != null && originUrl == remote) "origin" else remote
             val results = git.push()
-                .setRemote(remote)
+                .setRemote(remoteName)
                 .setRefSpecs(RefSpec("refs/heads/$branch:refs/heads/$branch"))
                 .also { if (!isSshRemote(remote)) it.setCredentialsProvider(TokenCredentials(pat)) }
                 .setTimeout(30)

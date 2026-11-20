@@ -763,6 +763,37 @@ class VaultSaveTransactionTest {
     }
 
     @Test
+    fun pushByNameAdvancesTheTrackingRef() {
+        // THE AHEAD/BEHIND CONTRACT: a successful push must advance
+        // refs/remotes/origin/main — a push-by-URL never does, and the
+        // Setup line kept claiming "ahead (unpushed)" after every sync.
+        val base = File(app.filesDir, "bare-remote")
+        base.deleteRecursively()
+        org.eclipse.jgit.api.Git.init().setBare(true).setDirectory(base).call()
+        val remoteUrl = base.toURI().toString()
+        seedRepo("PREVIOUS".toByteArray())
+        Git.open(gitRoot()).use { git ->
+            git.repository.config.apply {
+                setString("remote", "origin", "url", remoteUrl)
+                setStringList("remote", "origin", "fetch",
+                    listOf("+refs/heads/*:refs/remotes/origin/*"))
+            }.save()
+        }
+        val client = com.offlinepass.app.vault.VaultGitClient()
+
+        client.pushBranch(remoteUrl, "", gitRoot())
+
+        val tracking = Git.open(gitRoot()).use { git ->
+            git.repository.resolve("refs/remotes/origin/main")?.name
+        }
+        assertEquals("the tracking ref advanced with the push",
+            headId(), tracking)
+        val (ahead, behind) = client.aheadBehind(gitRoot())!!
+        assertEquals("no unpushed commits after the push", 0, ahead)
+        assertEquals(0, behind)
+    }
+
+    @Test
     fun firstEverSaveFailureLeavesNoVaultFile() = runBlocking {
         // The signing FAILURE contract: the signer CONFIGURED (the Setup's
         // pick — the save's auto-pick is gone), the fake fails the sign →
