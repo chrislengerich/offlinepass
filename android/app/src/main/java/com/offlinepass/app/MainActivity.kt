@@ -225,8 +225,16 @@ class MainActivity : androidx.activity.ComponentActivity() {
         com.offlinepass.app.crypto.ScreenlockGate.promptGate(this, title, subtitle, strongOrCredential)
 
     private suspend fun unlockLoop() {
+        // THE AUTO-LOCK TIMER OFF DURING THE GATE: the user's idle time
+        // before the prompt consumes the idle budget, and the timer fires
+        // DURING the auth — lockNow re-locks the state the unlock is
+        // about to restore (the instant re-lock: "doesn't unlock"). The
+        // timer re-arms in finishUnlock/lockNow as before.
+        autoLockJob?.cancel()
+        autoLockJob = null
         if (!biometricGate()) {
             status = "Screen lock failed — unlock aborted."
+            rescheduleAutoLock()
             return
         }
         // THE SEALED FAST PATH: a sealed cache + the toggle on = the
