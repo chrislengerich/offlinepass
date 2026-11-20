@@ -382,10 +382,23 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         "the backup's decrypt needs the card."
                     return@launch
                 }
-                screen = Screen.Search
                 status = when (val r = VaultSession.importBackupZip(zip)) {
-                    is VaultSession.Result.Success -> "Backup imported (rev ${VaultSession.currentRev()})."
-                    else -> "Backup: $r"
+                    is VaultSession.Result.Success -> {
+                        // THE BACKUP = THE REPO: the origin rides the
+                        // imported .git — prefill the GetStarted remote +
+                        // seed the recipients; land on the checklist.
+                        runCatching {
+                            com.offlinepass.app.vault.VaultGitClient()
+                                .originUrl(java.io.File(VaultSession.gitRootPath()))?.let { origin ->
+                                    VaultSession.saveConnectDraft(origin, "")
+                                }
+                            VaultSession.seedRecipientsFromRepo()
+                        }
+                        screen = Screen.GetStarted
+                        "Backup imported (rev ${VaultSession.currentRev()}) — " +
+                            "the checklist: attach the remote, enroll the key."
+                    }
+                    else -> { screen = Screen.Search; "Backup: $r" }
                 }
             }
         }
@@ -483,13 +496,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         "the vault decrypt needs the card."
                     return
                 }
-                // THE RECIPIENT ADOPTION — RESTORE ONLY: a LOCAL-ONLY restore
-                // (no repo configured) adopts the file's recipients (the file
-                // IS the vault's origin). A MERGE into an existing repo does
-                // NOT: the import decrypts via the PKESK set and re-saves to
-                // the phone's OWN recipient set (see applyRestoredEnvelope).
-                if (VaultSession.config() == null)
-                    VaultSession.adoptRecipientsFromVaultFile(staged)
+                // THE DATA ONLY: the vault-file import carries no identity —
+                // the recipients stay THIS device's (guaranteed configured:
+                // the import lives in Setup). The decrypt uses the PKESKs,
+                // which is where the file's recipients end.
                 restored = run {
                     var env: VaultSession.DecryptEnvelope.Ok? = null
                     var guard = 0
@@ -1178,7 +1188,18 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                 val staged = File(cacheDir, "qrft-import-repo.zip")
                                 staged.writeBytes(decoded)
                                 val r = VaultSession.importBackupZip(staged)
-                                sealedToast("Repo import: $r")
+                                if (r is VaultSession.Result.Success) {
+                                    runCatching {
+                                        com.offlinepass.app.vault.VaultGitClient()
+                                            .originUrl(java.io.File(VaultSession.gitRootPath()))?.let { origin ->
+                                                VaultSession.saveConnectDraft(origin, "")
+                                            }
+                                        VaultSession.seedRecipientsFromRepo()
+                                    }
+                                    screen = Screen.GetStarted
+                                    status = "Repo imported — the checklist: " +
+                                        "attach the remote, enroll the key."
+                                } else sealedToast("Repo import: $r")
                             } else {
                                 val staged = File(cacheDir, "qrft-import.gpg")
                                 if (decoded != null) {
@@ -1452,7 +1473,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                 }
                                 else -> "Imported locally; save: $r"
                             }
-                            screen = Screen.Search
+                            screen = Screen.GetStarted
                         } finally {
                             // Plaintext Proton export staging — wiped.
                             com.offlinepass.app.vault.SecureWipe.file(staged)

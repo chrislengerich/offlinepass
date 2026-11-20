@@ -177,6 +177,16 @@ class VaultGitClient {
         }
     }
 
+    /** The imported repo's origin URL (read from its git config) — the
+     *  backup import's prefill for the GetStarted remote step. */
+    fun originUrl(root: File): String? = try {
+        Git.open(root).use { git ->
+            git.repository.config.getString("remote", "origin", "url")
+        }
+    } catch (e: Exception) {
+        null
+    }
+
     private fun remoteRef(branch: String) = Constants.R_REMOTES + "origin/" + branch
 
     /** Bytes of [path] at [ref] (e.g. "origin/main:state/10.gpg"), or null. */
