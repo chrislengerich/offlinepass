@@ -48,6 +48,16 @@ object PgpSshBridge {
             .encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(parsed.wireBlob))
     }
 
+    /** The SSH fingerprint of an Ed25519 public point (the card's raw
+     *  32 bytes): the wire blob string("ssh-ed25519") + string(point)
+     *  → "SHA256:<base64>" — the same digest [fingerprintOf] produces
+     *  for the enrolled line, so the two forms compare equal. */
+    fun ed25519SshLineFingerprint(point: ByteArray): String {
+        val blob = sshString("ssh-ed25519".toByteArray()) + sshString(point)
+        return "SHA256:" + java.util.Base64.getEncoder().withoutPadding()
+            .encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(blob))
+    }
+
     /** The full OpenSSH public-key line ("ssh-rsa AAAA… <comment>") for a
      *  LIVE RSA key (the card slot's read): the same wire construction
      *  [rsaFingerprint] digests — one place owns the e-then-n order. */

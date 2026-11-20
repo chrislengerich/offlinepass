@@ -50,9 +50,15 @@ class YubiKeySshIdentity(
                 // transport; see YubiKitSshAuth's header note). For an EC
                 // slot the digest is stripped client-side inside sign()
                 // (the EC challenge = the raw hash).
-                val payload = if (algorithm.startsWith("ecdsa-sha2-"))
-                    com.offlinepass.app.crypto.SshRsaPkcs1.digestInfo("SHA-256", data)
-                else com.offlinepass.app.crypto.SshRsaPkcs1.digestInfo(algorithm, data)
+                val payload = when {
+                    // THE EDDSA: ssh-ed25519 signs the RAW handshake data
+                    // (PureEdDSA — no hash, no padding); the card's
+                    // authenticate() returns the 64-byte r||s.
+                    parsed.algorithm == "ssh-ed25519" -> data
+                    algorithm.startsWith("ecdsa-sha2-") ->
+                        com.offlinepass.app.crypto.SshRsaPkcs1.digestInfo("SHA-256", data)
+                    else -> com.offlinepass.app.crypto.SshRsaPkcs1.digestInfo(algorithm, data)
+                }
                 val raw = kotlinx.coroutines.runBlocking { yubiKitSigner?.invoke(payload) }
                     ?: run {
                         lastAuthError = "OpenPGP PIN cancelled"
