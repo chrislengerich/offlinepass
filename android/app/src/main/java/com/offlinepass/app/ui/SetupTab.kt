@@ -158,14 +158,6 @@ fun SetupTabScreen(
                 Text("YubiKey SSH enrolled — every sync asks for the YubiKey touch.",
                     style = MaterialTheme.typography.bodySmall)
             }
-            Text(
-                "Connect remote: pick Screenlock SSH key (the QR enrolls this device's " +
-                    "key as a GitHub deploy key — syncs then open with the screen lock) " +
-                    "or PAT (HTTPS + fine-grained token). " +
-                    "YubiKey SSH: paste the auth subkey's OpenSSH line (desktop: gpg --export-ssh-key) " +
-                    "and its key id — every sync asks for the YubiKey touch.",
-                style = MaterialTheme.typography.bodySmall
-            )
         }
         // Sync state lives directly with its button.
         // The commit summaries = the LOCAL-ONLY too (the git history = on-device).
@@ -595,6 +587,7 @@ fun SetupTabScreen(
         HorizontalDivider()
 
         if (busy != null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        android.util.Log.i("SetupTiming", "END of the Setup composition")
         HorizontalDivider()
         Text("Log", style = MaterialTheme.typography.titleSmall)
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)

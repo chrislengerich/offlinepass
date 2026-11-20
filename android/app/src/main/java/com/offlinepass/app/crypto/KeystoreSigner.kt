@@ -109,10 +109,13 @@ object KeystoreSigner {
 
     /** Short identifier for UI display (first 16 hex of the SPKI hash). */
     fun publicKeyFingerprint(): String = runCatching {
+        val t0 = android.os.SystemClock.elapsedRealtime()
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         val digest = java.security.MessageDigest.getInstance("SHA-256")
-        "%064x".format(java.math.BigInteger(1, digest.digest(ks.getCertificate(ALIAS).publicKey.encoded)))
+        val fp = "%064x".format(java.math.BigInteger(1, digest.digest(ks.getCertificate(ALIAS).publicKey.encoded)))
             .take(16)
+        android.util.Log.i("SetupTiming", "keyFingerprint=${android.os.SystemClock.elapsedRealtime() - t0}ms")
+        fp
     }.getOrDefault("(not generated)")
 
     /** Prepares a signature over [bytes]. With per-operation auth the
