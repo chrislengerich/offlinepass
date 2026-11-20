@@ -1763,7 +1763,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                         if (it.itemUuid == edited.itemUuid) edited else it
                                     }
                                     status = when (val r = saveLoop(items, edited.itemUuid)) {
-                                        VaultSession.Result.Success -> "Saved (rev ${VaultSession.currentRev()})."
+                                        VaultSession.Result.Success -> {
+                                            // THE REVEALED COPY FOLLOWS THE
+                                            // SAVE: the Detail's dirty check
+                                            // compares against it — without
+                                            // this "Unsaved changes" lingers.
+                                            sealedReveal = edited
+                                            "Saved (rev ${VaultSession.currentRev()})."
+                                        }
                                         else -> "Save: $r"
                                     }
                                 }
@@ -1777,7 +1784,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                         if (it.itemUuid == mutated.itemUuid) mutated else it
                                     }
                                     status = when (val r = saveLoop(items, mutated.itemUuid)) {
-                                        VaultSession.Result.Success -> "TOTP enrolled."
+                                        VaultSession.Result.Success -> {
+                                            sealedReveal = mutated
+                                            "TOTP enrolled."
+                                        }
                                         else -> "Save: $r"
                                     }
                                 }

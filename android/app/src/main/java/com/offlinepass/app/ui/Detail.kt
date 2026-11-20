@@ -105,8 +105,13 @@ fun EntryDetailScreen(
             label = { Text("Notes") },
             modifier = Modifier.fillMaxWidth()
         )
+        // THE KEYBOARD GOES WITH THE SAVE: the entry is committed — an
+        // open keyboard over a committed entry is noise. (The controller
+        // is read at composition; hiding happens in the click.)
+        val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
         Button(
             onClick = {
+                keyboard?.hide()
                 onSaveChanges(item.copy(
                     username = username.trim(),
                     email = email.trim(),
