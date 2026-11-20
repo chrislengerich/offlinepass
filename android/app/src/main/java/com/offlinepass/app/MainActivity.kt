@@ -54,7 +54,7 @@ import kotlin.coroutines.resume
  */
 class MainActivity : androidx.activity.ComponentActivity() {
 
-    private var screen by mutableStateOf<Screen>(Screen.SetupChoice)
+
     private var status by mutableStateOf("")
     private var searchQuery by mutableStateOf("")
     /** Locked-mode click-through: the one unsealed entry shown in the
@@ -2601,6 +2601,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
     }
 
     companion object {
+        // THE SCREEN = the class-level: the recreate() gives the fresh
+        // Compose tree a fresh recomposer without losing the navigation
+        // state (the instance-level reset to SetupChoice was the bug).
+        var screen by mutableStateOf<Screen>(Screen.SetupChoice)
         private const val TAG = "S1"
     }
 }
