@@ -93,6 +93,10 @@ async function persist() {
 
 function renderList() {
   const list = listSummary(state.env);
+  // THE STUBS CACHE: the entries' metadata (NO secrets) for the popup's
+  // fill-with-touch flow — the popup lists these and only touches the
+  // card when one is selected.
+  chrome.storage.local.set({ stubs: list });
   $("count").textContent = `(${list.length})`;
   $("list").innerHTML = "";
   for (const it of list) {
