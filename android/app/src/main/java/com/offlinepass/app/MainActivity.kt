@@ -1461,8 +1461,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                 status = "Offline: repo not fetched. Use Sync now when back online."
                             }
                             VaultSession.adopt(env)
-                            status = "Imported ${env.items.size} entries — pick recipients."
-                            pickRecipientsUntilDone()
+                            // THE RECIPIENTS ARE ALREADY PICKED: the Import
+                            // tab's editor (the card's key / OpenKeyChain)
+                            // ran before the file — the OKK re-pick here was
+                            // redundant friction.
+                            status = "Imported ${env.items.size} entries."
                             status = when (val r = saveLoop(env.items)) {
                                 VaultSession.Result.Success -> {
                                     android.widget.Toast.makeText(
