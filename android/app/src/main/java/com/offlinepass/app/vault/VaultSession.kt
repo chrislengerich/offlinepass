@@ -2115,7 +2115,7 @@ object VaultSession {
                 SealedVault.sealNowAwait(env.items, env, File(vaultFilePath()))
                 state = State.Unlocked(env.items.map { it.asStub() })
                 stubSession = true
-                return "Item encryption while in use ON — the session re-stubbed now; " +
+                return "Encrypt items in memory ON — the session re-stubbed now; " +
                     "clicks reveal with a screen-lock prompt."
             }
             if (state is State.Locked && !SealedVault.hasCache()) {
@@ -2126,7 +2126,7 @@ object VaultSession {
                 try {
                     if (!com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(appContext) &&
                         !com.offlinepass.app.crypto.YubiKitSshAuth.requestPermission(appContext)
-                    ) return "Item encryption while in use ON — but the seal needs " +
+                    ) return "Encrypt items in memory ON — but the seal needs " +
                         "the security key: attach it and toggle off/on (or just " +
                         "unlock once with the key)."
                     val plainBytes = vaultDecryptBytes(vaultFile().readBytes())
@@ -2134,17 +2134,17 @@ object VaultSession {
                     rev = env.rev
                     loadedEnvelope = env
                     SealedVault.sealNowAwait(env.items, env, File(vaultFilePath()))
-                    return "Item encryption while in use ON — the cache sealed from " +
+                    return "Encrypt items in memory ON — the cache sealed from " +
                         "the repo now; the next unlock is screen-lock only."
                 } catch (e: Exception) {
-                    return "Item encryption while in use ON — but the seal failed " +
+                    return "Encrypt items in memory ON — but the seal failed " +
                         "(${e.message?.take(60)}): the next unlock needs the " +
                         "security key once."
                 } finally {
                     busy = null
                 }
             }
-            return "Item encryption while in use ON — search works on the sealed list; " +
+            return "Encrypt items in memory ON — search works on the sealed list; " +
                 "clicks reveal with a screen-lock prompt."
         }
         // THE INVARIANT: never wipe the cache while it is the sole live
@@ -2168,7 +2168,7 @@ object VaultSession {
                     state = State.Unlocked(fresh.items)
                     stubSession = false
                 } catch (e: Exception) {
-                    return "Could not disable item encryption — neither the sealed " +
+                    return "Could not disable encrypt-items-in-memory — neither the sealed " +
                         "cache (${(promoted as? Result.Error)?.message?.take(60) ?: "stale"}) " +
                         "nor the repo decrypt (${e.message?.take(60)}) worked. " +
                         "Nothing was lost; attach the security key and try again."
@@ -2182,7 +2182,7 @@ object VaultSession {
         }
         prefs().edit().putBoolean("screenlockUnlock", false).apply()
         SealedVault.wipe()
-        return "Item encryption while in use OFF — the session keeps the full items; " +
+        return "Encrypt items in memory OFF — the session keeps the full items; " +
             "the sealed cache is cleared."
     }
 

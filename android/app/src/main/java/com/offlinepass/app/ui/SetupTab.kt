@@ -525,7 +525,7 @@ fun SetupTabScreen(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                "Encrypt individual items while in use (experimental) — " +
+                "Encrypt items in memory — " +
                     "search/list works sealed; clicking an entry reveals it " +
                     "with a screen-lock prompt.",
                 modifier = Modifier.weight(1f),
