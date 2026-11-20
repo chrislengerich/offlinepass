@@ -202,6 +202,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
     /** The optional screen-lock gate: a device biometric/PIN prompt BEFORE
      * the hardware-key interaction (only when enabled in Setup). */
     private suspend fun biometricGate(): Boolean {
+        // THE ENTRY GATE'S DONE = THE AUTH'S COVERED: the entry gate's
+        // successful biometric opens the same 60s keystore validity
+        // window this gate exists to open — prompting again was the
+        // second-fingerprint trap (both unlocks looked biometric and
+        // the card never got reached).
+        if (entryGateDone) return true
         // The screenlock prompts when the vault requires it OR when the
         // at-rest seal is on: the seal's keystore ops need the auth window,
         // and the prompt IS the screenlock's promised interaction.
@@ -1359,6 +1365,18 @@ class MainActivity : androidx.activity.ComponentActivity() {
         val pinCallbackNow = pinCallback
         if (pinCallbackNow != null) {
             com.offlinepass.app.ui.PinPromptDialog(pinCallbackNow)
+        }
+        // THE GATE'S DONE → THE VAULT'S UNLOCK = THE AUTO: the entry
+        // gate has authenticated the user; the old chain handed them a
+        // SECOND unlock screen (the card's) after the gate — the measured
+        // "doesn't navigate" trap. The unlockLoop = launched from here,
+        // automatically, once the gate is done.
+        androidx.compose.runtime.LaunchedEffect(entryGateDone) {
+            if (entryGateDone && VaultSession.state is VaultSession.State.Locked &&
+                VaultSession.screenlockUnlockEnabled() &&
+                com.offlinepass.app.vault.SealedVault.hasCache()) {
+                unlockLoop()
+            }
         }
         when (VaultSession.state) {
             VaultSession.State.NoConfig -> SetupChoiceScreen(
