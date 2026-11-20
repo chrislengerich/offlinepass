@@ -156,6 +156,27 @@ class VaultGitClient {
         }
     }
 
+    /** (ahead, behind) vs origin/<branch> — the LOCAL git counts against
+     *  the last-fetched remote-tracking ref (no network). Null = no repo
+     *  or no branch. */
+    fun aheadBehind(root: File, branch: String = "main"): Pair<Int, Int>? {
+        if (!File(root, Constants.DOT_GIT).exists()) return null
+        return try {
+            Git.open(root).use { git ->
+                val repo = git.repository
+                val head = repo.resolve(Constants.R_HEADS + branch) ?: return null
+                val remote = repo.resolve(remoteRef(branch)) ?: return null
+                if (head.name == remote.name) return 0 to 0
+                val ahead = git.log().addRange(remote, head).call().toList().size
+                val behind = git.log().addRange(head, remote).call().toList().size
+                ahead to behind
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "aheadBehind failed: ${e.message}")
+            null
+        }
+    }
+
     private fun remoteRef(branch: String) = Constants.R_REMOTES + "origin/" + branch
 
     /** Bytes of [path] at [ref] (e.g. "origin/main:state/10.gpg"), or null. */

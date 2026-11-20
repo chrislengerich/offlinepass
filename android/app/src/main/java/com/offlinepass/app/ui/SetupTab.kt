@@ -170,8 +170,10 @@ fun SetupTabScreen(
         val commits = VaultSession.recentCommits()
         if (commits.isNotEmpty()) {
             Text(
-                if (cfg?.remoteUrl != null) "Sync: ${VaultSession.syncStatus ?: "not synced this session"}"
-                else "Local-only vault (no remote attached)",
+                (if (cfg?.remoteUrl != null)
+                    "Sync: ${VaultSession.syncStatus ?: "not synced this session"}"
+                else "Local-only vault (no remote attached)") +
+                    VaultSession.syncDivergenceText().let { if (it.isEmpty()) "" else " — $it" },
                 style = MaterialTheme.typography.bodySmall
             )
             if (cfg?.remoteUrl != null) {

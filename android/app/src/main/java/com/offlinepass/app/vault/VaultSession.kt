@@ -2434,6 +2434,25 @@ object VaultSession {
 
     fun vaultFilePath(): String = vaultFile().absolutePath
     fun gitRootPath(): String = gitRoot().absolutePath
+    /** The sync line's repo state: how far ahead (unpushed) or behind
+     *  origin/main this clone is, counted against the last-fetched
+     *  remote-tracking ref (a local git read — no network). */
+    fun syncDivergenceText(): String {
+        if (config()?.remoteUrl == null) return ""
+        val ab = runCatching { VaultGitClient().aheadBehind(gitRoot()) }.getOrNull()
+            ?: return ""
+        val (ahead, behind) = ab
+        return when {
+            ahead == 0 && behind == 0 ->
+                "in sync with origin/main (as of the last fetch)"
+            behind == 0 ->
+                "ahead of origin/main by $ahead commit${if (ahead == 1) "" else "s"} (unpushed)"
+            ahead == 0 ->
+                "behind origin/main by $behind commit${if (behind == 1) "" else "s"}"
+            else -> "diverged: ahead by $ahead, behind by $behind"
+        }
+    }
+
     /** The reset dialog's warning: compares the local clone against the
      *  remote-tracking ref (origin/main — the state of the LAST FETCH, no
      *  network needed). The wording says so; a live fetch would demand
