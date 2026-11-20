@@ -2118,6 +2118,11 @@ object VaultSession {
                 return "Item encryption while in use ON — the session re-stubbed now; " +
                     "clicks reveal with a screen-lock prompt."
             }
+            if (state is State.Locked && !SealedVault.hasCache())
+                return "Item encryption while in use ON — but the sealed cache is " +
+                    "empty right now: the NEXT unlock needs the security key ONCE " +
+                    "(it re-seals the cache), after which the screen lock alone " +
+                    "suffices again."
             return "Item encryption while in use ON — search works on the sealed list; " +
                 "clicks reveal with a screen-lock prompt."
         }

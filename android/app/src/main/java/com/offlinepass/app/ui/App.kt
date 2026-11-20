@@ -499,7 +499,6 @@ fun UnlockScreen(
         Button(onClick = onUnlock, enabled = busy == null) {
             Text(busy ?: "Unlock")
         }
-        if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
