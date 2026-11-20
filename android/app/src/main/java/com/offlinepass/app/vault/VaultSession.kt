@@ -2320,13 +2320,11 @@ object VaultSession {
             // it, and toEnvelope would wipe the staging (the measured
             // "paired but not showing" bug).
             // THE STASH (the idle lock's zero) + the live envelope's: the
-            // staged pairings from both are carried; the stash is consumed.
+            // staged pairings from both are carried; the stash consumed.
             val carriedDevices = (stashedDevices ?: emptyList()) +
                 (loadedEnvelope?.devices?.toList() ?: emptyList())
-            val carriedRemoved = (stashedRemovedDeviceIds ?: emptyList()) +
-                (loadedEnvelope?.removedDeviceIds?.toList() ?: emptyList())
             stashedDevices = null
-            stashedRemovedDeviceIds = null
+            val carriedRemoved = loadedEnvelope?.removedDeviceIds?.toList() ?: emptyList()
             val env = SealedVault.toEnvelope(items)
             rev = env.rev
             env.deletedItemUuids = (carriedTombstones + env.deletedItemUuids)
@@ -2457,55 +2455,6 @@ object VaultSession {
 
     fun vaultFilePath(): String = vaultFile().absolutePath
     fun gitRootPath(): String = gitRoot().absolutePath
-    /** THE PAIRING STASH: zero() (the idle lock) clears the envelope;
-     *  the staged-but-unsaved pairings stash here so the next promote
-     *  carries them (the session-scope: the process death loses them
-     *  exactly as it loses the un-saved envelope). */
-    @Volatile private var stashedDevices: List<DeviceRecord>? = null
-    @Volatile private var stashedRemovedDeviceIds: List<String>? = null
-
-    /** THE ONE GIT-OPEN SNAPSHOT for the Setup: the head + the recent
-     *  commits + the ahead/behind in a single repo walk — the Setup's
-     *  composition previously opened the repo three times (the sync
-     *  line, the commit hash, the divergence), each a JGit open + the
-     *  packfile walk on the phone's storage. */
-    data class RepoSnapshot(val head: String, val commits: List<String>,
-                            val ahead: Int, val behind: Int, val hasRemote: Boolean)
-
-    fun readRepoSnapshot(limit: Int = 5): RepoSnapshot {
-        val hasRemote = config()?.remoteUrl != null
-        if (!File(gitRoot(), org.eclipse.jgit.lib.Constants.DOT_GIT).exists())
-            return RepoSnapshot("", emptyList(), 0, 0, hasRemote)
-        return runCatching {
-            org.eclipse.jgit.api.Git.open(gitRoot()).use { git ->
-                val head = git.repository.resolve(
-                    org.eclipse.jgit.lib.Constants.HEAD)?.name ?: ""
-                val commits = git.log().setMaxCount(limit).call().map { c ->
-                    val age = java.time.Duration.ofMillis(
-                        System.currentTimeMillis() - c.commitTime * 1000L)
-                    val whenTxt = when {
-                        age.toMinutes() < 1 -> "now"
-                        age.toHours() < 1 -> "${age.toMinutes()}m ago"
-                        age.toDays() < 1 -> "${age.toHours()}h ago"
-                        else -> "${age.toDays()}d ago"
-                    }
-                    "%s %s — %s (%s)".format(
-                        c.name().take(7), c.shortMessage, c.authorIdent.name, whenTxt)
-                }
-                val remote = git.repository.resolve(
-                    org.eclipse.jgit.lib.Constants.R_REMOTES + "origin/main")
-                var ahead = 0; var behind = 0
-                val headId = git.repository.resolve(
-                    org.eclipse.jgit.lib.Constants.R_HEADS + "main")
-                if (remote != null && headId != null && headId.name != remote.name) {
-                    ahead = git.log().addRange(remote, headId).call().toList().size
-                    behind = git.log().addRange(headId, remote).call().toList().size
-                }
-                RepoSnapshot(head.take(7), commits, ahead, behind, hasRemote)
-            }
-        }.getOrDefault(RepoSnapshot("", emptyList(), 0, 0, hasRemote))
-    }
-
     /** The sync line's repo state: how far ahead (unpushed) or behind
      *  origin/main this clone is, counted against the last-fetched
      *  remote-tracking ref (a local git read — no network). */
@@ -3521,6 +3470,13 @@ object VaultSession {
      * copies are released for GC rather than overwritten; the on-disk
      * copies, though, are zero-filled byte-for-byte before unlink.
      */
+    /** THE PAIRING STASH: zero() (the idle lock) clears the envelope;
+     *  the staged-but-unsaved pairings stash here so the next promote
+     *  carries them (the session-scope: the process death loses them
+     *  exactly as it loses the un-saved envelope). */
+    @Volatile private var stashedDevices: List<DeviceRecord>? = null
+    @Volatile private var stashedRemovedDeviceIds: List<String>? = null
+
     fun zero() {
         loadedEnvelope?.items?.clear()
         loadedEnvelope?.deletedItemUuids?.clear()
