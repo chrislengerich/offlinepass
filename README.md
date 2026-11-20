@@ -55,6 +55,10 @@ implements the exact RFC 6637 math the card performs — the tests use it
 as the fake card, so the app's decrypt pipeline is proven against the
 card's contract without hardware in the loop.
 
+**OpenPGP v6**: the v6 PKESK dispatch is pinned by test; the v6-ECDH
+session-data recovery is blocked by BC 1.79 (see TODO.md) — the AEAD
+SEIPD-v2 support follows the same BC upgrade.
+
 ## Repository layout
 
 ```
