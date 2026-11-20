@@ -111,9 +111,8 @@ fun EntryDetailScreen(
             }
         }
         if (item.totpUri.isBlank()) {
-            Button(onClick = { showTotpEntry = true }, enabled = busy == null,
-                modifier = Modifier.fillMaxWidth()) {
-                Text("Enroll TOTP")
+            TextButton(onClick = { showTotpEntry = true }, enabled = busy == null) {
+                Text("Enroll TOTP", style = MaterialTheme.typography.bodySmall)
             }
         } else {
             Text("TOTP enrolled", style = MaterialTheme.typography.bodySmall)
@@ -180,8 +179,25 @@ fun EntryDetailScreen(
                 style = MaterialTheme.typography.bodySmall
             )
         }
-        Button(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
+        var showDeleteConfirm by remember { mutableStateOf(false) }
+        Button(onClick = { showDeleteConfirm = true }, modifier = Modifier.fillMaxWidth()) {
             Text("Delete entry")
+        }
+        if (showDeleteConfirm) {
+            AlertDialog(
+                onDismissRequest = { showDeleteConfirm = false },
+                title = { Text("Delete \"${item.displayName}\"?") },
+                text = { Text("The entry is tombstoned and removed on the next save " +
+                    "(the deletion syncs to every device). This can be undone only " +
+                    "before the save.") },
+                confirmButton = {
+                    TextButton(onClick = { showDeleteConfirm = false; onDelete() }) {
+                        Text("Delete") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+                }
+            )
         }
         if (busy != null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
 

@@ -1216,6 +1216,12 @@ object VaultSession {
      *  by MainActivity; must run on Main. */
     var syncAuthGate: (suspend () -> Boolean)? = null
 
+    /** WHAT the pending screenlock interaction authenticates ("Saving
+     *  'GitHub'", "Deleting 'Mail'", "Syncing with <remote>") — the
+     *  biometric prompt's subtitle. Set by the operation about to run;
+     *  read by the UI hooks when they build the prompt. */
+    var authDescription: String? = null
+
     /** UI hook for the screen-lock prompt that opens the SEAL key's 60s
      *  validity window (biometric/credential; runs on Main). One successful
      *  prompt unlocks ALL time-based keystore keys for the window, so the
@@ -1629,9 +1635,12 @@ object VaultSession {
      * Once a commit lands the change is durable; a push failure only marks
      * the sync pending (the repo — local first — is the source of trust).
      */
-    suspend fun save(items: List<ProtonItem>, editedUuid: String? = null): Result {
+    suspend fun save(items: List<ProtonItem>, editedUuid: String? = null, what: String? = null): Result {
         val cfg = config() ?: return Result.Error("No config")
         busy = "Encrypting…"
+        authDescription = what ?: (editedUuid?.let { uuid ->
+            items.firstOrNull { it.itemUuid == uuid }?.let { "Saving '${it.displayName}'" }
+        } ?: "Saving the vault")
         try {
             return withContext(Dispatchers.IO) {
                 // THE STUB-INVARIANT: the in-memory list = the stubs (the
@@ -2876,7 +2885,7 @@ object VaultSession {
         loadedEnvelope?.deletedItemUuids?.add(item.itemUuid)
         val remaining = (state as? State.Unlocked)?.items
             ?.filter { it.itemUuid != item.itemUuid } ?: emptyList()
-        return save(remaining)
+        return save(remaining, what = "Deleting '${item.displayName}'")
     }
 
     // -- git open without decrypt (new-vault / import flows) -----------------
@@ -3023,6 +3032,7 @@ object VaultSession {
         }
         val pat = if (useSsh) "" else (pat() ?: return Result.Error("No PAT stored"))
         busy = "Syncing…"
+        authDescription = "Syncing with ${cfg.remoteUrl?.substringAfterLast("/") ?: "the remote"}"
         // The progress messages (the intermittent, like the import flow):
         // the syncStatus = the phase ledger the Sync tab shows live.
         syncStatus = "syncing: fetching…"

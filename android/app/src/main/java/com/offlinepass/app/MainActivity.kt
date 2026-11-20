@@ -208,7 +208,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
         if (!VaultSession.screenLockRequired() &&
             !VaultSession.screenlockUnlockEnabled()
         ) return true
-        return promptGate("Unlock offlinepass", "Device lock required before the security key")
+        return promptGate(
+            "Unlock offlinepass",
+            VaultSession.authDescription
+                ?: "Device lock required before the security key")
     }
 
     /** Platform BiometricPrompt (API 28+): no FragmentActivity needed, so
@@ -689,7 +692,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 // never attempt sign() before authentication.
                 val builder = android.hardware.biometrics.BiometricPrompt.Builder(this)
                     .setTitle("Sign vault change")
-                    .setSubtitle("Screen-lock signature for this revision")
+                    .setSubtitle(VaultSession.authDescription
+                        ?: "Screen-lock signature for this revision")
                 if (android.os.Build.VERSION.SDK_INT >= 30) {
                     builder.setAllowedAuthenticators(
                         android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG
