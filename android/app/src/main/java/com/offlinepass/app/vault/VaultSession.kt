@@ -1868,44 +1868,25 @@ object VaultSession {
                                 "Screenlock signer unavailable (UI layer absent) — nothing saved.")
                         signer = com.offlinepass.app.crypto.KeystoreCommitSigner(hook)
                     } else {
-                        // Sign key: the stored signer, or — when none was
-                        // picked yet — OpenKeyChain's own picker. Never default
-                        // to a recipient key id: lookupKeyIds returns ENCRYPTION
-                        // subkeys, which cannot sign.
-                        var signId = signingKeyId()
-                        if (signId == null) {
-                            var reqData: Intent? = null
-                            var pickGuard = 0
-                            while (signId == null && pickGuard++ < 3) {
-                                when (val sk = client.pickSignKey(reqData)) {
-                                    is OpenPgpClient.SignKey.Picked -> {
-                                        prefs().edit()
-                                            .putString("signingKeyId", sk.keyId.toString())
-                                            .putString("signingKeyUserId", sk.userId)
-                                            .apply()
-                                        signId = sk.keyId
-                                    }
-                                    is OpenPgpClient.SignKey.NeedsInteraction ->
-                                        reqData = interactionHandler?.invoke(sk.pendingIntent)
-                                            ?: return@withContext Result.Error("Sign-key picker needs the UI layer")
-                                    OpenPgpClient.SignKey.Error ->
-                                        return@withContext Result.Error("No signing key available — pick one in Setup.")
-                                }
+                        // THE OKK MODE: the configured signer — or, before
+                        // any sign key is configured, an UNSIGNED commit.
+                        // OpenKeyChain must not gate the first save (the
+                        // fresh-import path); the signing gets configured
+                        // from Setup/GetStarted and the later commits sign.
+                        signer = signingKeyId()?.let { signId ->
+                            // Pre-flight the commit signature: OpenKeyChain
+                            // may need an unlock prompt (or the key may be
+                            // unavailable entirely). Surface that as
+                            // Interaction HERE — the signer inside JGit
+                            // can't interact, and a hard failure there
+                            // aborts the commit with a bare "commit failed".
+                            busy = "Checking sign key…"
+                            ensureSignKeyReady(signId, client)?.let { msg ->
+                                return@withContext rollback(msg +
+                                    " — nothing saved. Check the key in OpenKeyChain or pick another signer in Setup.")
                             }
-                            if (signId == null) return@withContext Result.Error("Sign-key selection aborted after retries")
+                            OpenKeyChainSigner(client, signId)
                         }
-                        val okkSigner = OpenKeyChainSigner(client, signId)
-                        // Pre-flight the commit signature: OpenKeyChain may need
-                        // an unlock prompt (or the key may be unavailable
-                        // entirely). Surface that as Interaction HERE — the
-                        // signer inside JGit can't interact, and a hard failure
-                        // there aborts the commit with a bare "commit failed".
-                        busy = "Checking sign key…"
-                        ensureSignKeyReady(signId, client)?.let { msg ->
-                            return@withContext rollback(msg +
-                                " — nothing saved. Check the key in OpenKeyChain or pick another signer in Setup.")
-                        }
-                        signer = okkSigner
                     }
                     val git = VaultGitClient()
                     if (!File(gitRoot(), ".git").exists()) {

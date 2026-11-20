@@ -127,7 +127,7 @@ fun SetupChoiceScreen(
             Text("Import a Proton export — pick the recipients (who can open " +
                 "the imported entries) first, then the export file.",
                 style = MaterialTheme.typography.bodySmall)
-            RecipientsEditor(recipientIds, onAddCardRecipient, onPickRecipients, onRemoveRecipient)
+            RecipientsEditor(recipientIds, onAddCardRecipient, null, onRemoveRecipient)
             Button(
                 onClick = { importPicker.launch(arrayOf("*/*")) },
                 enabled = recipientIds.isNotEmpty(),
@@ -210,10 +210,11 @@ fun SetupChoiceScreen(
 private fun RecipientsEditor(
     recipientIds: List<Long>,
     onAddCardRecipient: () -> Unit,
-    onPickRecipients: () -> Unit,
+    onPickRecipients: (() -> Unit)? = null,
     onRemoveRecipient: (Long) -> Unit
 ) {
-    Text("Recipients (from the vault ledger; adds use the card or OpenKeyChain)",
+    Text("Recipients (from the vault ledger; adds use the card" +
+        if (onPickRecipients != null) " or OpenKeyChain)" else ")",
         style = MaterialTheme.typography.titleSmall)
     if (recipientIds.isEmpty()) {
         Text("(none — add at least one before creating/importing)",
@@ -233,8 +234,10 @@ private fun RecipientsEditor(
     Button(onClick = onAddCardRecipient, enabled = true, modifier = Modifier.fillMaxWidth()) {
         Text("Add recipient from security key")
     }
-    TextButton(onClick = onPickRecipients, enabled = true, modifier = Modifier.fillMaxWidth()) {
-        Text("Add recipient from OpenKeyChain")
+    onPickRecipients?.let {
+        TextButton(onClick = it, enabled = true, modifier = Modifier.fillMaxWidth()) {
+            Text("Add recipient from OpenKeyChain")
+        }
     }
 }
 
