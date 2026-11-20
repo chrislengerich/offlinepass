@@ -2090,28 +2090,37 @@ object VaultSession {
                 "clicks reveal with a screen-lock prompt."
         }
         // THE INVARIANT: never wipe the cache while it is the sole live
-        // copy. The promote (the same primitive every save uses) unseals
-        // the secrets and lands them in loadedEnvelope — but it RE-STUBS
-        // the session by design (the browsing gate). The toggle-off then
-        // lifts the session to FULL from the loaded envelope (no re-stub)
-        // and only THEN wipes the cache. After ANY successful save the
-        // cache is a mirror, so this catch-up covers the unlock→first-save
-        // window; a corrupt cache refuses (the promote fails honestly).
+        // copy. The catch-up tries BOTH derived paths, so the toggle-off
+        // works ALWAYS (as long as the security material is intact):
+        //  1. the promote (the save's own primitive) — the cache's copy;
+        //  2. a fresh repo decrypt — the repo is the truth and the cache
+        //     is merely derived (covers the stale-seal and corrupt-cache
+        //     cases automatically);
+        //  3. only when BOTH fail (no card / unusable keys) — stop, keep
+        //     the cache, tell the user. Nothing was ever lost on the way.
         if (stubSession) {
-            when (val p = promoteSealedSession()) {
-                is Result.Success -> {}
-                else -> return "Could not disable item encryption (" +
-                    (p as? Result.Error)?.message?.take(80) +
-                    "): the sealed cache holds the only copy of the secrets. " +
-                    "Re-unlock with the key, then toggle off. Nothing was lost."
+            val promoted = promoteSealedSession()
+            val promotedEnv = (promoted as? Result.Success)?.let { loadedEnvelope }
+            if (promotedEnv == null) {
+                try {
+                    val plainBytes = vaultDecryptBytes(vaultFile().readBytes())
+                    val fresh = Envelope.fromJson(String(plainBytes))
+                    rev = fresh.rev
+                    loadedEnvelope = fresh
+                    state = State.Unlocked(fresh.items)
+                    stubSession = false
+                } catch (e: Exception) {
+                    return "Could not disable item encryption — neither the sealed " +
+                        "cache (${(promoted as? Result.Error)?.message?.take(60) ?: "stale"}) " +
+                        "nor the repo decrypt (${e.message?.take(60)}) worked. " +
+                        "Nothing was lost; attach the security key and try again."
+                }
+            } else {
+                // THE FULL SESSION (no re-stub): the promote's envelope
+                // carries the unsealed items.
+                state = State.Unlocked(promotedEnv.items)
+                stubSession = false
             }
-            // THE FULL SESSION (no re-stub): the loaded envelope carries
-            // the unsealed items — the secrets live in memory now.
-            val env = loadedEnvelope
-                ?: return "Could not disable item encryption: the promote left " +
-                    "no envelope — re-unlock, then toggle off."
-            state = State.Unlocked(env.items)
-            stubSession = false
         }
         prefs().edit().putBoolean("screenlockUnlock", false).apply()
         SealedVault.wipe()

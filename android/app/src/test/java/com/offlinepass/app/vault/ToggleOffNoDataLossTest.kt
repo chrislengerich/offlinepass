@@ -90,7 +90,35 @@ class ToggleOffNoDataLossTest {
     }
 
     @Test
-    fun toggleOffRefusesWhenThePromotionFails() {
+    fun toggleOffFallsBackToTheRepoDecryptWhenTheSealIsStale() {
+        // A sync pulled a newer vault: the cache is stale (the promote
+        // fails on freshness) — the toggle-off must still work: the repo
+        // is the truth, and the fallback decrypts IT.
+        seedCache(ProtonItem(name = "A", username = "ua", password = "pa", itemUuid = "u-a"))
+        VaultSession.stubSessionForTest()
+        // The "newer vault": the file's bytes change after the seal.
+        vaultFile.writeText("ciphertext-blob-v2-newer")
+        VaultSession.vaultDecryptBytes = { bytes ->
+            if (!String(bytes).contains("v2-newer")) error("wrong file")
+            ("""{"rev":9,"deviceId":"d1","itemId":"i",
+                "data":{"metadata":{"name":"A","itemUuid":"u-a"},
+                "content":{"itemUsername":"ua","password":"pa-REPO"}}}""")
+                .replace("\n", "").toByteArray()
+        }
+
+        val msg = kotlinx.coroutines.runBlocking {
+            VaultSession.setScreenlockUnlockEnabled(false)
+        }
+
+        assertTrue(msg.contains("OFF"))
+        assertFalse(SealedVault.hasCache())
+        // THE SECRETS SURVIVE — from the REPO decrypt, not the stale cache.
+        val items = (VaultSession.state as VaultSession.State.Unlocked).items
+        assertEquals("pa-REPO", items.first { it.itemUuid == "u-a" }.password)
+    }
+
+    @Test
+    fun toggleOffRefusesWhenBothPathsFail() {
         SealedVault.cryptoHook = fakeCrypto()
         seedCache(
             ProtonItem(name = "A", username = "ua", password = "pa", itemUuid = "u-a"))
@@ -105,7 +133,8 @@ class ToggleOffNoDataLossTest {
             VaultSession.setScreenlockUnlockEnabled(false)
         }
 
-        assertTrue("the refusal explains", msg.contains("Could not disable"))
+        assertTrue("the refusal explains", msg.contains("Could not disable") &&
+            msg.contains("Nothing was lost"))
         assertTrue("the pref UNCHANGED (the switch stays on)",
             VaultSession.screenlockUnlockEnabled())
         assertTrue("the cache INTACT", SealedVault.hasCache())
