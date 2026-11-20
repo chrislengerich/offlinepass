@@ -110,6 +110,14 @@ fun EntryDetailScreen(
                 Text("Regenerate password", style = MaterialTheme.typography.bodySmall)
             }
         }
+        if (item.totpUri.isBlank()) {
+            Button(onClick = { showTotpEntry = true }, enabled = busy == null,
+                modifier = Modifier.fillMaxWidth()) {
+                Text("Enroll TOTP")
+            }
+        } else {
+            Text("TOTP enrolled", style = MaterialTheme.typography.bodySmall)
+        }
         OutlinedTextField(
             value = note, onValueChange = { note = it },
             label = { Text("Notes") },
@@ -171,13 +179,6 @@ fun EntryDetailScreen(
                 "No paste devices paired (Setup → Pair paste device) — the QR will be plain.",
                 style = MaterialTheme.typography.bodySmall
             )
-        }
-        if (item.totpUri.isBlank()) {
-            Button(onClick = { showTotpEntry = true }, modifier = Modifier.fillMaxWidth()) {
-                Text("Enroll TOTP")
-            }
-        } else {
-            Text("TOTP enrolled", style = MaterialTheme.typography.bodySmall)
         }
         Button(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
             Text("Delete entry")
