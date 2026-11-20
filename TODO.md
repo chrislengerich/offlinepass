@@ -1,12 +1,12 @@
 # offlinepass TODO
 
-- [x] The OpenPGP v6/AEAD: the v6 PKESK **dispatch** pinned by test
-  (EcdhDecryptTest). The v6-ECDH **decrypt** = blocked by BC 1.79
-  (recoverECDHSessionData's "encoded length out of range" — the
-  salt-based KDF path); the fix = the BC upgrade or the manual
-  session-data recovery. The AEAD SEIPD-v2 generation = not exposed by
-  BC 1.79's public-key path (the SK-based builder only) — the pin
-  deferred until the BC upgrade.
+- [~] The OpenPGP v6/AEAD: the v6 PKESK **dispatch** pinned by test
+  (EcdhDecryptTest). The v6-ECDH **decrypt** = still failing after the
+  BC 1.87 bump (parseECDHEncSessionKey's "encoded length out of range"
+  — the v6 session-data semantics differ from the v3's; needs either
+  the correct v6 ECDH session-data construction or the BC's guidance).
+  The AEAD SEIPD-v2 public-key generation = not exposed by BC 1.87's
+  PGPEncryptedDataGenerator (the SK-based builder only).
 - [ ] **Post-quantum crypto support** — the ML-KEM/ML-DSA composite
   algorithms (the OpenPGP draft): the BC's PQ releases + the v6 packet
   adoption; the card-side = the YubiKey 5.7+ PQ roadmap. Its own

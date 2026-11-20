@@ -124,7 +124,7 @@ dependencies {
     // BouncyCastle: the OpenPGP framing for the YubiKit decrypt path
     // (the PublicKeyDataDecryptorFactory-style seam — the card recovers
     // the session key, BC owns the CFB/MDC/literal).
-    implementation("org.bouncycastle:bcprov-jdk18on:1.79")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.87")
     implementation("com.github.mwiede:jsch:0.2.17")
     // Direct OpenPGP-applet access (the card's AUTH slot) — the SSH auth
     // backend for card-resident keys; OpenKeyChain's remote API returns
@@ -156,7 +156,7 @@ dependencies {
     // (the SEIPD CFB, the MDC, the literal/compressed, the PKESKs) via
     // the PublicKeyDataDecryptorFactory seam — the card recovers the
     // session key, BC does everything else.
-    implementation("org.bouncycastle:bcpg-jdk18on:1.79")
+    implementation("org.bouncycastle:bcpg-jdk18on:1.87")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
