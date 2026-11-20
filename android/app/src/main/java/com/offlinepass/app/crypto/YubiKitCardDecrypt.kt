@@ -118,14 +118,26 @@ object YubiKitCardDecrypt {
                 val decKeyId = (12 until 20).fold(0L) { acc, k ->
                     (acc shl 8) or (decFp[k].toLong() and 0xFF)
                 }
-                // The ciphertext must be the modulus length on the wire.
-                val modulusLen = when (val pub = session.getPublicKey(KeyRef.DEC)) {
-                    is PublicKeyValues.Rsa -> (pub.modulus.bitLength() + 7) / 8
+                // The ciphertext's wire length: RSA = the modulus length
+                // (the zero-padded MPI); EC = the ephemeral point (65 bytes
+                // for P-256, NO padding — the card performs the RFC 6637
+                // KDF + the AES-key-unwrap and returns the plain session
+                // data).
+                val (commandLen, padded) = when (val pub = session.getPublicKey(KeyRef.DEC)) {
+                    is PublicKeyValues.Rsa -> {
+                        val modulusLen = (pub.modulus.bitLength() + 7) / 8
+                        Pair(modulusLen, true)
+                    }
+                    is PublicKeyValues.Ec -> {
+                        // The point length = the encoded SEC1 point's size
+                        // (65 bytes for P-256).
+                        Pair(pub.encodedPoint.size, false)
+                    }
                     else -> throw java.io.IOException(
-                        "the DECRYPTION slot is not RSA — only the RSA decrypt is supported")
+                        "the DECRYPTION slot key type is unsupported (${pub.javaClass.simpleName})")
                 }
-                log("yubikit-decrypt: DEC key id 0x%016X, modulus $modulusLen bytes".format(decKeyId))
-                Log.i(TAG, "yubikit: DEC key id 0x%016X, modulus $modulusLen bytes".format(decKeyId))
+                log("yubikit-decrypt: DEC key id 0x%016X, command $commandLen bytes (${if (padded) "RSA-padded" else "EC point"})".format(decKeyId))
+                Log.i(TAG, "yubikit: DEC key id 0x%016X, $commandLen-byte command (${if (padded) "RSA" else "ECDH"})".format(decKeyId))
                 // THE VAULT→CARD PRE-CHECK: the ciphertext's PKESK recipients
                 // vs the live DEC key — a wrong card fails BY NAME here,
                 // before the PIN (the decrypt could never open anyway; the
@@ -158,11 +170,22 @@ object YubiKitCardDecrypt {
                     throw OpenPgpPinRejected(msg, e)
                 }
                 log("yubikit-decrypt: PIN verified (extended) — PSO:DEC next")
-                Log.i(TAG, "yubikit: PIN verified (extended) — PSO:DEC next ($modulusLen-byte command)")
+                Log.i(TAG, "yubikit: PIN verified (extended) — PSO:DEC next ($commandLen-byte command)")
                 val plain = OpenPgpCardCrypto.decrypt(msgBytes, longArrayOf(decKeyId)) { mpiValue ->
-                    val padded = ByteArray(modulusLen) { 0 }
-                    mpiValue.copyInto(padded, modulusLen - mpiValue.size)
-                    touch { session.decrypt(padded) }
+                    if (padded) {
+                        // RSA: the card wants the zero-padded MPI; the response
+                        // = the PKCS#1 type-2 block (or the unpadded M on the
+                        // newer applets — the factory handles both shapes).
+                        val paddedBlock = ByteArray(commandLen) { 0 }
+                        mpiValue.copyInto(paddedBlock, commandLen - mpiValue.size)
+                        touch { session.decrypt(paddedBlock) }
+                    } else {
+                        // ECDH: the card wants the bare ephemeral POINT (the
+                        // MPI value, the 0x04-prefixed SEC1 encoding) and
+                        // returns the plain session data (the card did the
+                        // RFC 6637 KDF + the AES-key-unwrap internally).
+                        touch { session.decrypt(mpiValue) }
+                    }
                 }
                 log("yubikit-decrypt: plaintext recovered (${plain.size}B)")
                 Log.i(TAG, "yubikit: plaintext recovered (${plain.size}B)")

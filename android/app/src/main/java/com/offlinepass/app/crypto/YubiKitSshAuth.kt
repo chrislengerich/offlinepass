@@ -319,6 +319,43 @@ object YubiKitSshAuth {
         }
     }
 
+    /** THE DEC SLOT'S EC SWAP: an ECDH P-256 key for the vault DECRYPT —
+     *  the card performs the RFC 6637 KDF + the AES-key-unwrap on
+     *  PSO:DEC, so the app's ECDH decrypt path needs only the ephemeral
+     *  point. ADMIN-PIN gated; overwrites the slot's existing key (the
+     *  vault's DECRYPT capability moves to the EC key — the app's
+     *  decrypt path handles both RSA and ECDH). Returns the new public
+     *  key values. */
+    fun generateEcDecKey(context: Context, adminPin: CharArray): ByteArray {
+        val device = findDevice(context)
+            ?: throw java.io.IOException("no YubiKey connected")
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: throw java.io.IOException("USB service unavailable")
+        if (!usbManager.hasPermission(device)) {
+            throw java.io.IOException("USB permission not granted for the YubiKey")
+        }
+        val ykDevice = UsbYubiKeyDevice(usbManager, device)
+        val connection = ykDevice.openConnection(SmartCardConnection::class.java)
+        try {
+            val session = OpenPgpSession(connection as SmartCardConnection)
+            try {
+                session.verifyAdminPin(adminPin)
+                android.util.Log.i("YubiKeySsh", "yubikit: generating the EC DEC key…")
+                val pub = session.generateEcKey(
+                    com.yubico.yubikit.openpgp.KeyRef.DEC,
+                    com.yubico.yubikit.openpgp.OpenPgpCurve.SECP256R1)
+                android.util.Log.i("YubiKeySsh",
+                    "yubikit: the EC DEC key generated (${pub.javaClass.simpleName})")
+                return pub.getEncoded()
+            } finally {
+                session.close()
+            }
+        } finally {
+            runCatching { connection.close() }
+            adminPin.fill('\u0000')
+        }
+    }
+
     /**
      * Verifies the OpenPGP user PIN on the applet, then signs [payload]
      * (the pre-built PKCS#1 v1.5 block) with the card's SIGNATURE slot.
