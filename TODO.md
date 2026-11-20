@@ -8,9 +8,14 @@
   The AEAD SEIPD-v2 public-key generation = not exposed by BC 1.87's
   PGPEncryptedDataGenerator (the SK-based builder only).
 - [ ] **Post-quantum crypto support** — the ML-KEM/ML-DSA composite
-  algorithms (the OpenPGP draft): the BC's PQ releases + the v6 packet
-  adoption; the card-side = the YubiKey 5.7+ PQ roadmap. Its own
-  project: the key generation, the PKESK/SKESK shapes, the migration.
+  algorithms (the OpenPGP draft). THE PROBE (the BC 1.87 bump): the
+  low-level packet shapes exist (MLKEMCompositePublicBCPGKey) but the
+  HIGH-LEVEL OpenPGP layer (PGPPublicKey, the encryptor/decryptor
+  factories) has no ML-KEM paths yet — the encrypt/decrypt is not
+  implementable on BC 1.87. The prototype unblocks when BC ships the
+  high-level PQ OpenPGP (the 1.88+ watch); then: the key generation,
+  the PKESK/SKESK shapes, the migration. The card-side = the YubiKey
+  5.7+ PQ roadmap (the hardware ML-KEM = further out).
 - [ ] **The feature-complete Chrome extension** (the standalone client,
   the card-resident keys):
   - the card-over-WebUSB (the OpenPGP applet: the PIN, the PSO:DEC for
