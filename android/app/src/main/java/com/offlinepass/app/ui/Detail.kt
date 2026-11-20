@@ -74,6 +74,11 @@ fun EntryDetailScreen(
             Text(item.displayName, style = MaterialTheme.typography.titleLarge)
         }
         OutlinedTextField(
+            value = urls, onValueChange = { urls = it },
+            label = { Text("URLs (comma-separated)") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
             value = username, onValueChange = { username = it },
             label = { Text("Username") }, singleLine = true,
             modifier = Modifier.fillMaxWidth()
@@ -81,11 +86,6 @@ fun EntryDetailScreen(
         OutlinedTextField(
             value = email, onValueChange = { email = it },
             label = { Text("Email") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        OutlinedTextField(
-            value = urls, onValueChange = { urls = it },
-            label = { Text("URLs (comma-separated)") },
             modifier = Modifier.fillMaxWidth()
         )
         OutlinedTextField(
