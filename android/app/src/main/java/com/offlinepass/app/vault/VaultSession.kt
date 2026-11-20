@@ -2079,6 +2079,25 @@ object VaultSession {
     // OFF = exact legacy behavior (GPG unlock for everything); turning it
     // off wipes the cache.
 
+    /** THE IDLE LOCK's own switch (decoupled from the entry gate): the
+     *  idle auto-lock zeroing runs only when this is on. One-time
+     *  migration: the old coupling (the screenlock toggle governed the
+     *  idle lock) maps its value across. */
+    fun idleLockEnabled(): Boolean {
+        if (prefs().contains("idleLockOn"))
+            return prefs().getBoolean("idleLockOn", false)
+        if (prefs().contains("screenLockOn")) {
+            val carried = prefs().getBoolean("screenLockOn", false)
+            prefs().edit().putBoolean("idleLockOn", carried).apply()
+            return carried
+        }
+        return false
+    }
+
+    fun setIdleLockEnabled(on: Boolean) {
+        prefs().edit().putBoolean("idleLockOn", on).apply()
+    }
+
     /** The screenlock-based encryption at rest (the sealed cache): OFF
      *  until the screenlock is ENROLLED for the first time (the enrollment
      *  turns it on — the sealed cache before any screenlock enrollment

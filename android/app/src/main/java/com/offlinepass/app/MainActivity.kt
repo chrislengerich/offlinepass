@@ -2120,6 +2120,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onEnableAutofill = { requestAutofillService() },
                     screenLockOn = VaultSession.screenLockOn,
                     onScreenLockToggle = { on -> handleScreenLockToggle(on) },
+                    idleLockOn = VaultSession.idleLockEnabled(),
+                    onIdleLockToggle = { on ->
+                        VaultSession.setIdleLockEnabled(on)
+                        status = if (on) "Idle lock on — the session zeroes after " +
+                            "the idle timeout."
+                        else "Idle lock off."
+                        rescheduleAutoLock()
+                    },
                     autoLockSeconds = VaultSession.autoLockSeconds(),
                     onAutoLockChange = { secs ->
                         VaultSession.setAutoLockSeconds(secs)

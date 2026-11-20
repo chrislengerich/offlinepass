@@ -42,6 +42,8 @@ fun SetupTabScreen(
     onEnrollScreenlock: () -> Unit = {},
     screenLockOn: Boolean,
     onScreenLockToggle: (Boolean) -> Unit,
+    idleLockOn: Boolean = false,
+    onIdleLockToggle: (Boolean) -> Unit = {},
     autoLockSeconds: Int = 300,
     onAutoLockChange: (Int) -> Unit = {},
     screenlockUnlockOn: Boolean = false,
@@ -486,23 +488,23 @@ fun SetupTabScreen(
         }
         HorizontalDivider()
         Text("Idle lock and encryption at rest", style = MaterialTheme.typography.titleSmall)
+        // THE TWO CONCERNS SPLIT: the entry gate (the biometric/PIN before
+        // the key at unlock) and the idle auto-lock (zeroing the session
+        // after N idle seconds) are independent — the idle lock's re-entry
+        // path (the card/seal gates) exists regardless.
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                "Require biometric/PIN before the key on unlock",
+                "Enable idle lock?",
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodySmall
             )
-            Switch(checked = screenLockOn, onCheckedChange = { onScreenLockToggle(it) })
+            Switch(checked = idleLockOn, onCheckedChange = { onIdleLockToggle(it) })
         }
-        if (screenLockOn) {
-            // The screenlock toggle now governs the idle auto-lock too:
-            // after N minutes untouched, the decrypted session is zeroed —
-            // everything is back to encrypted-at-rest. The timeout is a
-            // free-form field (minutes; 0 = never).
+        if (idleLockOn) {
             var autoLockInput by remember(autoLockSeconds) {
                 mutableStateOf(autoLockSeconds.toString())
             }
@@ -530,6 +532,18 @@ fun SetupTabScreen(
                     "and backgrounding alike.",
                 style = MaterialTheme.typography.bodySmall
             )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                "Require screenlock (biometric/PIN) at unlock",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall
+            )
+            Switch(checked = screenLockOn, onCheckedChange = { onScreenLockToggle(it) })
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
