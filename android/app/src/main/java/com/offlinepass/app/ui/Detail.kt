@@ -100,9 +100,20 @@ fun EntryDetailScreen(
             },
             modifier = Modifier.fillMaxWidth()
         )
+        // Regenerate: a small inline action right under the password —
+        // not a full-width button competing with the page actions.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End
+        ) {
+            TextButton(onClick = { showRegenConfirm = true }, enabled = busy == null) {
+                Text("Regenerate password", style = MaterialTheme.typography.bodySmall)
+            }
+        }
         OutlinedTextField(
             value = note, onValueChange = { note = it },
             label = { Text("Notes") },
+            minLines = 4, maxLines = 8,
             modifier = Modifier.fillMaxWidth()
         )
         // THE KEYBOARD GOES WITH THE SAVE: the entry is committed — an
@@ -135,10 +146,6 @@ fun EntryDetailScreen(
             Text("Last modified: ${item.modifyTimeText}", style = MaterialTheme.typography.bodySmall)
         }
 
-        HorizontalDivider()
-        Button(onClick = { showRegenConfirm = true }, modifier = Modifier.fillMaxWidth()) {
-            Text("Regenerate password")
-        }
         var exportEncrypted = remember { mutableStateOf(true) }
         Button(onClick = { onExportQr(exportEncrypted.value) }, modifier = Modifier.fillMaxWidth()) {
             Text("Export as QRFT")
