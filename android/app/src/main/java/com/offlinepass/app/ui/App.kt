@@ -377,17 +377,6 @@ fun GetStartedScreen(
         // the legacy paths (the USB restore, the future re-imports), never
         // required for the daily sync/save (the card does those).
         if (okkInstalled) {
-            Text("4. OpenKeyChain (optional)",
-                style = MaterialTheme.typography.titleSmall)
-            Text("Import the vault's key material into OpenKeyChain — a " +
-                "backup decrypt/sign path for other apps and the USB " +
-                "restore. The daily flow (the card + the screenlock) " +
-                "never needs it.",
-                style = MaterialTheme.typography.bodySmall)
-            Button(onClick = onImportToOkk, enabled = busy == null,
-                modifier = Modifier.fillMaxWidth()) {
-                Text("Import keys into OpenKeyChain")
-            }
         }
         HorizontalDivider()
         Button(onClick = onDone, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
