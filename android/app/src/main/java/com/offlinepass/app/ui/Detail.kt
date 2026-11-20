@@ -187,7 +187,6 @@ fun EntryDetailScreen(
             AlertDialog(
                 onDismissRequest = { showDeleteConfirm = false },
                 title = { Text("Delete \"${item.displayName}\"?") },
-                text = { Text("This cannot be undone after the save.") },
                 confirmButton = {
                     TextButton(onClick = { showDeleteConfirm = false; onDelete() }) {
                         Text("Delete") }
