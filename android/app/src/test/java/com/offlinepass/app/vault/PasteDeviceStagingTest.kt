@@ -62,6 +62,13 @@ class PasteDeviceStagingTest {
     /** The stub session + the sealed cache seeded with TWO items and the
      *  envelope's rev 3 — the unlock's shape. */
     private fun seedStubSession() {
+        // The CONFIG + the recipients (the save requires both: the
+        // recipient keyIds + the materialized keys/encrypt files).
+        VaultSession.configure(null, emptyList())
+        VaultSession.setRecipientKeyIds(listOf(12345L))
+        val encDir = File(VaultSession.gitRootPath(), "keys/encrypt")
+        encDir.mkdirs()
+        File(encDir, "%016X.pub.asc".format(12345L)).writeText("the test key")
         kotlinx.coroutines.runBlocking { VaultSession.setScreenlockUnlockEnabled(true) }
         val items = listOf(
             ProtonItem(name = "A", username = "ua", password = "pa", itemUuid = "u-a"),
@@ -138,5 +145,51 @@ class PasteDeviceStagingTest {
         assertTrue("the updated record survives",
             VaultSession.pairedDevices().any { it.name == "CB v2" } &&
             VaultSession.pairedDevices().none { it.name == "CB v1" })
+    }
+
+    @Test
+    fun `idle lock then re-unlock - the promote restores items and staged pairings`() {
+        // THE IDLE-UNLOCK REGRESSION PIN: lockNow → zero() clears the
+        // envelope; the re-unlock's promote must restore the items AND
+        // the staged pairings from the sealed cache — the full zero →
+        // unlock path, the same flow the idle lock exercises.
+        seedStubSession()
+        VaultSession.stagePairedDevice(deviceRecord("extkey4", "Idle CB"))
+
+        // THE LOCK: the same zero() the lockNow path runs.
+        VaultSession.zero()
+        assertTrue(VaultSession.state is VaultSession.State.Locked)
+        assertTrue("the zero cleared the envelope — the cache remains",
+            SealedVault.hasCache())
+
+        // THE RE-UNLOCK: the promote (the fast path's same call).
+        val r = kotlinx.coroutines.runBlocking { VaultSession.promoteSealedSession() }
+        assertTrue("the promote succeeds after the idle lock ($r)",
+            r is VaultSession.Result.Success)
+        assertTrue(VaultSession.state is VaultSession.State.Unlocked)
+
+        // THE RESTORATION: the items + the staged pairing.
+        val stubs = (VaultSession.state as VaultSession.State.Unlocked).items
+        assertEquals(2, stubs.size)
+        assertTrue("the staged pairing restored after the idle lock",
+            VaultSession.pairedDevices().any { it.name == "Idle CB" })
+    }
+
+    @Test
+    fun `the re-unlock's save persists the carried pairing`() {
+        // The FULL loop: the idle lock → the re-unlock → the save → the
+        // pairing lands in the committed envelope (the end-to-end of the
+        // user's repro).
+        seedStubSession()
+        VaultSession.stagePairedDevice(deviceRecord("extkey5", "Persist CB"))
+        VaultSession.zero()
+        kotlinx.coroutines.runBlocking { VaultSession.promoteSealedSession() }
+
+        val stubs = (VaultSession.state as VaultSession.State.Unlocked).items
+        kotlinx.coroutines.runBlocking { VaultSession.save(stubs) }
+
+        val text = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertTrue("the carried pairing committed",
+            Envelope.fromJson(text).devices.any { it.name == "Persist CB" })
     }
 }
