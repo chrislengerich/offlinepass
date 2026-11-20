@@ -25,10 +25,11 @@ function gitLib() {
   return g;
 }
 
-/** The isomorphic-git's built-in fetch-based HTTP client. */
+/** The isomorphic-git's HTTP client: the SEPARATE UMD bundle
+ *  (lib/isogit-http.umd.js → the global GitHttp), the fetch-based. */
 function httpLib() {
-  const h = gitLib().http;
-  if (!h) throw new Error("the isomorphic-git bundle lacks the http client");
+  const h = typeof window !== "undefined" && window.GitHttp;
+  if (!h) throw new Error("the isomorphic-git HTTP bundle not loaded (the script tag first)");
   return h;
 }
 
