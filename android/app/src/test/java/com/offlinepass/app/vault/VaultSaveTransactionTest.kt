@@ -452,6 +452,81 @@ class VaultSaveTransactionTest {
     }
 
     @Test
+    fun saveEncryptsToTheCurrentRecipientSet() = runBlocking {
+        // THE PIN: every save's envelope is encrypted to EXACTLY the
+        // current recipient set — the keyIds handed to the encrypt are
+        // captured and compared (the byte-level contract; no decryption).
+        gitRoot().mkdirs()
+        File(gitRoot(), "keys/encrypt").mkdirs()
+        File(gitRoot(), "keys/encrypt/${FakeOpenPgp.KEY_ID}")
+            .let { File(gitRoot(), "keys/encrypt/%016X.pub.asc".format(FakeOpenPgp.KEY_ID)) }
+            .writeText("key material\n")
+        VaultSession.setRecipientKeyIds(listOf(FakeOpenPgp.KEY_ID))
+        val captured = mutableListOf<List<Long>>()
+        VaultSession.vaultEncryptBytes = { plain, _, keyIds ->
+            captured += keyIds.toList()
+            java.util.Base64.getEncoder().encode(plain)
+        }
+        val r = VaultSession.save(listOf(item("A").apply { password = "p1" }))
+        assertTrue("the save succeeds ($r)", r is VaultSession.Result.Success)
+        assertEquals(1, captured.size)
+        assertEquals(listOf(FakeOpenPgp.KEY_ID), captured[0])
+    }
+
+    @Test
+    fun batchSaveResealsChangedBlobs() = runBlocking {
+        // THE BATCH-SAVE RULE: a save with editedUuid == null (the
+        // merge/restore path) must FULL-re-seal — the incremental rule
+        // cannot know which items differ, and reusing the blobs would
+        // leave the cache's secrets stale.
+        SealedVault.resetForTest(app)
+        kotlinx.coroutines.runBlocking { VaultSession.setScreenlockUnlockEnabled(true) }
+        val key = javax.crypto.spec.SecretKeySpec(
+            ByteArray(32) { (it * 5 + 11).toByte() }, "AES")
+        SealedVault.cryptoHook = object : SealedVault.SealCrypto {
+            private fun cipher(mode: Int, aad: ByteArray, iv: ByteArray?) =
+                javax.crypto.Cipher.getInstance("AES/GCM/NoPadding").apply {
+                    init(mode, key, javax.crypto.spec.GCMParameterSpec(128,
+                        iv ?: ByteArray(12).also { java.security.SecureRandom().nextBytes(it) }))
+                    updateAAD(aad)
+                }
+            override fun seal(plain: ByteArray, aad: ByteArray): Pair<ByteArray, ByteArray> {
+                val c = cipher(javax.crypto.Cipher.ENCRYPT_MODE, aad, null)
+                val ct = c.doFinal(plain)
+                return c.iv to ct
+            }
+            override fun unseal(iv: ByteArray, ct: ByteArray, aad: ByteArray) =
+                cipher(javax.crypto.Cipher.DECRYPT_MODE, aad, iv).doFinal(ct)
+        }
+        val old = item("A").apply { password = "pa-old" }
+        val env = Envelope(rev = 3, deviceId = "d1"); env.items = mutableListOf(old)
+        val vf = vaultFile()
+        vf.parentFile?.mkdirs()
+        vf.writeText("ciphertext-blob-v1")
+        SealedVault.sealNowAwait(listOf(old), env, vf)
+        val blobBefore = java.util.regex.Pattern
+            .compile("\"ct\":\"([^\"]+)\"").matcher(
+                File(app.filesDir, "sealed/sealed.json").readText()).let {
+            it.find(); it.group(1)!!
+        }
+
+        // THE BATCH: the same item with a NEW password, editedUuid = null.
+        val new = item("A").apply { password = "pa-new" }
+        val r = VaultSession.save(listOf(new))
+        assertTrue("the save succeeds ($r)", r is VaultSession.Result.Success)
+
+        // The cache's blob re-sealed: the unseal returns the NEW password.
+        val unsealed = SealedVault.unsealAll()
+        assertEquals("pa-new", unsealed.first { it.name == "A" }.password)
+        val blobAfter = java.util.regex.Pattern
+            .compile("\"ct\":\"([^\"]+)\"").matcher(
+                File(app.filesDir, "sealed/sealed.json").readText()).let {
+            it.find(); it.group(1)!!
+        }
+        assertTrue("the blob changed", blobBefore != blobAfter)
+    }
+
+    @Test
     fun seedParsesUnsignedHexIds() = runBlocking {
         // THE UNSIGNED-PARSE REGRESSION: the ids with the high bit set (the
         // card's own 0xF3E2… among them) overflow the signed Long —

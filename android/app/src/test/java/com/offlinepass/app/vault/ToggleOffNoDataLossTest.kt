@@ -123,6 +123,9 @@ class ToggleOffNoDataLossTest {
         seedCache(
             ProtonItem(name = "A", username = "ua", password = "pa", itemUuid = "u-a"))
         VaultSession.stubSessionForTest()
+        // The decrypt seam DEAD (both paths must fail): the corrupt cache
+        // kills the promote AND no card exists to decrypt the repo.
+        VaultSession.vaultDecryptBytes = { error("no card under test") }
         // Corrupt the blob: the manifest still lists u-a, but the unseal fails.
         val f = File(RuntimeEnvironment.getApplication().filesDir, "sealed/sealed.json")
         val raw = org.json.JSONObject(f.readText())
@@ -133,7 +136,7 @@ class ToggleOffNoDataLossTest {
             VaultSession.setScreenlockUnlockEnabled(false)
         }
 
-        assertTrue("the refusal explains", msg.contains("Could not disable") &&
+        assertTrue("the refusal explains: $msg", msg.contains("Could not disable") &&
             msg.contains("Nothing was lost"))
         assertTrue("the pref UNCHANGED (the switch stays on)",
             VaultSession.screenlockUnlockEnabled())
@@ -157,6 +160,30 @@ class ToggleOffNoDataLossTest {
             "the corrupt cache must NOT promote to an empty (data-loss) session",
             r is VaultSession.Result.Error)
         assertTrue(SealedVault.hasCache())
+    }
+
+    @Test
+    fun toggleOffWithRetiredFormatCacheFallsBackToo() {
+        // A v1 (retired-format) cache: the promote refuses; the repo
+        // decrypt path still works — the toggle-off proceeds.
+        SealedVault.cryptoHook = fakeCrypto()
+        seedCache(ProtonItem(name = "A", username = "ua", password = "pa", itemUuid = "u-a"))
+        VaultSession.stubSessionForTest()
+        val f = File(RuntimeEnvironment.getApplication().filesDir, "sealed/sealed.json")
+        val raw = org.json.JSONObject(f.readText()); raw.put("v", 1)
+        f.writeText(raw.toString())
+        VaultSession.vaultDecryptBytes = { bytes ->
+            ("""{"rev":9,"deviceId":"d1","itemId":"i",
+                "data":{"metadata":{"name":"A","itemUuid":"u-a"},
+                "content":{"itemUsername":"ua","password":"pa-REPO"}}}""")
+                .replace("\n", "").toByteArray()
+        }
+
+        val msg = kotlinx.coroutines.runBlocking {
+            VaultSession.setScreenlockUnlockEnabled(false)
+        }
+        assertTrue(msg.contains("OFF"))
+        assertFalse(SealedVault.hasCache())
     }
 
     @Test

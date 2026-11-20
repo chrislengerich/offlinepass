@@ -1948,7 +1948,16 @@ object VaultSession {
                     // the repo commit has already landed, so a kill here is
                     // stale-but-reconstructable by the repo decrypt.
                     if (screenlockUnlockEnabled()) {
-                        SealedVault.syncAfterSaveAwait(env, File(vaultFilePath()), editedUuid)
+                        if (editedUuid != null) {
+                            // THE SINGLE-EDIT SAVE: only the affected item's
+                            // blob is re-sealed.
+                            SealedVault.syncAfterSaveAwait(env, File(vaultFilePath()), editedUuid)
+                        } else {
+                            // THE BATCH SAVE (a merge/restore: many items may
+                            // differ, and nothing marks which) — the full
+                            // re-seal is the only correct rule here.
+                            SealedVault.sealNowAwait(env.items, env, File(vaultFilePath()))
+                        }
                         // THE MODELS SEPARATED (see the promote): the state =
                         // a FRESH stub list; loadedEnvelope (env) KEEPS the
                         // just-saved full items — the next save's base. The
