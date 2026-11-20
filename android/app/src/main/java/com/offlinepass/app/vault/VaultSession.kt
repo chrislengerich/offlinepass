@@ -1364,6 +1364,12 @@ object VaultSession {
     /** Test-only: put the session in the stub state (the unlock's shape:
      *  stubs in memory, the secrets only in the sealed cache). */
     internal fun stubSessionForTest() {
+        // The envelope = the cache's public metadata + the manifest items
+        // (the real promote sets loadedEnvelope the same way) — without it
+        // the envelope-touching ops (the pairing!) see "no vault".
+        val env = SealedVault.toEnvelope(SealedVault.manifestItems())
+        loadedEnvelope = env
+        rev = env.rev
         state = State.Unlocked(SealedVault.manifestItems())
         stubSession = true
     }
@@ -2308,9 +2314,23 @@ object VaultSession {
             // new envelope resets them; the stub-session's deletes must
             // survive the re-seal).
             val carriedTombstones = loadedEnvelope?.deletedItemUuids?.toList() ?: emptyList()
+            // THE PAIRED DEVICES carried the same way: a paste-device
+            // pairing staged in the stub session lives only in
+            // loadedEnvelope.devices — the cache's meta snapshot predates
+            // it, and toEnvelope would wipe the staging (the measured
+            // "paired but not showing" bug).
+            val carriedDevices = loadedEnvelope?.devices?.toList() ?: emptyList()
+            val carriedRemoved = loadedEnvelope?.removedDeviceIds?.toList() ?: emptyList()
             val env = SealedVault.toEnvelope(items)
             rev = env.rev
             env.deletedItemUuids = (carriedTombstones + env.deletedItemUuids)
+                .distinct().toMutableSet()
+            // The staged pairings win over the cache's snapshot (the newer
+            // staging = the newer state; the union = the removals honored).
+            val stagedIds = carriedDevices.map { it.keyId }.toSet()
+            env.devices = (carriedDevices + env.devices.filter { it.keyId !in stagedIds })
+                .distinctBy { it.keyId }.toMutableList()
+            env.removedDeviceIds = (carriedRemoved + env.removedDeviceIds)
                 .distinct().toMutableSet()
             // THE MODELS SEPARATED: loadedEnvelope = the FULL envelope (the
             // save's encryption base — NEVER the stubs); the state = a
