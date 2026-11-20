@@ -111,6 +111,10 @@ fun SetupChoiceScreen(
         }
 
         if (mode == "new") {
+            Text("New vault — local-only: everything is stored and committed on this " +
+                 "device. The card's key is the first recipient; more can be added " +
+                 "later from Setup.",
+                style = MaterialTheme.typography.bodySmall)
             RecipientsEditor(recipientIds, onAddCardRecipient, null, onRemoveRecipient)
             Button(
                 onClick = { onNewVault() },
