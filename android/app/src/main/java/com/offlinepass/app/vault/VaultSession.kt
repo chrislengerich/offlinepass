@@ -2118,11 +2118,32 @@ object VaultSession {
                 return "Item encryption while in use ON — the session re-stubbed now; " +
                     "clicks reveal with a screen-lock prompt."
             }
-            if (state is State.Locked && !SealedVault.hasCache())
-                return "Item encryption while in use ON — but the sealed cache is " +
-                    "empty right now: the NEXT unlock needs the security key ONCE " +
-                    "(it re-seals the cache), after which the screen lock alone " +
-                    "suffices again."
+            if (state is State.Locked && !SealedVault.hasCache()) {
+                // PULL THE DECRYPT FORWARD: the toggle-ON itself seals the
+                // cache (the card decrypt now) — the next unlock is
+                // screen-lock only, no key-needed-once surprise at unlock.
+                busy = "Sealing the vault (the security key decrypt)…"
+                try {
+                    if (!com.offlinepass.app.crypto.YubiKitSshAuth.deviceReady(appContext) &&
+                        !com.offlinepass.app.crypto.YubiKitSshAuth.requestPermission(appContext)
+                    ) return "Item encryption while in use ON — but the seal needs " +
+                        "the security key: attach it and toggle off/on (or just " +
+                        "unlock once with the key)."
+                    val plainBytes = vaultDecryptBytes(vaultFile().readBytes())
+                    val env = Envelope.fromJson(String(plainBytes))
+                    rev = env.rev
+                    loadedEnvelope = env
+                    SealedVault.sealNowAwait(env.items, env, File(vaultFilePath()))
+                    return "Item encryption while in use ON — the cache sealed from " +
+                        "the repo now; the next unlock is screen-lock only."
+                } catch (e: Exception) {
+                    return "Item encryption while in use ON — but the seal failed " +
+                        "(${e.message?.take(60)}): the next unlock needs the " +
+                        "security key once."
+                } finally {
+                    busy = null
+                }
+            }
             return "Item encryption while in use ON — search works on the sealed list; " +
                 "clicks reveal with a screen-lock prompt."
         }
