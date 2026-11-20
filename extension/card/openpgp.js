@@ -89,6 +89,26 @@ export class OpenPgpCard {
     await this.send(this.apdu(0x00, 0x20, 0x00, 0x82, bytes));
   }
 
+  /** The DEC slot's public key (the DO 0x7F49): the TLV parse → the
+   *  modulus (the 0x81 tag) for the RSA's zero-padding, and the key
+   *  type. The read = unauthenticated (no PIN). */
+  async decPublicKey() {
+    const dof = await this.getData(0x7f, 0x49, 0);
+    // The TLV walk: the 0x81 = the modulus, the 0x82 = the exponent.
+    let p = 0;
+    let modulus = null, exponent = null, isEcdh = false;
+    while (p + 2 <= dof.length) {
+      const tag = dof[p]; const len = dof[p + 1]; p += 2;
+      const val = dof.slice(p, p + len); p += len;
+      if (tag === 0x81) modulus = val;
+      if (tag === 0x82) exponent = val;
+      if (tag === 0x86) { isEcdh = true; modulus = val; }
+    }
+    if (isEcdh) return { rsa: false, pointLen: modulus.length };
+    if (!modulus) throw new Error("the DEC DO carries no modulus");
+    return { rsa: true, modulusLen: modulus.length, exponent };
+  }
+
   /** The PSO:DEC. The algorithm is read from the DEC slot's public key:
    *  the RSA = the zero-padded ciphertext in (the extended APDU for the
    *  4096-bit keys), the ECDH = the bare ephemeral point in. The
