@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Vault sync</title>
+<style>body{font-family:monospace;max-width:60em;margin:2em}pre{background:#f4f4f4;padding:1em;white-space:pre-wrap}
+input{width:32em}button{margin:.3em}</style>
+</head>
+<body>
+<h1>Vault sync</h1>
+<p><label>The repo's HTTPS URL<br><input id="url" placeholder="https://github.com/user/repo.git"></label></p>
+<p><label>The token (the fine-grained PAT)<br><input id="token" type="password"></label></p>
+<button id="clone">Clone</button>
+<button id="sync">Sync (fetch+merge+push)</button>
+<pre id="log"></pre>
+<script src="lib/lightning-fs.min.js"></script>
+<script src="lib/isogit.umd.min.js"></script>
+<script type="module" src="sync.js"></script>
+</body>
+</html>
