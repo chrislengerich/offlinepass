@@ -20,23 +20,12 @@ these assumptions:
   with its vendored libraries (`extension/vendor/`); the Linux client is
   stdlib Python. Do not introduce frameworks, transpilers, or new build
   tooling.
-- **The security invariants are load-bearing.** The vault file is OpenPGP
-  ciphertext at rest; the git history carries signed ciphertext commits
-  only; the sealed cache is screenlock-gated; the decrypted material lives
-  in RAM only and is zeroed on lock/exit; the card operations (the decrypt,
-  the sign, the auth) require the PIN/touch. A change must not weaken any
-  of these guarantees — when in doubt, the tests pin them
-  (`IdleLockStagedStateSweepTest`, `SealedVaultTest`,
-  `VaultSaveTransactionTest`), and a change that alters the crypto surface
-  must extend them.
+- **Encrypted at rest, encrypted to hardware keys.** 
+- **Offline-first.** Minimal network requests, offline mode prioritized.
 - **Minimal features.** Bugfixes are always welcome. Feature requests are
   considered only when they fit the assumptions above; when in doubt, open
   an issue describing the problem before writing code.
-- **Verified commits.** The commits are signed with the hardware security
-  key (the same OpenPGP key set the vault itself uses) — the signed history
-  is the project's audit trail.
-- **Offline-first.** No network requests beyond the user-configured git
-  sync transport; the extension makes none at all.
+- **Verified commits.** 
 
 ## Tests
 
@@ -57,8 +46,3 @@ node extension/test/wrap_contract_test.mjs
 # The release build's baseline-profile guard (after a release build)
 scripts/verify-profile.sh
 ```
-
-The crypto algorithms' behavior is pinned by test — the signer matrix,
-the Ed25519/ECDSA/RSA signature shapes, the ECDH decrypt edges (see
-`docs/testing-plan.md` for the full plan and the hardware-in-the-loop
-layers, which run manually on real devices).
