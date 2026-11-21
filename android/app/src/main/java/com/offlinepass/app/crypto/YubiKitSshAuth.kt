@@ -319,6 +319,43 @@ object YubiKitSshAuth {
         }
     }
 
+    /** THE DEC SLOT'S EC SWAP: an ECDH P-256 key for the vault DECRYPT —
+     *  the card performs the RFC 6637 KDF + the AES-key-unwrap on
+     *  PSO:DEC, so the app's ECDH decrypt path needs only the ephemeral
+     *  point. ADMIN-PIN gated; overwrites the slot's existing key (the
+     *  vault's DECRYPT capability moves to the EC key — the app's
+     *  decrypt path handles both RSA and ECDH). Returns the new public
+     *  key values. */
+    fun generateEcDecKey(context: Context, adminPin: CharArray): ByteArray {
+        val device = findDevice(context)
+            ?: throw java.io.IOException("no YubiKey connected")
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: throw java.io.IOException("USB service unavailable")
+        if (!usbManager.hasPermission(device)) {
+            throw java.io.IOException("USB permission not granted for the YubiKey")
+        }
+        val ykDevice = UsbYubiKeyDevice(usbManager, device)
+        val connection = ykDevice.openConnection(SmartCardConnection::class.java)
+        try {
+            val session = OpenPgpSession(connection as SmartCardConnection)
+            try {
+                session.verifyAdminPin(adminPin)
+                android.util.Log.i("YubiKeySsh", "yubikit: generating the EC DEC key…")
+                val pub = session.generateEcKey(
+                    com.yubico.yubikit.openpgp.KeyRef.DEC,
+                    com.yubico.yubikit.openpgp.OpenPgpCurve.SECP256R1)
+                android.util.Log.i("YubiKeySsh",
+                    "yubikit: the EC DEC key generated (${pub.javaClass.simpleName})")
+                return pub.getEncoded()
+            } finally {
+                session.close()
+            }
+        } finally {
+            runCatching { connection.close() }
+            adminPin.fill('\u0000')
+        }
+    }
+
     /**
      * Verifies the OpenPGP user PIN on the applet, then signs [payload]
      * (the pre-built PKCS#1 v1.5 block) with the card's SIGNATURE slot.
@@ -381,6 +418,58 @@ object YubiKitSshAuth {
      * INTERNAL AUTHENTICATE; the self-test tries both flavors on-device
      * before this path goes default.
      */
+    /** The AUT slot's PSO:INTERNAL AUTHENTICATE — the Ed25519's auth
+     *  operation: the card signs the RAW payload with PureEdDSA (no
+     *  hash, no padding) and returns the 64-byte r||s. The SSH's
+     *  ssh-ed25519 signs the raw handshake data — exactly this. The
+     *  expected fingerprint gates by name (the wrong card never
+     *  produces the sig, the PIN attempt is never spent). */
+    fun authenticateAut(
+        context: Context,
+        pin: CharArray,
+        payload: ByteArray,
+        expectedFingerprint: String? = null
+    ): ByteArray {
+        val device = findDevice(context)
+            ?: throw java.io.IOException("no YubiKey connected")
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: throw java.io.IOException("USB service unavailable")
+        if (!usbManager.hasPermission(device)) {
+            throw java.io.IOException("USB permission not granted for the YubiKey")
+        }
+        val ykDevice = UsbYubiKeyDevice(usbManager, device)
+        val connection = ykDevice.openConnection(SmartCardConnection::class.java)
+        try {
+            val session = OpenPgpSession(connection as SmartCardConnection)
+            try {
+                // The which-key read (unauthenticated) + the gate by name.
+                val autFp = session.applicationRelatedData.discretionary
+                    .getFingerprint(com.yubico.yubikit.openpgp.KeyRef.AUT)
+                val expected = expectedFingerprint
+                if (expected != null && autFp != null) {
+                    val live = com.offlinepass.app.crypto.PgpSshBridge
+                        .ed25519SshLineFingerprint(autFp)
+                    if (live != expected) {
+                        throw java.io.IOException(
+                            "the attached card's AUT key ($live) does not match " +
+                                "the enrolled line ($expected) — wrong card")
+                    }
+                }
+                // The auth-capable verify (the extended flavor — the same
+                // P2=0x82 the decrypt uses; the INTERNAL AUTH is "the
+                // other than sign" use).
+                session.verifyUserPin(pin, true)
+                android.util.Log.i("YubiKeySsh",
+                    "yubikit: PIN verified (extended) — INTERNAL AUTH next (${payload.size}B)")
+                return session.authenticate(payload)
+            } finally {
+                session.close()
+            }
+        } finally {
+            runCatching { connection.close() }
+        }
+    }
+
     fun sign(
         context: Context,
         pin: CharArray,

@@ -1174,19 +1174,28 @@ object VaultSession {
                         prompt = { yubikeyPin() },
                         sign = { pin, payload ->
                             val sig = withTouchPrompt {
-                                // The TRANSPORT = the sshAuthUseAut's slot:
-                                // the SIG (the default) or the AUT (the
-                                // raw-RSA challenge — the wire-compatible,
-                                // AutKeyPathTest-proven). The gate = the
-                                // enrolled line's fingerprint: a card
-                                // holding a different key refuses the
-                                // handshake by name (the sig GitHub would
-                                // reject is never produced).
-                                com.offlinepass.app.crypto.YubiKitSshAuth.sign(
-                                    context, pin, payload, useAut = sshAuthUseAut(),
-                                    expectedFingerprint = runCatching {
-                                        PgpSshBridge.fingerprintOf(line)
-                                    }.getOrNull())
+                                // The TRANSPORT: the enrolled line's
+                                // algorithm decides. ssh-ed25519 = the AUT
+                                // slot's INTERNAL AUTHENTICATE (PureEdDSA
+                                // over the RAW handshake data — the OpenPGP
+                                // hashed-sign path can't serve it);
+                                // RSA/ECDSA = the sshAuthUseAut's slot.
+                                // The gate = the enrolled line's
+                                // fingerprint: a wrong card refuses by
+                                // name (the sig GitHub would reject is
+                                // never produced).
+                                val expectedFp = runCatching {
+                                    PgpSshBridge.fingerprintOf(line)
+                                }.getOrNull()
+                                if (line.contains("ssh-ed25519")) {
+                                    com.offlinepass.app.crypto.YubiKitSshAuth
+                                        .authenticateAut(context, pin, payload,
+                                            expectedFingerprint = expectedFp)
+                                } else {
+                                    com.offlinepass.app.crypto.YubiKitSshAuth.sign(
+                                        context, pin, payload, useAut = sshAuthUseAut(),
+                                        expectedFingerprint = expectedFp)
+                                }
                             }
                             yubikeyPinRemember(pin)
                             sig

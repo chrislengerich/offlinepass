@@ -38,6 +38,51 @@ To initialize a key set on the card — either from **Linux** (`gpg
 over NFC/USB) — see the step-by-step in
 **[`android/README.md`](android/README.md#initialize-the-security-key-openpgp-key-set)**.
 
+## Security & authentication
+
+### Encryption suites (the vault at rest, synced)
+
+| Layer | What | Details |
+|---|---|---|
+| Vault file (`state/10.gpg`) | OpenPGP SEIPD | AES-256 session key, MDC-integrity-checked, encrypted to the recipients' public keys |
+| Recipient key types | RSA-3072 / RSA-4096 / **ECDH P-256** | RSA (the screenlock-derived key, the card's DEC slot) and EC (the card's EC DEC slot) — the encrypt side accepts any BC-supported OpenPGP public key |
+| Device-local sealed cache | AES-256-GCM | each item's secrets sealed directly under the screenlock-gated AndroidKeyStore key (no KEK, no wrapping layer); never synced |
+
+### Authentication types
+
+| What | Where | Mechanism |
+|---|---|---|
+| Hardware security key | the vault decrypt, the commit signing, the SSH sync | OpenPGP card: the PIN + the touch per operation (PSO:DEC / internally consistent) |
+| Device screenlock | the entry gate, the at-rest seal, screenlock commit signing | the AndroidKeyStore keys gated by biometric/PIN (the 60 s validity window) |
+| SSH keys over GitHub | the git sync transport | `rsa-sha2-256`/`rsa-sha2-512`, `ecdsa-sha2-nistp256`, `ssh-ed25519` |
+| HTTPS + PAT | the git sync transport (deprecated) | the fine-grained PAT, stored encrypted |
+
+## Key-type support roadmap
+
+The card slots (the OpenPGP applet) and what the app does with each —
+the encrypt side is BC-native (it emits PKESKs for any supported
+algorithm); the card-side decrypt/sign needs per-algorithm support:
+
+| Key type (slot) | Sign | Encrypt/decrypt | Status |
+|---|---|---|---|
+| RSA-3072/4096 (DEC, SIG) | ✓ | ✓ | supported (the PSO:DEC RSA path) |
+| ECDSA NIST P-256 (SIG/AUT) | ✓ | n/a | supported (the commit signing, the SSH auth via OpenKeyChain/YubiKit) |
+| ECDH NIST P-256 (DEC) | — | ✓ | the card PSO:DEC with the ephemeral point; the card performs the RFC 6637 KDF + the AES-key-unwrap |
+| ECDH NIST P-384/P-521 (DEC) | — | ✓ | the same flow; the point length follows the card's reported key |
+| ECDH Curve25519 (DEC) | — | ✓ | the same flow (the v6-era packets; the card applet 5.7+ / the OpenPGP 3.4 cards) |
+| Ed25519 (SIG/AUT) | planned | n/a | the card + YubiKit support it; the sign path = the same PSO:DEC shape (the 32-byte challenges) |
+| RSA-2048 (any slot) | supported | supported | the same paths as RSA-4096 (the shorter moduli) |
+| secp256k1 | not planned | not planned | the niche OpenPGP use |
+
+The unit-test strategy: BC's own `BcPublicKeyDataDecryptorFactory`
+implements the exact RFC 6637 math the card performs — the tests use it
+as the fake card, so the app's decrypt pipeline is proven against the
+card's contract without hardware in the loop.
+
+**OpenPGP v6**: the v6 PKESK dispatch is pinned by test; the v6-ECDH
+session-data recovery is blocked by BC 1.79 (see TODO.md) — the AEAD
+SEIPD-v2 support follows the same BC upgrade.
+
 ## Repository layout
 
 ```
