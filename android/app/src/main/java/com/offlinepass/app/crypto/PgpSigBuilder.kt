@@ -133,8 +133,9 @@ object PgpSigBuilder {
     }
 
     /** New-format packet header for tag [tag] with the RFC 4880 §4.2.2
-     *  length encodings (1-octet < 192, 2-octet to 8383, 5-octet beyond). */
-    private fun packet(tag: Int, body: ByteArray): ByteArray {
+     *  length encodings (1-octet < 192, 2-octet to 8383, 5-octet beyond).
+     *  internal: the length-encoder's branches are pinned by test. */
+    internal fun packet(tag: Int, body: ByteArray): ByteArray {
         val lenEnc = when {
             body.size < 192 -> byteArrayOf(body.size.toByte())
             body.size <= 8383 -> {

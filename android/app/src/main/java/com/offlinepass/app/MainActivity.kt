@@ -1053,11 +1053,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
 
     /** Persists the YubiKey SSH enrollment (works pre-load: prefs only). */
     private fun enrollYubikeySsh(sshLine: String, subkeyId: String) {
-        // Unsigned 64-bit hex: ids with the high bit set are legal (see the
-        // reader in VaultSession — the base-10/toLongOrNull parse was the
-        // root cause of the silent "Auth cancelled").
-        val keyId = runCatching { java.lang.Long.parseUnsignedLong(subkeyId, 16) }.getOrNull()
-        if (subkeyId.length != 16 || keyId == null) {
+        // Unsigned 64-bit hex: ids with the high bit set are legal (see
+        // VaultSession.parseSubkeyId16 — the base-10/toLongOrNull parse
+        // was the root cause of the silent "Auth cancelled").
+        val keyId = VaultSession.parseSubkeyId16(subkeyId)
+        if (keyId == null) {
             status = "Auth subkey id must be 16 hex digits."
         } else {
             VaultSession.setYubikeySsh(sshLine, subkeyId)

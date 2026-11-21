@@ -203,12 +203,18 @@ object VaultSession {
     }
 
     fun yubikeySshLine(): String? = prefs().getString("yubikeySshLine", null)
-    fun yubikeyAuthSubkeyId(): Long? = prefs().getString("yubikeyAuthSubkeyId", null)
-        // The stored value is UNSIGNED 64-bit hex; ids with the high bit set
-        // (very common) are negative as signed Longs — base-10 parsing or
-        // toLongOrNull(16) would return null for exactly the ids real keys
-        // have. (This was the root cause of the silent "Auth cancelled".)
-        ?.let { runCatching { java.lang.Long.parseUnsignedLong(it, 16) }.getOrNull() }
+
+    /** THE UNSIGNED-HEX 16 PARSE: the OpenPGP key ids with the high bit
+     *  set (very common) are negative as signed Longs — base-10 parsing
+     *  or toLongOrNull(16) returns null for exactly the ids real keys
+     *  have (the root cause of the silent "Auth cancelled"). Null =
+     *  malformed (absent, not 16 hex digits, or unparsable). */
+    internal fun parseSubkeyId16(hex: String?): Long? =
+        hex?.takeIf { it.length == 16 }?.let {
+            runCatching { java.lang.Long.parseUnsignedLong(it, 16) }.getOrNull()
+        }
+
+    fun yubikeyAuthSubkeyId(): Long? = parseSubkeyId16(prefs().getString("yubikeyAuthSubkeyId", null))
 
     /** Persists the YubiKey SSH enrollment (public line + auth subkey id)
      *  and activates the YubiKey SSH sync mode. */
