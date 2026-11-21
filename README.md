@@ -1,5 +1,7 @@
 # offlinepass (alpha)
 
+[![tests](https://github.com/chrislengerich/offlinepass/actions/workflows/tests.yml/badge.svg)](https://github.com/chrislengerich/offlinepass/actions/workflows/tests.yml)
+
 A low-dependency password manager in the spirit of [Proton Pass](https://proton.me/pass):
 one OpenPGP-encrypted vault file in a git repo, with three clients.
 
@@ -201,6 +203,11 @@ On exit the TUI pushes any pending commit to the remote (best-effort,
 `GIT_TERMINAL_PROMPT=0`).
 
 ## Testing
+
+CI runs the matrix on every push/PR (the badge at the top): the Linux
+unit tests, the extension's paste-crypto contract test, and the Android
+suite + the release build with the baseline-profile guard. The
+hardware-in-the-loop layers stay manual.
 
 ```bash
 # Linux unit tests (no terminal needed)

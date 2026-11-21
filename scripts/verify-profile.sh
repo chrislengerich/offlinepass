@@ -11,8 +11,16 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APK="${1:-android/app/build/outputs/apk/release/app-release-unsigned.apk}"
-PROFGEN=$(ls "$HOME"/android-sdk/cmdline-tools/latest/bin/profgen 2>/dev/null || true)
-[ -n "$PROFGEN" ] || { echo "profgen not found (cmdline-tools)"; exit 1; }
+
+# The profgen discovery: the ANDROID_HOME/the SDK roots first (the CI's
+# layout), then the local default.
+PROFGEN=""
+for root in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" "$HOME/android-sdk"; do
+  [ -n "$root" ] || continue
+  PROFGEN=$(ls "$root"/cmdline-tools/*/bin/profgen 2>/dev/null | sort -V | tail -1)
+  [ -n "$PROFGEN" ] && break
+done
+[ -n "$PROFGEN" ] || { echo "profgen not found (cmdline-tools in ANDROID_HOME)"; exit 1; }
 [ -f "$APK" ] || { echo "APK not built: $APK"; exit 1; }
 
 # The APK carries the profile at all (capture, don't pipe: pipefail +
