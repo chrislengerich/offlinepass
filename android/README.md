@@ -293,3 +293,7 @@ lost-unpair bugs), `SignerResolutionMatrixTest` (the signer default
 chain), `VaultGitClientTest` (the ahead/behind divergence accounting),
 `PasteDeviceStagingTest` + `DeviceWrapTest` (the paste pairings),
 `JGitSignProbeTest` (the pluggable-signer embedding).
+
+## License
+
+GNU General Public License v3.0 — see [../LICENSE](../LICENSE). Contributions: [../CONTRIBUTING.md](../CONTRIBUTING.md).

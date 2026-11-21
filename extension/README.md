@@ -94,3 +94,7 @@ format, key chain, and threat model:
   sender's speed selector on the phone.
 - **Decrypt asks for the PIN every time** — expected: the key's PIN/UV
   token expires between operations; the touch is always required.
+
+## License
+
+GNU General Public License v3.0 — see [../LICENSE](../LICENSE). Contributions: [../CONTRIBUTING.md](../CONTRIBUTING.md).

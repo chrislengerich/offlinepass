@@ -25,6 +25,12 @@ self-contained, and has QRFT export to support fully offline password
 management. It also encrypts unused memory at rest, can be configured to
 back up to any Git remote or USB cold storage.
 
+## License
+
+GNU General Public License v3.0 — see [LICENSE](LICENSE). Contributions
+welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) (the repo assumptions and
+the test expectations before a change).
+
 ## Prerequisites: a security key holding an OpenPGP key set
 
 The whole system assumes a **YubiKey (or any OpenPGP-compatible token)

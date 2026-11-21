@@ -94,3 +94,7 @@ enrolled public keys.
 - `../android/README.md` — the app's build/test/storage map + the
   security-key initialization guide (Linux gpg + Android OpenKeyChain)
 - `../docs/testing-plan.md` — the test layers and the hardware-in-the-loop plan
+
+## License
+
+GNU General Public License v3.0 — see [../LICENSE](../LICENSE). Contributions: [../CONTRIBUTING.md](../CONTRIBUTING.md).
