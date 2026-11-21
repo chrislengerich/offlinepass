@@ -18,12 +18,18 @@ one OpenPGP-encrypted vault file in a git repo, with three clients.
   baseline-profile generator, and the protocol vector generators.
   **[`scripts/README.md`](scripts/README.md)**
 
-Unlike Proton Pass, however, it works perfectly well fully offline and
-doesn't leak your sites via remote fetches of favicons. Unlike KeePassXC,
-it supports security key E2E encryption natively, is modern, simple and
-self-contained, and has QRFT export to support fully offline password
-management. It also encrypts unused memory at rest, can be configured to
-back up to any Git remote or USB cold storage.
+Key Features: 
+- Works fully offline, no account needed.
+- Encrypts memory at rest in addition to files, ensuring defense-in-depth against browser compromises like the recent Optimizely hack.
+- E2E encrypted to hardware-backed private keys (Yubikey and screenlock), unlike Proton Pass, which uses software-based private keys that are more easily stolen.
+- Signed transactions using Yubikey or screenlock. No changes to your data unless you explicitly authorize with a touch.
+- Transaction memory, no more accidentally overwritten passwords.
+- Share passwords via QR codes (qrft.org) to other phones or friends (encrypted) or to desktop (via the Chrome extension: https://github.com/chrislengerich/offlinepass/blob/main/extension/README.md), without logging in.
+- Back up to any Git remote (VPC or public Internet) or USB cold storage, allowing for decentralized and self-hosted state.
+- Low-dependency vault format - single git repo that can also be decrypted using GPG and linux tools.
+- Low-dependency supply chain - security keys and cellphone screenlocks as hardware tools.
+- Import/export from Proton Pass.
+- Will make smoothie for you, if you ask it nicely (or so I’ve heard).
 
 ## Prerequisites: a security key holding an OpenPGP key set
 
