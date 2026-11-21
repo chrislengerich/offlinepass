@@ -533,18 +533,6 @@ fun SetupTabScreen(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                "Require screenlock (biometric/PIN) at unlock",
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodySmall
-            )
-            Switch(checked = screenLockOn, onCheckedChange = { onScreenLockToggle(it) })
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
                 "Encrypt items in memory — " +
                     "search/list works sealed; clicking an entry reveals it " +
                     "with a screen-lock prompt.",
