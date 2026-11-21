@@ -22,6 +22,87 @@ Design: `../docs/android-app-design.md` · work plan: `../docs/work-plan.md`
 
 Day-to-day builds need only the first three.
 
+## Initialize the security key (OpenPGP key set)
+
+The app needs a YubiKey whose OpenPGP applet holds a key set: the three
+card slots — **SIGN** (the commit signatures), **DEC** (the vault
+decrypt), **AUT** (the SSH sync auth). Use **modern ECC flavors**
+(cv25519 for DEC, ed25519 or NIST-P256 for SIGN/AUT — all proven by the
+app's curve sweep; RSA-2048/3072/4096 also works but is slower over USB).
+Two ways to set it up:
+
+### From Linux (gpg, the authoritative flow)
+
+```bash
+# 0. Install the tooling
+sudo apt install gnupg pcscd opensc          # (Debian/Ubuntu names)
+
+# 1. See the card (proves the reader/pcscd work)
+gpg --card-status                             # expect: "Application ID ... Signature key ... none"
+
+# 2. Set the card's key attributes to the modern ECC flavors ONCE
+#    (do this BEFORE generating: the attributes define the algorithms
+#    the on-card generation will use)
+gpg --card-edit
+  gpg/card> admin
+  gpg/card> key-attr                          # pick: 1) default (ECC)
+      # → "Signature key"     → ECC → cv25519/ed25519 per the prompt
+      # → "Encryption key"    → ECC → cv25519
+      # → "Authentication key"→ ECC → cv25519/ed25519
+  gpg/card> quit
+
+# 3. Generate the key set ON the card — the keys never exist off it.
+#    Set/confirm the PINs when asked (the OpenPGP PIN for daily use,
+#    the ADMIN PIN for management; the defaults are 123456 / 12345678 —
+#    CHANGE THEM).
+gpg --card-edit
+  gpg/card> admin
+  gpg/card> generate
+      # backup copy off-card? → usually NO (the card is the only copy;
+      # a lost card = re-key the vault)
+  gpg/card> quit
+
+# 4. Verify + make the key usable on the desktop
+gpg --card-status                             # the slots now show key ids + fingerprints
+gpg --list-keys                               # the card stub appears in the keyring
+gpg --export > my-keys.pub                    # the public half for other machines
+
+# 5. The SSH auth line (for the GitHub sync auth)
+gpg --export-ssh-key $(gpg --card-status | awk '/Signature key/ {print $3}')
+```
+
+Notes:
+- The card holds the ONLY private-key copy in this flow — back up the
+  public key and record the PINs somewhere safe (a lost card means
+  re-keying every vault recipient; the git history stays decryptable
+  from any OTHER enrolled key/card).
+- A second key set lives fine on a SECOND YubiKey for backup — repeat
+  the flow, keep both cards' public keys as recipients.
+
+### From Android (OpenKeyChain, NFC/USB)
+
+OpenKeyChain can manage the card from the phone — useful when the
+setup happens on a machine without gpg:
+
+1. Install **OpenKeyChain** (F-Droid or Play).
+2. OpenKeyChain → the **"YubiKey: use YubiKey"** navigation entry.
+3. Tap the card (NFC) or plug it (USB-OTG) — the applet is detected.
+4. **Set the OpenPGP PIN and the Admin PIN** (OpenKeyChain's YubiKey
+   screen → the PIN management; change the factory defaults).
+5. Generate the key set **on the card** (OpenKeyChain's YubiKey setup
+   creates the keys directly on the token — they never exist off it).
+6. The public half: OpenKeyChain → the key → **share/export the public
+   key** (a file or a QR) — the desktop imports it
+   (`gpg --import my-keys.pub`) and the vault's recipients take it.
+
+Notes:
+- The app's own daily flow (unlock/save/sync/sign) does NOT go through
+  OpenKeyChain — it talks to the card directly (YubiKit over NFC/USB).
+  OpenKeyChain is needed only for the cold paths (the first-save key
+  lookup, the optional key import) and for this initialization.
+- OpenKeyChain will ask for approval the first time another app uses
+  the card through it (the API permission prompt).
+
 ## Build, test, install
 
 ```bash
