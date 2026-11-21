@@ -2332,7 +2332,12 @@ object VaultSession {
             val carriedDevices = (stashedDevices ?: emptyList()) +
                 (loadedEnvelope?.devices?.toList() ?: emptyList())
             stashedDevices = null
-            val carriedRemoved = loadedEnvelope?.removedDeviceIds?.toList() ?: emptyList()
+            // The unpair TOMBSTONES carried the same way (the stash had
+            // them; the promote never read them — an unpair was lost on
+            // the idle lock and the device resurrected on the next sync).
+            val carriedRemoved = (stashedRemovedDeviceIds ?: emptyList()) +
+                (loadedEnvelope?.removedDeviceIds?.toList() ?: emptyList())
+            stashedRemovedDeviceIds = null
             val env = SealedVault.toEnvelope(items)
             rev = env.rev
             env.deletedItemUuids = (carriedTombstones + env.deletedItemUuids)
@@ -3494,9 +3499,13 @@ object VaultSession {
         loadedEnvelope?.deletedItemUuids?.clear()
         loadedEnvelope?.extraFields?.clear()
         // THE PAIRING STASH: the staged-but-unsaved pairings survive the
-        // idle lock (the promote picks them up on the next unlock).
-        stashedDevices = loadedEnvelope?.devices?.toList()
+        // idle lock (the promote picks them up on the next unlock). The
+        // COALESCE: a second zero() (the idle lock → the activity
+        // teardown's onDestroy) sees no envelope and must not clobber
+        // the first call's stash with an empty one.
+        stashedDevices = loadedEnvelope?.devices?.toList() ?: stashedDevices
         stashedRemovedDeviceIds = loadedEnvelope?.removedDeviceIds?.toList()
+            ?: stashedRemovedDeviceIds
         loadedEnvelope = null
         rev = 0
         stubSession = false
