@@ -39,6 +39,7 @@ import com.offlinepass.app.ui.ExportTargetPickScreen
 import com.offlinepass.app.ui.PairScanScreen
 import com.offlinepass.app.vault.DeviceRecord
 import com.offlinepass.app.vault.DeviceWrap
+import com.offlinepass.app.vault.GooglePasswordsCsv
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -1528,6 +1529,52 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             screen = Screen.GetStarted
                         } finally {
                             // Plaintext Proton export staging — wiped.
+                            com.offlinepass.app.vault.SecureWipe.file(staged)
+                        }
+                    }
+                },
+                onImportGoogle = { remote, pat, uri ->
+                    VaultSession.configure(remote, emptyList())
+                    if (pat.isNotBlank()) VaultSession.savePat(pat)
+                    status = ""
+                    lifecycleScope.launch {
+                        val staged = File(cacheDir, "import-google")
+                        try {
+                            contentResolver.openInputStream(uri)?.use { ins ->
+                                staged.outputStream().use { ins.copyTo(it) }
+                            }
+                            // THE GOOGLE CSV: parsed straight to items — no
+                            // JSON sniff, no encrypted-restore branch (a CSV
+                            // is never PGP armor). The lossy rule: the
+                            // Google format has no note/TOTP/multi-URL.
+                            val items = GooglePasswordsCsv.parse(staged.readText())
+                            if (items.isEmpty()) {
+                                status = "No entries found — is that a Google " +
+                                    "Passwords CSV export?"
+                                return@launch
+                            }
+                            val open = VaultSession.gitOpenOnly()
+                            if (open is VaultSession.Result.Error) {
+                                android.widget.Toast.makeText(this@MainActivity,
+                                    "Offline — will sync later", android.widget.Toast.LENGTH_LONG).show()
+                                status = "Offline: repo not fetched. Use Sync now when back online."
+                            }
+                            val env = Envelope(items = items.toMutableList())
+                            VaultSession.adopt(env)
+                            status = "Imported ${env.items.size} entries."
+                            status = when (val r = saveLoop(env.items)) {
+                                VaultSession.Result.Success -> {
+                                    android.widget.Toast.makeText(
+                                        this@MainActivity, "Import complete",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                    "Import complete (rev ${VaultSession.currentRev()})."
+                                }
+                                else -> "Imported locally; save: $r"
+                            }
+                            screen = Screen.GetStarted
+                        } finally {
+                            // The Google CSV staging — wiped.
                             com.offlinepass.app.vault.SecureWipe.file(staged)
                         }
                     }
