@@ -48,6 +48,10 @@ jobs:
           cache: gradle
       - name: Set up the Android SDK (accept the licenses, install platform 36)
         uses: android-actions/setup-android@v3
+        with:
+          # NB: the obsolete 'tools' package no longer exists in the
+          # repository — requesting it fails sdkmanager with exit 1.
+          packages: platform-tools platforms;android-36
       - name: Android unit tests (255)
         run: |
           cd android
