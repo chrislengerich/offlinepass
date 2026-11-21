@@ -1,0 +1,24 @@
+# THE BASELINE PROFILE (manual, wildcard rules — AGP expands them and
+# rewrites the classes through the R8 mapping at build time, so the rules
+# survive minification).
+#
+# WHY: the first Setup load JIT-compiles a large class surface (JGit +
+# its transitive deps: the git open/packfile walk, the SSH transport,
+# the OpenPGP framing). The JIT cliff lands on the first sync/commit.
+# The rules below pre-compile those packages AT INSTALL (ART reads
+# assets/dexopt/baseline.prof from the APK) — release builds only
+# (debuggable processes ignore profiles entirely).
+#
+# Flags note: method rules carry the H/S/P flags; WILDCARD CLASS rules
+# (pkg/**;) must be bare per the ART profile format — AGP's wildcard
+# expander rejects flags on class rules. A bare class rule marks the
+# class as startup-classed, which is what triggers its pre-verification
+# and the dexopt service's AOT compilation of its methods.
+# BouncyCastle is SCOPED to the openpgp/crypto packages the envelope +
+# commit-signing paths touch — a blanket org/bouncycastle rule would
+# pre-compile far more than needed and bloat the odex.
+
+Lorg/eclipse/jgit/**;
+Lcom/jcraft/jsch/**;
+Lorg/bouncycastle/openpgp/**;
+Lorg/bouncycastle/crypto/**;

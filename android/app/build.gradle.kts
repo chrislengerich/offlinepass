@@ -114,6 +114,13 @@ dependencies {
     implementation("org.eclipse.jgit:org.eclipse.jgit:7.7.1.202607240634-r")
     implementation("org.slf4j:slf4j-nop:2.0.18")
 
+    // Baseline profiles: ships src/main/baseline-prof.txt (the JGit/JSch/BC
+    // class surface) — ART pre-compiles it at install on non-debuggable
+    // builds, closing the first-setup JIT cliff. Belt-and-suspenders for
+    // APK installs (ART reads the APK's profile natively) + ProfileVerifier
+    // for the on-device assertions.
+    implementation("androidx.profileinstaller:profileinstaller:1.3.1")
+
     // QR rendering for single-entry exports
     implementation("com.google.zxing:core:3.5.3")
 
