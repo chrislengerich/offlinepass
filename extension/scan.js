@@ -178,7 +178,9 @@ async function prepareDecrypt(text) {
 }
 
 /** Deliver decrypted entries: URL-match against the target tab → auto-fill
- *  (no UI); no match → the entry cards. */
+ *  (no UI, window closes); no match → attempt the fill anyway (the first
+ *  entry), but stay open with a warning and the entry cards (copy/reveal)
+ *  so the guess can be checked or undone by hand. */
 async function deliver(items) {
   await refreshTarget();
   const best = bestMatch(items);
@@ -189,6 +191,19 @@ async function deliver(items) {
     if (ok) return; // window closed by fillTab
     // Fill couldn't find fields — fall back to the cards.
     msgEl.textContent = "Auto-fill found no login fields on the tab — fill manually.";
+  } else {
+    const first = items[0];
+    if (first) {
+      msgEl.textContent = "No URL match" + (targetInfo ? " for " + targetInfo.origin : "") +
+        " — filling \"" + first.name + "\" anyway; verify it below.";
+      const ok = await fillTab(first, { keepOpen: true });
+      if (ok) {
+        noMatchFill = true;
+        showEntries(items);
+        return;
+      }
+      msgEl.textContent = "Fill attempt failed — fill manually from the cards below.";
+    }
   }
   showEntries(items);
 }
@@ -323,6 +338,7 @@ async function offerRestore(device) {
 let targetInfo = null; // { origin, url } | null
 let targetGone = false;
 let targetBanner = null;
+let noMatchFill = false; // filled despite no URL match — the banner must warn
 
 function originOf(url) {
   try { return new URL(url).origin; } catch (e) { return null; }
@@ -338,6 +354,12 @@ function entryMatchesTarget(item) {
 
 function renderTargetBanner() {
   if (!targetBanner) return;
+  if (noMatchFill && !targetGone) {
+    targetBanner.textContent = "⚠ No URL match — filled into " +
+      (targetInfo ? targetInfo.origin : "the tab") + " anyway. Check the tab before submitting.";
+    targetBanner.style.color = "#ffd75e";
+    return;
+  }
   targetBanner.textContent = targetGone
     ? "⚠ Target tab is gone — reopen the extension on the tab you want to fill."
     : targetInfo
@@ -452,9 +474,12 @@ function showEntries(items) {
   });
 }
 
-/** Fills the captured tab; resolves true when fields were found (the
- *  window closes right then), false otherwise (cards stay usable). */
-async function fillTab(item) {
+/** Fills the captured tab; resolves true when fields were found. Default
+ *  (matched) mode closes the window and zeroes the passwords right then.
+ *  With { keepOpen: true } — the no-URL-match path — the window stays up
+ *  with the cards (copy/reveal) and the passwords intact, so the guessed
+ *  fill can be verified or redone by hand. */
+async function fillTab(item, opts = {}) {
   fillMsg.textContent = "";
   if (targetTabId == null) { fillMsg.textContent = "No target tab (open via the toolbar popup)."; return false; }
   let tab;
@@ -471,6 +496,11 @@ async function fillTab(item) {
       type: "offlinepass-fill", username: item.username, password: item.password,
     });
     if (res && res.ok) {
+      if (opts.keepOpen) {
+        fillMsg.textContent = "Filled \"" + item.name + "\" into " +
+          (targetInfo ? targetInfo.origin : "the tab") + ".";
+        return true;
+      }
       item.password = ""; entries.forEach((e) => { e.password = ""; });
       window.close(); // filled — popup gone immediately
       return true;
