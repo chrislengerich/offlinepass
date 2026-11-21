@@ -40,12 +40,12 @@ JARS = [
      "jsch/0.2.17/1572f8ac4023895c2232160fddd4bfdd8c8e214d/jsch-0.2.17.jar",
      ["com/jcraft/jsch/"]),
     (Path.home() / ".gradle/caches/modules-2/files-2.1/org.bouncycastle/"
-     "bcprov-jdk18on/1.79/4d8e2732bcee15f1db93df266c3f5b70ce5cac21/"
-     "bcprov-jdk18on-1.79.jar",
+     "bcprov-jdk18on/1.87/3cf2bbc1280a743fd3d4d7d556883c13e5d28be5/"
+     "bcprov-jdk18on-1.87.jar",
      ["org/bouncycastle/crypto/", "org/bouncycastle/openpgp/"]),
     (Path.home() / ".gradle/caches/modules-2/files-2.1/org.bouncycastle/"
-     "bcpg-jdk18on/1.79/904dd8a8e1c9f7d58d1ffa7f4ca3fb00736a601f/"
-     "bcpg-jdk18on-1.79.jar",
+     "bcpg-jdk18on/1.87/2dcd32242c24b3cd8234461ce28b7cf615abf686/"
+     "bcpg-jdk18on-1.87.jar",
      ["org/bouncycastle/openpgp/"]),
 ]
 

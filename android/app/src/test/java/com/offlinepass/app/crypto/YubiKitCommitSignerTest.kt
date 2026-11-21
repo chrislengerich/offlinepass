@@ -110,4 +110,50 @@ class YubiKitCommitSignerTest {
         }
         assertEquals("a FAILED sign must not remember the pin", null, remembered)
     }
+
+    @Test
+    fun ed25519SlotSignsTheFullMaterialAndBCVerifies() = kotlinx.coroutines.runBlocking {
+        // The cv25519 SIG slot = Ed25519: the slot probe answers ED25519,
+        // the card PureEdDSAs the FULL SIGNED MATERIAL (no DigestInfo),
+        // the packet = alg 22 — and BC 1.87 must verify the armored
+        // result (the gpg path).
+        val ed = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        var sawMaterial: ByteArray? = null
+        val signer = YubiKitCommitSigner(
+            context = context,
+            keyId = -0x63DF668CC4E7B53L,
+            prompt = { "123456".toCharArray() },
+            slotKeyProbe = { "ED25519" },
+            cardSign = { _, material ->
+                sawMaterial = material
+                val s = java.security.Signature.getInstance("Ed25519")
+                s.initSign(ed.private)
+                s.update(material)
+                s.sign()
+            })
+        val gpg = signer.sign(null, null, content, null, null, null)
+        val armored = gpg.toExternalString()
+
+        // The card saw the DIGEST (the card-spec EdDSA PSO:CDS: the host
+        // hashes — the payload = the raw 32-byte SHA-256 digest of the
+        // signed material, not the 51-byte RSA DigestInfo, not the doc).
+        assertTrue("the card must see the 32-byte digest",
+            sawMaterial!!.size == 32)
+
+        // The BC verification: the EDDSA tag + the real key.
+        val decoded = org.bouncycastle.openpgp.PGPUtil.getDecoderStream(
+            armored.byteInputStream())
+        val factory = org.bouncycastle.openpgp.PGPObjectFactory(
+            decoded, org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator())
+        val sig = (factory.nextObject() as org.bouncycastle.openpgp.PGPSignatureList)[0]
+        assertEquals(org.bouncycastle.bcpg.PublicKeyAlgorithmTags.EDDSA, sig.keyAlgorithm)
+        val pk = org.bouncycastle.openpgp.operator.jcajce.JcaPGPKeyConverter()
+            .getPGPPublicKey(org.bouncycastle.bcpg.PublicKeyAlgorithmTags.EDDSA,
+                ed.public, java.util.Date())
+        sig.init(
+            org.bouncycastle.openpgp.operator.jcajce.JcaPGPContentVerifierBuilderProvider()
+                .setProvider("BC"), pk)
+        sig.update(content)
+        assertTrue("BC must verify the Ed25519 commit signature", sig.verify())
+    }
 }

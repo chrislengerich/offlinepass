@@ -26,12 +26,10 @@ back up to any Git remote or USB cold storage.
 ## Prerequisites: a security key holding an OpenPGP key set
 
 The whole system assumes a **YubiKey (or any OpenPGP-compatible token)
-that holds a GPG key set** — the three card slots (SIGN, ENCRYPT, AUTH),
-modern ECC flavors recommended (cv25519 for the decryption slot,
-ed25519/NIST-P256 for signing and auth). The vault's decrypt happens
-in-process against the card (the DEC slot), the git commits sign with it
-(the SIG slot or the device screenlock key), and the sync authenticates
-with it (the AUT slot).
+that holds a GPG key set** — the three card slots (SIGN, ENCRYPT, AUTH).
+The vault's decrypt happens in-process against the card (the DEC slot),
+the git commits sign with it (the SIG slot or the device screenlock
+key), and the sync authenticates with it (the AUT slot).
 
 To initialize a key set on the card — either from **Linux** (`gpg
 --card-edit`, the authoritative flow) or from **Android** (OpenKeyChain

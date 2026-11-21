@@ -26,10 +26,17 @@ Day-to-day builds need only the first three.
 
 The app needs a YubiKey whose OpenPGP applet holds a key set: the three
 card slots — **SIGN** (the commit signatures), **DEC** (the vault
-decrypt), **AUT** (the SSH sync auth). Use **modern ECC flavors**
-(cv25519 for DEC, ed25519 or NIST-P256 for SIGN/AUT — all proven by the
-app's curve sweep; RSA-2048/3072/4096 also works but is slower over USB).
-Two ways to set it up:
+decrypt), **AUT** (the SSH sync auth). The supported flavors per slot
+(tested in the repo; see the matrix notes below):
+
+| Slot | Supported | Notes |
+|---|---|---|
+| SIGN | RSA-2048/3072/4096, ECDSA **NIST-P256/P-384/P-521**, **Ed25519** | the commit-signature builder covers all three (the Ed25519 = PureEdDSA over the SHA-256 digest per the card spec) |
+| DEC | RSA-2048/3072/4096, ECDH **NIST-P256/P-384/P-521/Curve25519** | the vault decrypt, the curve sweep proven by test |
+| AUT | RSA-2048/3072 (4096 = a USB dead end), ECDSA, **Ed25519** | the SSH sync auth |
+
+The modern all-ECC setup (cv25519 DEC + ed25519 SIGN/AUT) is the
+recommended flavor. Two ways to initialize:
 
 ### From Linux (gpg, the authoritative flow)
 
