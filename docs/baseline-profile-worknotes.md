@@ -68,11 +68,19 @@ Lorg/bouncycastle/crypto/**;
 
 ## Follow-ups (not done here)
 
-1. **Measure Setup first-load on the real install** with the signed release
-   APK, using the in-place `SetupTiming` logcat lines (first Setup open after
-   install, before/after the bg-dexopt pass). When confirmed fast: strip the
-   four `android.util.Log.i("SetupTiming", ...)` lines from `SetupTab.kt`
+1. **Measure Setup first-load on the profileable install** — the
+   `offlinepass·p` build is LEFT INSTALLED for testing (separate package,
+   own fresh data; the real install is untouched). Create a scratch vault
+   on it, run the first Setup load, and read the `SetupTiming` logcat lines
+   (`adb logcat -s SetupTiming`). Compare the pre-profile APK (the
+   app-release-signed.apk at the repo root, built before the profile) if a
+   baseline number is wanted. When confirmed fast: strip the four
+   `android.util.Log.i("SetupTiming", ...)` lines from `SetupTab.kt`
    (446, 478, 580, 582) and the `SideEffect`.
+   NOTE: the test install is signed with a THROWAWAY key
+   (/tmp/opencode/verify.jks) — a future properly-signed profileable build
+   needs an uninstall first (signature mismatch blocks the update; the
+   scratch data goes with it, by design).
 2. **YubiKey commit-signing UI restore** (separate task): `72c49b9` removed
    the Setup's "Sync via YubiKey SSH (OpenKeyChain)" button + enrollment
    dialog — the backend (`onEnrollYubikeySsh`, `onPickAuthSubkey`,
