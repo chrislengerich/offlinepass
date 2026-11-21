@@ -75,11 +75,16 @@ class TestPasswordGeneration(unittest.TestCase):
         self.assertEqual(len(pw), 32)
 
     def test_contains_expected_chars(self):
-        for _ in range(50):
-            pw = generate_password(50)
-            self.assertTrue(any(c.isupper() for c in pw))
-            self.assertTrue(any(c.islower() for c in pw))
-            self.assertTrue(any(c.isdigit() for c in pw))
+        # A single long draw. (The old loop asserted every one of 50
+        # short draws contained each class: the chance a 50-char draw
+        # from the 82-char alphabet misses the 10 digits is (72/82)^50
+        # ~= 0.15%, so the loop failed ~7% of runs - the CI flake. A
+        # 2000-char draw misses a class with probability ~1e-120.)
+        pw = generate_password(2000)
+        self.assertTrue(any(c.isupper() for c in pw))
+        self.assertTrue(any(c.islower() for c in pw))
+        self.assertTrue(any(c.isdigit() for c in pw))
+        self.assertTrue(any(c in "!@#$%^&*()-_=+" for c in pw))
 
     def test_uniqueness(self):
         pws = {generate_password() for _ in range(100)}
