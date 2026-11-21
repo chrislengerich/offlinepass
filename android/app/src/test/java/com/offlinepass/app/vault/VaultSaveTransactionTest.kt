@@ -1070,7 +1070,15 @@ class VaultSaveTransactionTest {
         //      unionMerge → re-encrypt → push
         val remoteDir = File(app.cacheDir, "op-diverge-remote.git")
         remoteDir.deleteRecursively()
-        org.eclipse.jgit.api.Git.init().setBare(true).setDirectory(remoteDir).call().close()
+        org.eclipse.jgit.api.Git.init().setBare(true).setDirectory(remoteDir).call().use { g ->
+            // PIN THE HEAD: the bare init's HEAD symref = the environment-
+            // dependent default branch (JGit reads init.defaultBranch from
+            // the SYSTEM config — the CI runner's /etc/gitconfig differs
+            // from the desktop's). Without the link the clone fails with
+            // "Remote branch 'HEAD' not found in upstream origin" on the
+            // runner (measured) while passing locally.
+            g.repository.updateRef(Constants.HEAD).link(Constants.R_HEADS + "main")
+        }
         val remoteUrl = "file://" + remoteDir.absolutePath
         VaultSession.configure(remoteUrl, listOf("user@example.com"))
         VaultSession.patOverride = "fake-pat" // ignored by the file:// transport
@@ -1083,7 +1091,10 @@ class VaultSaveTransactionTest {
         // The second device: clone, write ITS OWN encrypted vault, commit, push.
         val second = File(app.cacheDir, "op-diverge-second")
         second.deleteRecursively()
-        org.eclipse.jgit.api.Git.cloneRepository().setURI(remoteUrl).setDirectory(second).call().use { g ->
+        // The explicit branch: the clone must not depend on the remote's
+        // HEAD symref resolving (the runner/normal git-config differences).
+        org.eclipse.jgit.api.Git.cloneRepository().setURI(remoteUrl).setDirectory(second)
+            .setBranch("main").call().use { g ->
             val env = Envelope(deviceId = "second-device").also { e ->
                 e.rev = 5
                 e.items = mutableListOf(item("Remote Item"))
