@@ -62,6 +62,20 @@ jobs:
           ./gradlew :app:assembleRelease --console=plain
           cd ..
           scripts/verify-profile.sh
+      - name: Dump the failing tests' detail into the log
+        if: failure()
+        run: |
+          cd android/app/build/test-results/testDebugUnitTest
+          python3 -c "
+          import glob, xml.etree.ElementTree as ET
+          for f in sorted(glob.glob('*.xml')):
+              t = ET.parse(f).getroot()
+              for tc in t.iter('testcase'):
+                  for kind in ('failure', 'error'):
+                      for e in tc.findall(kind):
+                          print(f'=== {tc.get(\"classname\")}.{tc.get(\"name\")} [{kind}]')
+                          print((e.text or e.get('message') or '')[:4000])
+          "
       - name: Upload the test reports (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
