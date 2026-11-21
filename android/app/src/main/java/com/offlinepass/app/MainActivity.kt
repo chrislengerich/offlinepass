@@ -485,6 +485,28 @@ class MainActivity : androidx.activity.ComponentActivity() {
             }
         }
 
+    private val googleExportLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+            if (uri == null) return@registerForActivityResult
+            lifecycleScope.launch {
+                try {
+                    val csv = VaultSession.exportGoogleCsv()
+                    if (csv == null) {
+                        status = "Nothing to export — unlock the vault (the plaintext " +
+                            "export needs the secrets in memory)."
+                    } else {
+                        contentResolver.openOutputStream(uri)?.use { it.write(csv.toByteArray()) }
+                        status = "Exported to Google Passwords CSV (PLAINTEXT — the notes, " +
+                            "the TOTP and the extra URLs are NOT in the Google format; " +
+                            "delete the file once imported)."
+                        sealedToast(status)
+                    }
+                } catch (e: Exception) {
+                    status = "Export failed: ${e.message}"
+                }
+            }
+        }
+
     private val usbRestoreLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) return@registerForActivityResult
@@ -2240,6 +2262,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onLock = { lockNow("") },
                     onExportProton = {
                         protonExportLauncher.launch("offlinepass-proton-export.json")
+                    },
+                    onExportGoogle = {
+                        googleExportLauncher.launch("offlinepass-google-export.csv")
                     },
                     onExportBackupZip = {
                         backupExportLauncher.launch("offlinepass-backup.zip")

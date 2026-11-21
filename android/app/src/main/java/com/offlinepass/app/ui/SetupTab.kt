@@ -51,6 +51,7 @@ fun SetupTabScreen(
     onLock: () -> Unit,
     onExportBackupZip: () -> Unit = {},
     onExportProton: () -> Unit = {},
+    onExportGoogle: () -> Unit = {},
     onImportQrft: () -> Unit,
     onPairDevice: () -> Unit = {},
     pairedDevices: List<com.offlinepass.app.vault.DeviceRecord> = emptyList(),
@@ -441,6 +442,17 @@ fun SetupTabScreen(
             modifier = Modifier.fillMaxWidth()) {
             Text("To Proton (plaintext JSON)")
         }
+        Button(onClick = onExportGoogle, enabled = busy == null,
+            modifier = Modifier.fillMaxWidth()) {
+            Text("To Google Passwords (CSV)")
+        }
+        Text(
+            "The Google CSV carries ONLY name / url / username / password — " +
+                "the notes, the TOTP, the extra URLs and the passkeys are " +
+                "dropped (the Google format has no columns for them). " +
+                "PLAINTEXT — delete the file once imported.",
+            style = MaterialTheme.typography.bodySmall
+        )
         HorizontalDivider()
 
         android.util.Log.i("SetupTiming", "MID: before Paste devices")

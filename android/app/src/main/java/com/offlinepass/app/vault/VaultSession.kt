@@ -393,6 +393,20 @@ object VaultSession {
         return arr.toString(2)
     }
 
+    /** THE GOOGLE EXPORT: the password material in PLAINTEXT, in the Google
+     *  Passwords CSV shape (the same the importer reads) — the four columns
+     *  `name,url,username,password`. THE LOSSY RULE: the note, the TOTP
+     *  uri, the extra URLs and the passkeys DO NOT FIT the Google format —
+     *  the caller warns before/after handing the file over. Requires a
+     *  full (promoted) session: the secrets leave the app in the clear by
+     *  explicit request. */
+    suspend fun exportGoogleCsv(): String? {
+        if (state !is State.Unlocked) return null
+        if (stubSession && !promoteIfStub()) return null
+        val env = loadedEnvelope ?: return null
+        return GooglePasswordsCsv.serialize(env.items)
+    }
+
     /** The plugged key's current name (the registry entry for the last
      *  seen serial) — the rename dialog's prefill; a never-seen key gets
      *  the "purple" suggestion. */
