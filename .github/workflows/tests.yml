@@ -55,13 +55,22 @@ jobs:
       - name: Android unit tests (255)
         run: |
           cd android
-          ./gradlew testDebugUnitTest --console=plain
+          ./gradlew testDebugUnitTest -Pslf4jLevel=info --console=plain
       - name: The release build + the baseline-profile guard
         run: |
           cd android
           ./gradlew :app:assembleRelease --console=plain
           cd ..
           scripts/verify-profile.sh
+      - name: Upload the test reports (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            android/app/build/reports/tests/
+            android/app/build/test-results/testDebugUnitTest/
+          retention-days: 7
 
   # The release pipeline's full pass (the YubiKey signing, the GPG sigs,
   # the GH publish) stays MANUAL — the key's touches cannot run on CI.

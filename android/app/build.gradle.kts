@@ -73,7 +73,11 @@ android {
                     events("failed")
                     setShowStandardStreams(true)
                 }
-                it.systemProperty("org.slf4j.simpleLogger.defaultLogLevel", "debug")
+                // The slf4j level: DEBUG locally (the YubiKeySsh/JSch
+                // diagnostics), quietable on CI via -Pslf4jLevel=info
+                // (the DEBUG flood drowns gradle's failure summaries).
+                it.systemProperty("org.slf4j.simpleLogger.defaultLogLevel",
+                    (project.findProperty("slf4jLevel") as? String) ?: "debug")
                 it.systemProperty("org.slf4j.simpleLogger.showThreadName", "false")
             }
         }
