@@ -21,7 +21,7 @@ one OpenPGP-encrypted vault file in a git repo, with three clients.
 Key Features: 
 - Works fully offline, no account needed.
 - Encrypts memory at rest in addition to files, ensuring defense-in-depth against browser compromises like the recent Optimizely hack.
-- E2E encrypted to hardware-backed private keys (Yubikey and screenlock), unlike Proton Pass, which uses software-based private keys that are more easily stolen.
+- E2E encrypted to hardware-backed private keys (Yubikey and screenlock), unlike Proton Pass, which uses software-based private keys that are more easily stolen. Verified against the Proton Pass Android source (at `60cf8cb0`): the share keys are in-memory encrypted blobs (`pass/.../key/ShareKey.kt#L25`), decrypted via the software PGP chain (`pass/.../crypto/impl/CoreUserKeys.kt#L49`), and the AndroidKeyStore appears only as the local cache wrapper and biometric gates (`pass/.../navigation/api/NavHostController.kt#L41`, `pass/.../biometry/impl/.../EnrollmentGuardKey.kt#L36`) — no security key anywhere in the item crypto (the YubiKey = the account 2FA only). Our keys: the vault decrypt happens ON the card's DEC slot (the key never leaves the Secure Element); the seal/sign = the TEE-held, non-exportable AndroidKeyStore keys behind the biometric gate.
 - Signed transactions using Yubikey or screenlock. No changes to your data unless you explicitly authorize with a touch.
 - Transaction memory, no more accidentally overwritten passwords.
 - Share passwords via QR codes (qrft.org) to other phones or friends (encrypted) or to desktop (via the Chrome extension: https://github.com/chrislengerich/offlinepass/blob/main/extension/README.md), without logging in.
