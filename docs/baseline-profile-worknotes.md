@@ -81,6 +81,38 @@ Lorg/bouncycastle/crypto/**;
    (/tmp/opencode/verify.jks) — a future properly-signed profileable build
    needs an uninstall first (signature mismatch blocks the update; the
    scratch data goes with it, by design).
+
+## The static method-profile generation (post-0.10.4 class rules were NOT enough)
+
+The first on-device report: the FIRST setup invocation still paid the JIT
+cliff; subsequent ones were fast (the bg-dexopt pass had compiled the
+methods the JIT profile recorded). Root cause: **class rules alone
+pre-verify but never AOT-compile methods** — and the ART profile format has
+no method wildcards. Fix = `scripts/gen-baseline-profile.py`: javap over
+the pinned jars (jgit 7.7.1 / jsch 0.2.17 / bcprov+bcpg 1.79, the scoped
+packages) → explicit `HSPL<class>;-><name><descriptor>` rules for every
+method, written between the GENERATED markers in baseline-prof.txt.
+
+Two bugs the verification caught (both would have silently shipped a
+useless profile):
+
+1. **The trailing `;` of an L-type return descriptor is PART of the
+   descriptor** (`()Lorg/eclipse/jgit/api/Git;`) — a regex treating it as
+   javap punctuation broke the dex lookup for every L-type-returning
+   method; only `()V` methods and `<init>`s survived (that was the
+   713-of-12042 ratio in the first binary).
+2. **R8 method renames defeat profgen's mapping application** — renamed
+   methods' rules (`commit() -> b`) silently drop. Fixed with
+   `-keepnames class org.eclipse.jgit.** { *; }` (+ jsch, bcpg-scoped BC)
+   in proguard-rules.pro: allowshrinking still strips unused members, the
+   survivors just keep their names (dex string bytes, not code) — and the
+   generated rules match the dex directly.
+
+Verified: profgen dumpProfile of the assembled release — 18,994 entries:
+6,195 JGit + 2,012 JSch + 1,153 BC method rules, `Git;->open(...)`,
+`Git;->commit()` present; the dropped half = R8-stripped methods
+(correctly absent from the dex). REGENERATE on any dependency bump:
+`python3 scripts/gen-baseline-profile.py`.
 2. **YubiKey commit-signing UI restore** (separate task): `72c49b9` removed
    the Setup's "Sync via YubiKey SSH (OpenKeyChain)" button + enrollment
    dialog — the backend (`onEnrollYubikeySsh`, `onPickAuthSubkey`,
