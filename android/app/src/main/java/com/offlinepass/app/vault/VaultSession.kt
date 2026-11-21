@@ -1878,6 +1878,7 @@ object VaultSession {
                             OpenKeyChainSigner(client, signId)
                         }
                     }
+                    invalidateSetupSnapshot()
                     val git = VaultGitClient()
                     if (!File(gitRoot(), ".git").exists()) {
                         // Safety net (live vault session only — a failed LOAD
@@ -2047,19 +2048,10 @@ object VaultSession {
     var screenLockOn by mutableStateOf(false)
         private set
 
-    fun screenLockRequired(): Boolean =
-        prefs().getBoolean("screenLockRequired", false).also { screenLockOn = it }
+    fun screenLockRequired(): Boolean = idleLockEnabled()
 
     fun setScreenLockRequired(on: Boolean) {
-        prefs().edit().putBoolean("screenLockRequired", on).apply()
         screenLockOn = on
-        if (!on) {
-            // The toggle now means "the app is screenlock-governed": the
-            // pre-unlock prompt AND the idle auto-lock. Turning it off
-            // means no governance — a running session is zeroed right
-            // here so nothing plaintext outlives the decision.
-            zero()
-        }
     }
 
     /** Idle auto-lock timeout in SECONDS (0 = never); only meaningful
@@ -2490,6 +2482,55 @@ object VaultSession {
                 "behind origin/main by $behind commit${if (behind == 1) "" else "s"}"
             else -> "diverged: ahead by $ahead, behind by $behind"
         }
+    }
+
+    /** THE SETUP'S SNAPSHOT (the state): null = the not-yet-computed →
+     *  the Setup renders its interstitial and computes on the IO thread;
+     *  the save/sync invalidates so the next visit refreshes. */
+    var setupSnapshot: RepoSnapshot? by mutableStateOf(null)
+
+    fun invalidateSetupSnapshot() { setupSnapshot = null }
+
+    /** THE ONE GIT-OPEN SNAPSHOT for the Setup: the head + the recent
+     *  commits + the ahead/behind in a single repo walk — the Setup's
+     *  composition previously opened the repo three times (the sync
+     *  line, the commit hash, the divergence), each a JGit open + the
+     *  packfile walk on the phone's storage. */
+    data class RepoSnapshot(val head: String, val commits: List<String>,
+                            val ahead: Int, val behind: Int, val hasRemote: Boolean)
+
+    fun readRepoSnapshot(limit: Int = 5): RepoSnapshot {
+        val hasRemote = config()?.remoteUrl != null
+        if (!File(gitRoot(), org.eclipse.jgit.lib.Constants.DOT_GIT).exists())
+            return RepoSnapshot("", emptyList(), 0, 0, hasRemote)
+        return runCatching {
+            org.eclipse.jgit.api.Git.open(gitRoot()).use { git ->
+                val head = git.repository.resolve(
+                    org.eclipse.jgit.lib.Constants.HEAD)?.name ?: ""
+                val commits = git.log().setMaxCount(limit).call().map { c ->
+                    val age = java.time.Duration.ofMillis(
+                        System.currentTimeMillis() - c.commitTime * 1000L)
+                    val whenTxt = when {
+                        age.toMinutes() < 1 -> "now"
+                        age.toHours() < 1 -> "${age.toMinutes()}m ago"
+                        age.toDays() < 1 -> "${age.toHours()}h ago"
+                        else -> "${age.toDays()}d ago"
+                    }
+                    "%s %s — %s (%s)".format(
+                        c.name().take(7), c.shortMessage, c.authorIdent.name, whenTxt)
+                }
+                val remote = git.repository.resolve(
+                    org.eclipse.jgit.lib.Constants.R_REMOTES + "origin/main")
+                var ahead = 0; var behind = 0
+                val headId = git.repository.resolve(
+                    org.eclipse.jgit.lib.Constants.R_HEADS + "main")
+                if (remote != null && headId != null && headId.name != remote.name) {
+                    ahead = git.log().addRange(remote, headId).call().toList().size
+                    behind = git.log().addRange(headId, remote).call().toList().size
+                }
+                RepoSnapshot(head.take(7), commits, ahead, behind, hasRemote)
+            }
+        }.getOrDefault(RepoSnapshot("", emptyList(), 0, 0, hasRemote))
     }
 
     /** The reset dialog's warning: compares the local clone against the

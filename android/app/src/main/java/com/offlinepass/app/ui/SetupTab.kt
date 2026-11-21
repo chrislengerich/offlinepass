@@ -443,6 +443,7 @@ fun SetupTabScreen(
         }
         HorizontalDivider()
 
+        android.util.Log.i("SetupTiming", "MID: before Paste devices")
         Text("Paste devices (Chrome extension)", style = MaterialTheme.typography.titleSmall)
         Button(onClick = onPairDevice, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Pair paste device (scan extension QR)")
@@ -474,6 +475,7 @@ fun SetupTabScreen(
         )
         HorizontalDivider()
 
+        android.util.Log.i("SetupTiming", "MID: before Autofill")
         Text("Autofill", style = MaterialTheme.typography.titleSmall)
         Button(onClick = onEnableAutofill, modifier = Modifier.fillMaxWidth()) {
             Text(if (autofillEnabled) "Autofill: enabled (re-open settings)" else "Enable autofill service")
@@ -588,6 +590,9 @@ fun SetupTabScreen(
 
         if (busy != null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         android.util.Log.i("SetupTiming", "END of the Setup composition")
+        androidx.compose.runtime.SideEffect {
+            android.util.Log.i("SetupTiming", "composition APPLIED to the window (the frame drawn)")
+        }
         HorizontalDivider()
         Text("Log", style = MaterialTheme.typography.titleSmall)
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
