@@ -1,18 +1,20 @@
 # offlinepass (alpha)
 
 A low-dependency password manager in the spirit of [Proton Pass](https://proton.me/pass):
-one OpenPGP-encrypted vault file in a git repo, with two clients.
+one OpenPGP-encrypted vault file in a git repo, with three clients.
 
 - **Linux (terminal UI)** — search, display, and manage Proton Pass login
   entries; render any entry as a QR code in the terminal.
 - **Android (native app)** — the same vault on the phone: unlock with a
   hardware key, full CRUD, live TOTP, git sync, autofill, and QR/qrft
   exports for the [QR Autofill](../qrautofill) app.
-- **Chrome extension (Chromebook)** — receives an encrypted single-entry
+- **Chrome extension** — receives an encrypted single-entry
   paste from the phone's QR and auto-fills it into the browser tab,
   gated by a security-key PIN + touch.
 
-Unlike Proton Pass, however, it works perfectly well fully offline and doesn't leak your sites via remote fetches of favicons. Unlike KeePassXC, it supports security key E2E encryption natively, is modern, simple and self-contained, and has QRFT export to support fully offline password management.
+Unlike Proton Pass, however, it works perfectly well fully offline and doesn't leak your sites via remote fetches of favicons. Unlike KeePassXC, it supports security key E2E encryption natively, is modern, simple and self-contained, and has QRFT export to support fully offline password management. It also encrypts unused memory at rest, can be configured to back up to any Git remote or USB cold storage, and makes you smoothies if you ask nicely (or so we've heard).
+
+Grab a Yubikey and a Github account and try it out.
 
 ## Repository layout
 
