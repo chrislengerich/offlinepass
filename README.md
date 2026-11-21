@@ -64,12 +64,13 @@ algorithm); the card-side decrypt/sign needs per-algorithm support:
 | Key type (slot) | Sign | Encrypt/decrypt | Status |
 |---|---|---|---|
 | RSA-3072/4096 (DEC, SIG) | ✓ | ✓ | supported (the PSO:DEC RSA path) |
-| ECDSA NIST P-256 (SIG/AUT) | ✓ | n/a | supported (the commit signing, the SSH auth via OpenKeyChain/YubiKit) |
+| ECDSA NIST P-256/P-384/P-521 (SIG/AUT) | ✓ | n/a | supported (the commit signing — the curve-agnostic r/s MPIs; the SSH auth via YubiKit) |
 | ECDH NIST P-256 (DEC) | — | ✓ | the card PSO:DEC with the ephemeral point; the card performs the RFC 6637 KDF + the AES-key-unwrap |
 | ECDH NIST P-384/P-521 (DEC) | — | ✓ | the same flow; the point length follows the card's reported key |
 | ECDH Curve25519 (DEC) | — | ✓ | the same flow (the v6-era packets; the card applet 5.7+ / the OpenPGP 3.4 cards) |
-| Ed25519 (SIG/AUT) | planned | n/a | the card + YubiKit support it; the sign path = the same PSO:DEC shape (the 32-byte challenges) |
+| Ed25519 (SIG/AUT) | ✓ | n/a | supported — the alg-22 sig body (the card PureEdDSAs the raw SHA-256 digest per the card spec's digest-only PSO:CDS; the BC round-trip test pins it) |
 | RSA-2048 (any slot) | supported | supported | the same paths as RSA-4096 (the shorter moduli) |
+| ML-KEM / ML-DSA (PQ) | — | — | **not supported** — BC 1.87 has the low-level packet shapes but no high-level OpenPGP PQ paths; unblocks with BC 1.88+ (and the PQ hardware is further out) — see TODO.md |
 | secp256k1 | not planned | not planned | the niche OpenPGP use |
 
 The unit-test strategy: BC's own `BcPublicKeyDataDecryptorFactory`
@@ -78,8 +79,8 @@ as the fake card, so the app's decrypt pipeline is proven against the
 card's contract without hardware in the loop.
 
 **OpenPGP v6**: the v6 PKESK dispatch is pinned by test; the v6-ECDH
-session-data recovery is blocked by BC 1.79 (see TODO.md) — the AEAD
-SEIPD-v2 support follows the same BC upgrade.
+session-data recovery is still blocked on BC 1.87 (see TODO.md) — the
+AEAD SEIPD-v2 support follows the same BC upgrade.
 
 ## Repository layout
 
