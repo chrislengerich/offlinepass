@@ -3,7 +3,7 @@
 A low-dependency password manager in the spirit of [Proton Pass](https://proton.me/pass):
 one OpenPGP-encrypted vault file in a git repo, with three clients.
 
-- **Linux (terminal UI)** — this repo's `offlinepass.py`: search, display,
+- **Linux (terminal UI)** — this repo's `linux/offlinepass.py`: search, display,
   and manage Proton Pass login entries; render any entry as a QR code.
   See [the Linux client](#linux-client-tui) below.
 - **Android (native app)** — the same vault on the phone: unlock with a
@@ -86,10 +86,11 @@ AEAD SEIPD-v2 support follows the same BC upgrade.
 
 ```
 offlinepass/
-├── offlinepass.py          # Linux: curses TUI (search, detail, QR, writes, TOTP)
-├── passlib.py              # Linux: item model, GPG storage, git sync, generators
-├── test_data.json          # Linux: 5 sample entries for testing
-├── test_passlib.py         # Linux: unit tests (37)
+├── linux/                  # THE LINUX CLIENT (the TUI + the library)
+│   ├── offlinepass.py      #   curses TUI (search, detail, QR, writes, TOTP)
+│   ├── passlib.py          #   item model, GPG storage, git sync, generators
+│   ├── test_data.json      #   5 sample entries for testing
+│   └── test_passlib.py     #   unit tests (37)
 ├── android/                # Android: Gradle project — README has the build/
 │   └── README.md           #   test/release instructions + the key-init guide
 ├── extension/              # Chrome MV3 extension: scan/pair/decrypt/autofill
@@ -155,7 +156,7 @@ mkdir -p ~/product/state && cd ~/product/state && git init
 cd ~/offlinepass
 
 # 4. Run in test mode (unencrypted, no GPG needed)
-python3 offlinepass.py
+python3 linux/offlinepass.py
 ```
 
 ### Production configuration
@@ -173,7 +174,7 @@ python3 offlinepass.py
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `offlinepass_FILE` | `~/offlinepass/test_data.json` | Path to store file |
+| `offlinepass_FILE` | `~/offlinepass/linux/test_data.json` | Path to store file |
 | `offlinepass_USE_GPG` | `0` | Set to `1` for GPG encryption |
 | `offlinepass_GPG_RECIPIENTS` | — | Comma-separated GPG key IDs/emails |
 | `offlinepass_GIT_DIR` | directory of `offlinepass_FILE` | Git repo root for auto-commit |
@@ -203,10 +204,10 @@ On exit the TUI pushes any pending commit to the remote (best-effort,
 
 ```bash
 # Linux unit tests (no terminal needed)
-python3 test_passlib.py
+python3 linux/test_passlib.py
 
 # Interactive TUI test
-python3 offlinepass.py
+python3 linux/offlinepass.py
 # → Search "git" → Enter → select GitHub → Show credentials
 # → or Display QR code → scan with the phone
 

@@ -405,7 +405,7 @@ class TUI:
 
 def main():
     # Config — override with env vars
-    data_path = os.environ.get("OFFLINEPASS_FILE", os.path.expanduser("~/offlinepass/test_data.json"))
+    data_path = os.environ.get("OFFLINEPASS_FILE", os.path.expanduser("~/offlinepass/linux/test_data.json"))
     # Multi-recipient (comma-separated), with back-compat for the single form.
     recipients = (os.environ.get("OFFLINEPASS_GPG_RECIPIENTS")
                   or os.environ.get("OFFLINEPASS_GPG_RECIPIENT"))
