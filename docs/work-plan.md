@@ -165,3 +165,59 @@ setup UI should keep them visually distinct.
    so it never blocks.
 4. Desktop changes are tiny and unblock cross-platform tests, so they
    land in Phase 1, not later.
+
+## Test-coverage TODO (2026-11-20, post baseline-profile work)
+
+Gaps surfaced reviewing the suites after the paste-fix + baseline-profile
+landings. Ordered by value/cost; work top-down.
+
+- [x] **T1. Paste crypto contract (extension ↔ device)** —
+  `extension/test/wrap_contract_test.mjs` (node, no deps): wrap.js (the
+  extension's real code, window-shimmed) decrypts the device-generated
+  vectors from `scripts/gen_device_wrap_vectors.py` — the SAME vectors
+  `DeviceWrapTest.kt` pins: keyId derivation (R1), prfSalt, the seed-wrap
+  layer (HKDF + AES-GCM, SEED_INFO/SEED_AAD), `unwrapPasteWithSeed` →
+  the expected plaintext (rev-2 `targets[]`), tampered-ct and no-target
+  negatives, TOTP RFC-6238 parity. Run: `node
+  extension/test/wrap_contract_test.mjs`. pkcs8 note: WebCrypto
+  re-encodes pkcs8, so the seed-unwrap asserts the KEY (the scalar d),
+  not a byte digest.
+
+- [x] **T2. Baseline-profile packaging guard** — `scripts/verify-profile.sh`:
+  assembleRelease → `profgen dumpProfile` → assert the method-rule counts
+  (≥N jgit/jsch/bc, `Git.open`/`Git.commit` present) → nonzero exit on
+  regression. Guards the two silent-death bugs the first pass caught
+  (the L-type `;` stripping; the R8 rename drop). Wired into
+  `scripts/release.sh` after the build step. (The grep -q + pipefail +
+  unzip's SIGPIPE combo fakes a failure — the check captures the listing
+  instead of piping.)
+
+- [x] **T3. `VaultGitClient` repo-logic tests** —
+  `VaultGitClientTest.kt` (12 tests, local repos on the JVM):
+  `aheadBehind()`'s four states + the no-repo/no-tracking nulls,
+  `commitDirty()`'s clean-noop vs dirty-commit vs the signed commit (the
+  gpgsig header asserted), `gitInit`'s main-branch HEAD + idempotence,
+  `remoteBranchExists`. The peer/divergence commits build via raw
+  `CommitBuilder` (CommitCommand has no setParent).
+
+- [x] **T4. Zero→unlock sweep for ALL staged state** —
+  `IdleLockStagedStateSweepTest.kt` (4 tests). CAUGHT TWO REAL BUGS:
+  (1) the second zero() (the idle lock → the activity teardown)
+  overwrote the pairing stash with an empty one — the stash now
+  COALESCES (`?: stashedDevices`); (2) the promote never read
+  `stashedRemovedDeviceIds` — an unpair was LOST on the idle lock and
+  the device resurrected on the next sync. Both fixed in VaultSession;
+  the sweep pins removals, the double-zero, the single consumption, and
+  the plaintext clear.
+
+- [x] **T5. Signer-resolution matrix** — `SignerResolutionMatrixTest.kt`
+  (7 tests): screenlock+hook → KeystoreCommitSigner, screenlock w/o hook
+  → null (honest failure), yubikey w/o a card → null + the NAMED reason,
+  okk+key → OpenKeyChainSigner, okk w/o key → null (the unsigned first
+  commit), the modes' exclusivity (the keystore hook must not leak into
+  the okk mode), the enrollment's mode migration on load.
+
+- [ ] **T6. L2/L3 instrumented suites** (the big one — `androidTest/` is
+  empty): the testing-plan's T-D/T-G tables (OpenKeyChain round-trip,
+  YubiKey NFC/USB, real-GitHub sync). Hardware-in-the-loop; a project of
+  its own.

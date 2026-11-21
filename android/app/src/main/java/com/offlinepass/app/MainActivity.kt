@@ -54,7 +54,7 @@ import kotlin.coroutines.resume
  */
 class MainActivity : androidx.activity.ComponentActivity() {
 
-    private var screen by mutableStateOf<Screen>(Screen.SetupChoice)
+
     private var status by mutableStateOf("")
     private var searchQuery by mutableStateOf("")
     /** Locked-mode click-through: the one unsealed entry shown in the
@@ -139,6 +139,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
      *  leftover + return to the default screen. Also re-arms the entry
      *  gate: the next foreground entry needs the screenlock prompt again. */
     private fun lockNow(statusMsg: String) {
+        android.util.Log.i("UnlockTiming", "lockNow: $statusMsg called-from: " +
+            Throwable().stackTrace
+                .drop(1).take(4)
+                .joinToString(" ← ") { "${it.className.substringAfterLast('.')}.${it.methodName}(${it.lineNumber})" })
         VaultSession.zero()
         sealedReveal = null
         pendingSealedEdit = null
@@ -202,6 +206,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
     /** The optional screen-lock gate: a device biometric/PIN prompt BEFORE
      * the hardware-key interaction (only when enabled in Setup). */
     private suspend fun biometricGate(): Boolean {
+        // THE ENTRY GATE'S DONE = THE AUTH'S COVERED: the entry gate's
+        // successful biometric opens the same 60s keystore validity
+        // window this gate exists to open — prompting again was the
+        // second-fingerprint trap (both unlocks looked biometric and
+        // the card never got reached).
+        if (entryGateDone) return true
         // The screenlock prompts when the vault requires it OR when the
         // at-rest seal is on: the seal's keystore ops need the auth window,
         // and the prompt IS the screenlock's promised interaction.
@@ -225,19 +235,34 @@ class MainActivity : androidx.activity.ComponentActivity() {
         com.offlinepass.app.crypto.ScreenlockGate.promptGate(this, title, subtitle, strongOrCredential)
 
     private suspend fun unlockLoop() {
+        android.util.Log.i("UnlockTiming", "unlockLoop START")
+        // THE AUTO-LOCK TIMER OFF DURING THE GATE: the user's idle time
+        // before the prompt consumes the idle budget, and the timer fires
+        // DURING the auth — lockNow re-locks the state the unlock is
+        // about to restore (the instant re-lock: "doesn't unlock"). The
+        // timer re-arms in finishUnlock/lockNow as before.
+        autoLockJob?.cancel()
+        autoLockJob = null
         if (!biometricGate()) {
+            android.util.Log.i("UnlockTiming", "gate FAILED")
             status = "Screen lock failed — unlock aborted."
+            rescheduleAutoLock()
             return
         }
+        android.util.Log.i("UnlockTiming", "gate OK")
         // THE SEALED FAST PATH: a sealed cache + the toggle on = the
         // SCREENLOCK suffices — no card, no USB permission. The idle-locked
         // re-unlock (the cache intact + fresh) never touches the key; the
         // card is only for the genuinely-needed decrypts (no cache, a
         // sync pulled a newer vault, a key mismatch).
         if (VaultSession.screenlockUnlockEnabled() && SealedVault.hasCache()) {
+            android.util.Log.i("UnlockTiming", "sealed fast path: promoting…")
             when (VaultSession.promoteSealedSession()) {
-                is VaultSession.Result.Success -> { finishUnlock(); return }
-                else -> { /* fall through to the card decrypt below */ }
+                is VaultSession.Result.Success -> {
+                    android.util.Log.i("UnlockTiming", "promote OK")
+                    finishUnlock(); return
+                }
+                else -> { Log.i("UnlockTiming", "promote failed — the card path"); }
             }
         }
         // THE CARD = THE DECRYPT: the USB permission = per-plug — after the
@@ -276,6 +301,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
      *  decrypt): the pending sealed edit's save, the entry gate's arm, the
      *  auto-lock reschedule, the afterUnlock action. */
     private suspend fun finishUnlock() {
+        android.util.Log.i("UnlockTiming", "finishUnlock START")
         android.widget.Toast.makeText(this, "Vault unlocked", android.widget.Toast.LENGTH_SHORT).show()
         if (screen == Screen.SetupChoice) screen = Screen.Search
         // A sealed-detail edit that waited for the key unlock.
@@ -1344,6 +1370,29 @@ class MainActivity : androidx.activity.ComponentActivity() {
         if (pinCallbackNow != null) {
             com.offlinepass.app.ui.PinPromptDialog(pinCallbackNow)
         }
+        // THE GATE'S DONE → THE VAULT'S UNLOCK = THE AUTO: the entry
+        // gate has authenticated the user; the old chain handed them a
+        // SECOND unlock screen (the card's) after the gate — the measured
+        // "doesn't navigate" trap. The unlockLoop = launched from here,
+        // automatically, once the gate is done.
+        androidx.compose.runtime.LaunchedEffect(entryGateDone) {
+            if (entryGateDone && VaultSession.state is VaultSession.State.Locked &&
+                VaultSession.screenlockUnlockEnabled() &&
+                com.offlinepass.app.vault.SealedVault.hasCache()) {
+                unlockLoop()
+            }
+        }
+        // RENDER-TRACES + THE GATE'S AUTO-UNLOCK: the entry gate's done
+        // auth covers the card's unlock — the old chain handed the user a
+        // SECOND unlock screen after the gate ("doesn't navigate").
+        androidx.compose.runtime.LaunchedEffect(entryGateDone) {
+            if (entryGateDone && VaultSession.state is VaultSession.State.Locked &&
+                VaultSession.screenlockUnlockEnabled() &&
+                com.offlinepass.app.vault.SealedVault.hasCache()) {
+                unlockLoop()
+            }
+        }
+        android.util.Log.i("RenderNav", "render: state=${VaultSession.state} screen=$screen gate=${entryGateDone}")
         when (VaultSession.state) {
             VaultSession.State.NoConfig -> SetupChoiceScreen(
                 defaultRemote = "https://github.com/planetaltitude/offlinepass-storage-test.git",
@@ -2585,6 +2634,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
     }
 
     companion object {
+        // THE SCREEN = the class-level: the recreate() gives the fresh
+        // Compose tree a fresh recomposer without losing the navigation
+        // state (the instance-level reset to SetupChoice was the bug).
+        var screen by mutableStateOf<Screen>(Screen.SetupChoice)
         private const val TAG = "S1"
     }
 }

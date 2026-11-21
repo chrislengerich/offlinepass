@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Overrides the main `app_name` for the `profileable` build type ONLY:
+     the launcher shows this build as a separate, identifiable icon
+     ("offlinepass·p") next to the real install — same launcher icon
+     (ic_launcher), same package-shape (the .profileable applicationId
+     suffix), different label so the two can't be confused. -->
+<resources>
+    <string name="app_name">offlinepass·p</string>
+</resources>

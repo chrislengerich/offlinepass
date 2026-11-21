@@ -131,6 +131,12 @@ cmd_build() {
 NOTES
   fi
   checksums
+  # The baseline profile must survive packaging (work-plan T2): the two
+  # silent-death modes (rule mangling, the R8 rename drop) otherwise
+  # regress the first-run to the JIT cliff with no other signal.
+  "$REPO_ROOT/scripts/verify-profile.sh" \
+    "$ANDROID_DIR/app/build/outputs/apk/release/app-release-unsigned.apk" \
+    || die "baseline-profile verification failed"
   echo
   echo "Staged: $STAGE"
   echo "Next:   scripts/release.sh sign $VERSION   (gpg --detach-sign --armor every artifact)"

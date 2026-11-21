@@ -272,6 +272,30 @@ class ToggleOffNoDataLossTest {
     }
 
     @Test
+    fun `empty-vault promote flips the state to Unlocked`() {
+        // THE UNLOCK-DOESN'T-NAVIGATE BUG: the empty-vault edge returned
+        // Success WITHOUT setting the state — the session stayed Locked
+        // forever (the lock screen rendered despite the successful
+        // promote). The fresh-install + empty-vault path exercised it.
+        kotlinx.coroutines.runBlocking { VaultSession.setScreenlockUnlockEnabled(true) }
+        VaultSession.vaultFileForTest().writeText("ciphertext-blob-v1")
+        // The EXISTING-but-empty cache (the device's empty-vault's shape —
+        // the seal of zero items): the promote's hasCache passes, the
+        // unseal returns empty → the empty-edge's path.
+        val env0 = Envelope(rev = 1, deviceId = "d1")
+        kotlinx.coroutines.runBlocking {
+            SealedVault.sealNowAwait(emptyList(), env0, VaultSession.vaultFileForTest())
+        }
+        VaultSession.stubSessionForTest()   // the empty manifest's stub session
+
+        val r = kotlinx.coroutines.runBlocking { VaultSession.promoteSealedSession() }
+
+        assertTrue("the promote succeeds ($r)", r is VaultSession.Result.Success)
+        assertTrue("THE STATE MUST BE UNLOCKED", VaultSession.state is VaultSession.State.Unlocked)
+        assertTrue(VaultSession.screenlockUnlockEnabled())
+    }
+
+    @Test
     fun toggleOffWhileLockedWipesSafely() {
         // No session (Locked): the cache is a mirror of the last save —
         // the repo envelope holds the same data — the wipe is safe.

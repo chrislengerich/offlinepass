@@ -158,14 +158,6 @@ fun SetupTabScreen(
                 Text("YubiKey SSH enrolled — every sync asks for the YubiKey touch.",
                     style = MaterialTheme.typography.bodySmall)
             }
-            Text(
-                "Connect remote: pick Screenlock SSH key (the QR enrolls this device's " +
-                    "key as a GitHub deploy key — syncs then open with the screen lock) " +
-                    "or PAT (HTTPS + fine-grained token). " +
-                    "YubiKey SSH: paste the auth subkey's OpenSSH line (desktop: gpg --export-ssh-key) " +
-                    "and its key id — every sync asks for the YubiKey touch.",
-                style = MaterialTheme.typography.bodySmall
-            )
         }
         // Sync state lives directly with its button.
         // The commit summaries = the LOCAL-ONLY too (the git history = on-device).
@@ -451,6 +443,7 @@ fun SetupTabScreen(
         }
         HorizontalDivider()
 
+        android.util.Log.i("SetupTiming", "MID: before Paste devices")
         Text("Paste devices (Chrome extension)", style = MaterialTheme.typography.titleSmall)
         Button(onClick = onPairDevice, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Pair paste device (scan extension QR)")
@@ -482,6 +475,7 @@ fun SetupTabScreen(
         )
         HorizontalDivider()
 
+        android.util.Log.i("SetupTiming", "MID: before Autofill")
         Text("Autofill", style = MaterialTheme.typography.titleSmall)
         Button(onClick = onEnableAutofill, modifier = Modifier.fillMaxWidth()) {
             Text(if (autofillEnabled) "Autofill: enabled (re-open settings)" else "Enable autofill service")
@@ -539,18 +533,6 @@ fun SetupTabScreen(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                "Require screenlock (biometric/PIN) at unlock",
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodySmall
-            )
-            Switch(checked = screenLockOn, onCheckedChange = { onScreenLockToggle(it) })
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
                 "Encrypt items in memory — " +
                     "search/list works sealed; clicking an entry reveals it " +
                     "with a screen-lock prompt.",
@@ -595,6 +577,10 @@ fun SetupTabScreen(
         HorizontalDivider()
 
         if (busy != null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        android.util.Log.i("SetupTiming", "END of the Setup composition")
+        androidx.compose.runtime.SideEffect {
+            android.util.Log.i("SetupTiming", "composition APPLIED to the window (the frame drawn)")
+        }
         HorizontalDivider()
         Text("Log", style = MaterialTheme.typography.titleSmall)
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)

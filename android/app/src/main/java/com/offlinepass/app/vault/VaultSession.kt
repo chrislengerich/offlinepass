@@ -1350,6 +1350,9 @@ object VaultSession {
         registerConnectivityWatch()
     }
 
+    /** Test-only: the vault file's path as a File (the fixtures). */
+    internal fun vaultFileForTest(): File = File(vaultFilePath())
+
     /** Test-only: put the session in the FULL state (the toggle-off's
      *  shape: the secrets in memory, the toggle on, no stubbing). */
     internal fun fullSessionForTest(items: List<ProtonItem>) {
@@ -1364,6 +1367,12 @@ object VaultSession {
     /** Test-only: put the session in the stub state (the unlock's shape:
      *  stubs in memory, the secrets only in the sealed cache). */
     internal fun stubSessionForTest() {
+        // The envelope = the cache's public metadata + the manifest items
+        // (the real promote sets loadedEnvelope the same way) — without it
+        // the envelope-touching ops (the pairing!) see "no vault".
+        val env = SealedVault.toEnvelope(SealedVault.manifestItems())
+        loadedEnvelope = env
+        rev = env.rev
         state = State.Unlocked(SealedVault.manifestItems())
         stubSession = true
     }
@@ -2038,19 +2047,10 @@ object VaultSession {
     var screenLockOn by mutableStateOf(false)
         private set
 
-    fun screenLockRequired(): Boolean =
-        prefs().getBoolean("screenLockRequired", false).also { screenLockOn = it }
+    fun screenLockRequired(): Boolean = idleLockEnabled()
 
     fun setScreenLockRequired(on: Boolean) {
-        prefs().edit().putBoolean("screenLockRequired", on).apply()
         screenLockOn = on
-        if (!on) {
-            // The toggle now means "the app is screenlock-governed": the
-            // pre-unlock prompt AND the idle auto-lock. Turning it off
-            // means no governance — a running session is zeroed right
-            // here so nothing plaintext outlives the decision.
-            zero()
-        }
     }
 
     /** Idle auto-lock timeout in SECONDS (0 = never); only meaningful
@@ -2299,7 +2299,21 @@ object VaultSession {
             // manifest is genuinely empty; otherwise the promote fails
             // honestly (the cache stays; the repo decrypt can rebuild).
             if (items.isEmpty()) {
-                if (SealedVault.manifestItems().isEmpty()) return Result.Success
+                if (SealedVault.manifestItems().isEmpty()) {
+                    // THE GENUINELY-EMPTY VAULT: the success — but the
+                    // state MUST be set (the early-return skipped it and
+                    // the session stayed Locked forever: the "unlock
+                    // doesn't navigate" bug — the empty vault never
+                    // exercised this path before).
+                    val env = SealedVault.toEnvelope(emptyList())
+                    loadedEnvelope = env
+                    rev = env.rev
+                    state = State.Unlocked(emptyList())
+                    stubSession = true
+                    android.util.Log.i("UnlockTiming",
+                        "promote: the empty-vault edge -> Unlocked")
+                    return Result.Success
+                }
                 return Result.Error(
                     "The sealed cache's secrets failed to open — refusing to proceed " +
                         "with an empty session (the vault file is untouched).")
@@ -2308,9 +2322,32 @@ object VaultSession {
             // new envelope resets them; the stub-session's deletes must
             // survive the re-seal).
             val carriedTombstones = loadedEnvelope?.deletedItemUuids?.toList() ?: emptyList()
+            // THE PAIRED DEVICES carried the same way: a paste-device
+            // pairing staged in the stub session lives only in
+            // loadedEnvelope.devices — the cache's meta snapshot predates
+            // it, and toEnvelope would wipe the staging (the measured
+            // "paired but not showing" bug).
+            // THE STASH (the idle lock's zero) + the live envelope's: the
+            // staged pairings from both are carried; the stash consumed.
+            val carriedDevices = (stashedDevices ?: emptyList()) +
+                (loadedEnvelope?.devices?.toList() ?: emptyList())
+            stashedDevices = null
+            // The unpair TOMBSTONES carried the same way (the stash had
+            // them; the promote never read them — an unpair was lost on
+            // the idle lock and the device resurrected on the next sync).
+            val carriedRemoved = (stashedRemovedDeviceIds ?: emptyList()) +
+                (loadedEnvelope?.removedDeviceIds?.toList() ?: emptyList())
+            stashedRemovedDeviceIds = null
             val env = SealedVault.toEnvelope(items)
             rev = env.rev
             env.deletedItemUuids = (carriedTombstones + env.deletedItemUuids)
+                .distinct().toMutableSet()
+            // The staged pairings win over the cache's snapshot (the newer
+            // staging = the newer state; the union = the removals honored).
+            val stagedIds = carriedDevices.map { it.keyId }.toSet()
+            env.devices = (carriedDevices + env.devices.filter { it.keyId !in stagedIds })
+                .distinctBy { it.keyId }.toMutableList()
+            env.removedDeviceIds = (carriedRemoved + env.removedDeviceIds)
                 .distinct().toMutableSet()
             // THE MODELS SEPARATED: loadedEnvelope = the FULL envelope (the
             // save's encryption base — NEVER the stubs); the state = a
@@ -2323,6 +2360,7 @@ object VaultSession {
             val stubs = items.map { it.asStub() }.toMutableList()
             state = State.Unlocked(stubs)
             stubSession = true
+            android.util.Log.i("UnlockTiming", "promote: state->Unlocked (${stubs.size} items, devices=${env.devices.size})")
             Log.i(TAG, "promoted sealed session (stubs): ${stubs.size} items, rev=${env.rev}")
             Result.Success
         } catch (e: Exception) {
@@ -3446,10 +3484,28 @@ object VaultSession {
      * copies are released for GC rather than overwritten; the on-disk
      * copies, though, are zero-filled byte-for-byte before unlink.
      */
+    /** THE PAIRING STASH: zero() (the idle lock) clears the envelope;
+     *  the staged-but-unsaved pairings stash here so the next promote
+     *  carries them (the session-scope: the process death loses them
+     *  exactly as it loses the un-saved envelope). */
+    @Volatile private var stashedDevices: List<DeviceRecord>? = null
+    @Volatile private var stashedRemovedDeviceIds: List<String>? = null
+
     fun zero() {
+        android.util.Log.i("UnlockTiming", "zero() called-from: " +
+            Throwable().stackTrace.drop(1).take(4)
+                .joinToString(" ← ") { "${it.className.substringAfterLast('.')}.${it.methodName}(${it.lineNumber})" })
         loadedEnvelope?.items?.clear()
         loadedEnvelope?.deletedItemUuids?.clear()
         loadedEnvelope?.extraFields?.clear()
+        // THE PAIRING STASH: the staged-but-unsaved pairings survive the
+        // idle lock (the promote picks them up on the next unlock). The
+        // COALESCE: a second zero() (the idle lock → the activity
+        // teardown's onDestroy) sees no envelope and must not clobber
+        // the first call's stash with an empty one.
+        stashedDevices = loadedEnvelope?.devices?.toList() ?: stashedDevices
+        stashedRemovedDeviceIds = loadedEnvelope?.removedDeviceIds?.toList()
+            ?: stashedRemovedDeviceIds
         loadedEnvelope = null
         rev = 0
         stubSession = false
