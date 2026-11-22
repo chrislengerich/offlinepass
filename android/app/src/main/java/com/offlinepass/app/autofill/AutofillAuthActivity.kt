@@ -82,9 +82,12 @@ class AutofillAuthActivity : ComponentActivity() {
                         // THE EXTRACTED CHAIN (SimpleLoginChainTest pins the
                         // order): the options → the passmail.net signed
                         // suffix → the v3-custom-create with the default
-                        // mailbox → the alias.
-                        val apiKey = VaultSession.simpleLoginItem()?.password
-                            ?: throw IllegalStateException("SimpleLogin not linked")
+                        // mailbox → the alias. The api key comes from
+                        // EITHER state: the unlocked session, or — the
+                        // common case, the vault auto-locks — the sealed
+                        // cache (the gate ABOVE opened the keystore auth
+                        // window, so the reveal is authorized now).
+                        val apiKey = resolveSimpleLoginApiKey()
                         alias = SimpleLoginChain.createLinkedAlias(
                             SimpleLoginHttp(), apiKey, origin, generatedPassword).email
                     } catch (e: Exception) {
@@ -495,6 +498,30 @@ class AutofillAuthActivity : ComponentActivity() {
     }
 
     /**
+     * THE SIMPLELOGIN API KEY for the alias chip, from EITHER vault
+     * state: the unlocked session's item first; otherwise the sealed
+     * cache — the uuid the sheet passed (or a manifest scan) → the
+     * keystore-gated reveal. MUST run after the screenlock gate (the
+     * keystore auth window). Throws when no reachable SL entry — the
+     * caller degrades to the password-only fill.
+     */
+    private suspend fun resolveSimpleLoginApiKey(): String {
+        VaultSession.simpleLoginItem()?.password?.takeIf { it.isNotBlank() }
+            ?.let { return it }
+        val uuid = intent.getStringExtra(EXTRA_SL_UUID)
+            ?: SealedVault.manifestItems().firstOrNull { item ->
+                item.urls.any { url ->
+                    runCatching {
+                        java.net.URI(url.trim()).host?.removePrefix("www.") == VaultSession.SL_HOST
+                    }.getOrDefault(false)
+                }
+            }?.itemUuid
+            ?: throw IllegalStateException("SimpleLogin not linked")
+        return SealedVault.reveal(uuid)?.password?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("the SimpleLogin key unsealed empty")
+    }
+
+    /**
      * THE INSERT for the autofill's save paths: the registry dedup first
      * (the platform's confirmed save and the card's Save can both arrive
      * for one generated password — only one insert), then addSealed, then
@@ -533,6 +560,7 @@ class AutofillAuthActivity : ComponentActivity() {
         const val EXTRA_USERNAME = "username"
         const val EXTRA_PASSWORD = "password"
         const val EXTRA_CONFIRMED = "confirmed"
+        const val EXTRA_SL_UUID = "sl_uuid"
         const val MODE_REVEAL = "reveal"
         const val MODE_GENERATE = "generate"
         const val MODE_GENERATE_ALIAS = "generate_alias"

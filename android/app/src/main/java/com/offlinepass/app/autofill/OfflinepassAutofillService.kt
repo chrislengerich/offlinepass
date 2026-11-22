@@ -169,13 +169,15 @@ class OfflinepassAutofillService : AutofillService() {
         // (a zero-value dataset = the platform build() throws).
         if (shown.none { fields.matches(it) }) {
             generateDataset(fields)?.let { builder.addDataset(it) }
-            // THE ALIAS CHIP (the email fields' generate): only with the
-            // SL link (the creation needs the api key) — the dataset
-            // carries the username/email ids, so it surfaces when an
-            // email/username field is focused.
-            if (VaultSession.simpleLoginItem() != null) {
-                generateAliasDataset(fields)?.let { builder.addDataset(it) }
-            }
+        }
+        // THE ALIAS CHIP (the email fields' generate): offered on ANY form
+        // with a username/email field (not registration-only — the second
+        // account on a matched site works too), only with the SL link
+        // (the creation needs the api key). The dataset carries the
+        // username/email ids, so it surfaces when an email field is
+        // focused.
+        if (fields.username.isNotEmpty() && VaultSession.simpleLoginItem() != null) {
+            generateAliasDataset(fields)?.let { builder.addDataset(it) }
         }
         // Search-in-app dataset (covers non-matching or >5 entries). With the
         // empty-fields guard in onFillRequest, at least one id exists here.
@@ -242,6 +244,18 @@ class OfflinepassAutofillService : AutofillService() {
         // case) — the tap gates, generates, the re-invoke fills.
         if (ranked.none { fields.matches(it) }) {
             generateDataset(fields, requestCode++)?.let { builder.addDataset(it) }
+            count++
+        }
+        // THE ALIAS CHIP in the SEALED sheet: the vault auto-locks, so the
+        // fill requests are sealed in practice — the chip is offered when
+        // the SL entry exists in the manifest (its urls are clear text)
+        // and the form has a username/email field. The tap = the gate
+        // FIRST (the keystore auth window), then the activity reveals the
+        // SL item's api key through the sealed cache. The uuid rides the
+        // intent so the activity skips the manifest scan.
+        val slUuid = sealedSimpleLoginUuid()
+        if (fields.username.isNotEmpty() && slUuid != null) {
+            generateAliasDataset(fields, requestCode++, slUuid)?.let { builder.addDataset(it) }
             count++
         }
         for (item in ranked.take(5)) {
@@ -359,6 +373,19 @@ class OfflinepassAutofillService : AutofillService() {
         return ds.build()
     }
 
+    /** The SL entry's uuid in the SEALED manifest, or null. The manifest
+     *  items carry name/urls in the clear (the passwords stay sealed), so
+     *  the detection = the app.simplelogin.io URL — the same marker the
+     *  link flow writes. */
+    private fun sealedSimpleLoginUuid(): String? =
+        SealedVault.manifestItems().firstOrNull { item ->
+            item.urls.any { url ->
+                runCatching {
+                    java.net.URI(url.trim()).host?.removePrefix("www.") == VaultSession.SL_HOST
+                }.getOrDefault(false)
+            }
+        }?.itemUuid
+
     /** The "✨ Generate SimpleLogin alias + password" dataset: the auth =
      *  the auth activity's GENERATE_ALIAS mode (the screenlock gates, the
      *  SL chain creates the alias on the linked account); the fill = the
@@ -367,7 +394,7 @@ class OfflinepassAutofillService : AutofillService() {
      *  when the SimpleLogin is linked. Null when no username/email field
      *  exists. */
     private fun generateAliasDataset(
-        fields: Fields, requestCode: Int = 40
+        fields: Fields, requestCode: Int = 40, slUuid: String? = null
     ): Dataset? {
         val ids = fields.username
         if (ids.isEmpty()) {
@@ -378,7 +405,8 @@ class OfflinepassAutofillService : AutofillService() {
         val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
             .putExtra(AutofillAuthActivity.EXTRA_MODE, AutofillAuthActivity.MODE_GENERATE_ALIAS)
             .putExtra(AutofillAuthActivity.EXTRA_NAME, origin)
-            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        slUuid?.let { intent.putExtra(AutofillAuthActivity.EXTRA_SL_UUID, it) }
+        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         val pi = android.app.PendingIntent.getActivity(
             appContext(), requestCode, intent,
             android.app.PendingIntent.FLAG_IMMUTABLE or
