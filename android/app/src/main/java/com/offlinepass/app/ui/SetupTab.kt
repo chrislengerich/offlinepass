@@ -381,8 +381,9 @@ fun SetupTabScreen(
             Button(onClick = { showSlLink = true }, enabled = busy == null,
                 modifier = Modifier.fillMaxWidth()) { Text("Link SimpleLogin") }
         } else {
-            Text("SimpleLogin: linked. The api key = the vault item (the " +
-                "name \"SimpleLogin API\").",
+            Text("SimpleLogin: linked (" + (slItem.email.ifBlank { "the account email" }) +
+                "). The alias domains: " +
+                VaultSession.simpleLoginDomains().joinToString(", ") + ".",
                 style = MaterialTheme.typography.bodySmall)
             Button(onClick = { showSlLink = true }, enabled = busy == null,
                 modifier = Modifier.fillMaxWidth()) { Text("Relink SimpleLogin") }
