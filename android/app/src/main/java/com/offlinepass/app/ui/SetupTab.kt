@@ -373,7 +373,7 @@ fun SetupTabScreen(
         // card-encrypted, synced) — the presence = the linked state; the
         // item-page alias toggle + the autofill's alias generation arm
         // when it exists.
-        Text("linked alias accounts:", style = MaterialTheme.typography.titleSmall)
+        Text("Linked accounts:", style = MaterialTheme.typography.titleSmall)
         val slItem = VaultSession.simpleLoginItem()
         if (slItem == null) {
             Text("SimpleLogin: not linked. Currently supports the " +
