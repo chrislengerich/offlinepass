@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.offlinepass.app.simplelogin.SimpleLoginChain
 import com.offlinepass.app.simplelogin.SimpleLoginHttp
 import com.offlinepass.app.vault.VaultSession
 import com.offlinepass.app.vault.PasswordGen
@@ -102,7 +103,7 @@ fun AddEntryScreen(
                 }
             }
             if (slAlias != null) Text(
-                "Alias: $slAlias (created on SimpleLogin - ${VaultSession.SL_ALIAS_DOMAIN})",
+                "Alias: $slAlias (created on SimpleLogin - ${SimpleLoginChain.SL_ALIAS_DOMAIN})",
                 style = MaterialTheme.typography.bodySmall)
             slError?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }

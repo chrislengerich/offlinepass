@@ -169,6 +169,13 @@ class OfflinepassAutofillService : AutofillService() {
         // (a zero-value dataset = the platform build() throws).
         if (shown.none { fields.matches(it) }) {
             generateDataset(fields)?.let { builder.addDataset(it) }
+            // THE ALIAS CHIP (the email fields' generate): only with the
+            // SL link (the creation needs the api key) — the dataset
+            // carries the username/email ids, so it surfaces when an
+            // email/username field is focused.
+            if (VaultSession.simpleLoginItem() != null) {
+                generateAliasDataset(fields)?.let { builder.addDataset(it) }
+            }
         }
         // Search-in-app dataset (covers non-matching or >5 entries). With the
         // empty-fields guard in onFillRequest, at least one id exists here.
@@ -332,6 +339,11 @@ class OfflinepassAutofillService : AutofillService() {
         val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
             .putExtra(AutofillAuthActivity.EXTRA_MODE, AutofillAuthActivity.MODE_GENERATE)
             .putExtra(AutofillAuthActivity.EXTRA_NAME, origin)
+            // THE TYPED EMAIL: the site's email field's current value
+            // (captured at the fill request) rides along — the save card
+            // and the upsert carry it (the user typed the email BEFORE
+            // tapping the generate chip — the common signup order).
+            .putExtra(AutofillAuthActivity.EXTRA_USERNAME, fields.usernameValue ?: "")
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         val pi = android.app.PendingIntent.getActivity(
             appContext(), requestCode, intent,

@@ -215,7 +215,7 @@ class PasswordGenTest {
     fun alphabetRespected() {
         val pw = PasswordGen.password(64)
         assertEquals(64, pw.length)
-        assertTrue(pw.all { it in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+" })
+        assertTrue("the alphanumeric only (the default flavor)", pw.all { it.isLetterOrDigit() })
     }
 
     /** The autofill generate-chip's draw: the uniqueness across 100
@@ -223,7 +223,7 @@ class PasswordGenTest {
      *  hands this straight into a registration form). */
     @Test
     fun defaultDrawsAreUnique() {
-        assertEquals(24, PasswordGen.password().length)
+        assertEquals(10, PasswordGen.password().length)
         val draws = (1..100).map { PasswordGen.password() }.toSet()
         assertEquals("no duplicates in 100 draws", 100, draws.size)
     }

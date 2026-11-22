@@ -15,6 +15,7 @@ import com.offlinepass.app.crypto.ScreenlockGate
 import com.offlinepass.app.vault.PasswordGen
 import com.offlinepass.app.vault.ProtonItem
 import com.offlinepass.app.vault.SealedVault
+import com.offlinepass.app.simplelogin.SimpleLoginChain
 import com.offlinepass.app.simplelogin.SimpleLoginHttp
 import com.offlinepass.app.vault.VaultSession
 import kotlinx.coroutines.Dispatchers
@@ -75,29 +76,20 @@ class AutofillAuthActivity : ComponentActivity() {
                         return@launch
                     }
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Generated login"
+                    val generatedPassword = PasswordGen.password()
                     var alias: String? = null
                     try {
+                        // THE EXTRACTED CHAIN (SimpleLoginChainTest pins the
+                        // order): the options → the passmail.net signed
+                        // suffix → the v3-custom-create with the default
+                        // mailbox → the alias.
                         val apiKey = VaultSession.simpleLoginItem()?.password
                             ?: throw IllegalStateException("SimpleLogin not linked")
-                        val opts = SimpleLoginHttp().aliasOptions(apiKey, origin)
-                        val suffix = opts.suffixes.firstOrNull {
-                            it.suffix.endsWith("@${VaultSession.SL_ALIAS_DOMAIN}")
-                        } ?: throw IllegalStateException(
-                            "no ${VaultSession.SL_ALIAS_DOMAIN} domain in the SL account")
-                        val mailbox = SimpleLoginHttp().mailboxes(apiKey)
-                            .firstOrNull { it.isDefault } ?: SimpleLoginHttp()
-                            .mailboxes(apiKey).first()
-                        val created = SimpleLoginHttp().createCustomAlias(
-                            apiKey,
-                            prefix = opts.prefixSuggestion ?: "alias",
-                            signedSuffix = suffix.signedSuffix,
-                            mailboxIds = listOf(mailbox.id),
-                            hostname = origin)
-                        alias = created.email
+                        alias = SimpleLoginChain.createLinkedAlias(
+                            SimpleLoginHttp(), apiKey, origin, generatedPassword).email
                     } catch (e: Exception) {
                         Log.w(TAG, "the SL alias failed in the alias chip: ${e.message}")
                     }
-                    val generatedPassword = PasswordGen.password()
                     val item = ProtonItem(
                         name = origin,
                         email = alias ?: "",
@@ -152,50 +144,16 @@ class AutofillAuthActivity : ComponentActivity() {
                         return@launch
                     }
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Generated password"
-                    // THE SIMPLELOGIN ROUTE: when the vault carries the SL
-                    // api key, the generated identity = a REAL alias (the
-                    // hostname = the autofill's web origin). The failure =
-                    // non-fatal: the local password generation always
-                    // stands; the alias = the enhancement.
-                    var alias: String? = null
-                    if (VaultSession.simpleLoginItem() != null) {
-                        try {
-                            val apiKey = VaultSession.simpleLoginItem()!!.password
-                            val host = origin.takeIf { it.contains('.') && !it.contains(' ') }
-                            // THE DOMAIN-PINNED CREATION: the v5 options
-                            // (the signed suffixes) + the suffix picked
-                            // from the linked account's domains + the v3
-                            // custom/new with the default mailbox.
-                            // alias domains (the passmail.net preferred).
-                            val opts = SimpleLoginHttp().aliasOptions(apiKey, host)
-                            val domains = VaultSession.simpleLoginDomains()
-                            val suffix = opts.suffixes.firstOrNull {
-                                domains.contains(it.suffix.substringAfter('@')
-                                    .removePrefix(".").substringBefore('/'))
-                            } ?: throw IllegalStateException(
-                                "the SimpleLogin account has no matching " +
-                                "alias domain (the supported: " +
-                                domains.joinToString(", ") + ")")
-                            val mailbox = SimpleLoginHttp().mailboxes(apiKey)
-                                .firstOrNull { it.isDefault } ?: SimpleLoginHttp()
-                                .mailboxes(apiKey).first()
-                            val created = SimpleLoginHttp().createCustomAlias(
-                                apiKey,
-                                prefix = opts.prefixSuggestion ?: host?.substringBefore(".") ?: "alias",
-                                signedSuffix = suffix.signedSuffix,
-                                mailboxIds = listOf(mailbox.id),
-                                hostname = host)
-                            alias = created.email
-                            Log.i(TAG, "the SL alias generated: $alias")
-                        } catch (e: Exception) {
-                            Log.w(TAG, "the SL alias failed (the local fallback): ${e.message}")
-                        }
-                    }
+                    // THE PASSWORD ONLY: the generate chip creates NO alias
+                    // — the alias = the EMAIL field's chip (✨). The typed
+                    // email (the site's field's value at the fill request)
+                    // rides the intent — the item and the upsert carry it.
+                    val typedEmail = intent.getStringExtra(EXTRA_USERNAME)?.trim().orEmpty()
                     val item = ProtonItem(
                         name = origin,
                         urls = if (origin.contains('.') && !origin.contains(' '))
                             listOf("https://$origin") else emptyList(),
-                        email = alias ?: "",
+                        email = typedEmail,
                         password = PasswordGen.password())
                     AutofillRevealStore.put(item, "generate")
                     setResult(RESULT_OK)
@@ -210,7 +168,7 @@ class AutofillAuthActivity : ComponentActivity() {
                     AlertDialog.Builder(this@AutofillAuthActivity)
                         .setTitle("Save this login to the vault?")
                         .setMessage("The name: $origin\n" +
-                            (if (item.email.isNotBlank()) "The email: ${item.email}\n" else "") +
+                            (if (typedEmail.isNotBlank()) "The email: $typedEmail\n" else "") +
                             "The password: ••••••••")
                         .setPositiveButton("Save") { _, _ ->
                             lifecycleScope.launch {
@@ -224,7 +182,7 @@ class AutofillAuthActivity : ComponentActivity() {
                                     finish()
                                     return@launch
                                 }
-                                val r = insertAutofill(origin, item.username, item.password)
+                                val r = insertAutofill(origin, item.email, item.password)
                                 when (r) {
                                     VaultSession.Result.Success ->
                                         Toast.makeText(this@AutofillAuthActivity,
