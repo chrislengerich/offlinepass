@@ -167,7 +167,7 @@ class OfflinepassAutofillService : AutofillService() {
         // entry matches the page. Tapping gates, generates, and the
         // re-invoke fills the fresh password. Only WITH a password field
         // (a zero-value dataset = the platform build() throws).
-        if (shown.none { fields.matches(it) }) {
+        if (passwordChipOffered(fields, shown)) {
             generateDataset(fields)?.let { builder.addDataset(it) }
         }
         // THE ALIAS CHIP (the email fields' generate): offered on ANY form
@@ -176,7 +176,7 @@ class OfflinepassAutofillService : AutofillService() {
         // (the creation needs the api key). The dataset carries the
         // username/email ids, so it surfaces when an email field is
         // focused.
-        if (fields.username.isNotEmpty() && VaultSession.simpleLoginItem() != null) {
+        if (aliasChipOffered(fields, VaultSession.simpleLoginItem() != null)) {
             generateAliasDataset(fields)?.let { builder.addDataset(it) }
         }
         // Search-in-app dataset (covers non-matching or >5 entries). With the
@@ -254,7 +254,7 @@ class OfflinepassAutofillService : AutofillService() {
         // SL item's api key through the sealed cache. The uuid rides the
         // intent so the activity skips the manifest scan.
         val slUuid = sealedSimpleLoginUuid()
-        if (fields.username.isNotEmpty() && slUuid != null) {
+        if (aliasChipOffered(fields, slUuid != null)) {
             generateAliasDataset(fields, requestCode++, slUuid)?.let { builder.addDataset(it) }
             count++
         }
@@ -373,11 +373,20 @@ class OfflinepassAutofillService : AutofillService() {
         return ds.build()
     }
 
+    /** THE CHIP-OFFER CONDITIONS (internal for the Robolectric pins —
+     *  the on-device failure mode "the chip never appears" is decided
+     *  exactly here, so the decisions must not drift untested). */
+    internal fun passwordChipOffered(fields: Fields, shown: List<ProtonItem>) =
+        fields.password.isNotEmpty() && shown.none { fields.matches(it) }
+
+    internal fun aliasChipOffered(fields: Fields, slReachable: Boolean) =
+        fields.username.isNotEmpty() && slReachable
+
     /** The SL entry's uuid in the SEALED manifest, or null. The manifest
      *  items carry name/urls in the clear (the passwords stay sealed), so
      *  the detection = the app.simplelogin.io URL — the same marker the
      *  link flow writes. */
-    private fun sealedSimpleLoginUuid(): String? =
+    internal fun sealedSimpleLoginUuid(): String? =
         SealedVault.manifestItems().firstOrNull { item ->
             item.urls.any { url ->
                 runCatching {
