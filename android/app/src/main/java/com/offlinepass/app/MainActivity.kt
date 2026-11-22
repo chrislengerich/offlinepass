@@ -346,11 +346,20 @@ class MainActivity : androidx.activity.ComponentActivity() {
         lifecycleScope.launch {
             try {
                 val info = SimpleLoginHttp().userInfo(apiKey)
+                // THE DOMAINS: the v5/options at link time — the account's
+                // creatable alias domains, carried in the item's note.
+                val opts = SimpleLoginHttp().aliasOptions(apiKey, null)
+                val domains = opts.suffixes
+                    .map { it.suffix.substringAfter('@').removePrefix(".") }
+                    .filter { it.isNotBlank() }.distinct()
+                val domainsNote = if (domains.isEmpty()) ""
+                    else "\nSimpleLogin alias domains: " + domains.joinToString(", ")
                 val slItem = ProtonItem(
                     name = "SimpleLogin API",
                     email = info.email,
                     password = apiKey,
-                    urls = listOf("https://${VaultSession.SL_HOST}"))
+                    urls = listOf("https://${VaultSession.SL_HOST}"),
+                    note = "Created via offlinepass (SimpleLogin)" + domainsNote)
                 // THE UUID REUSE: a relink UPDATES the existing item in
                 // place (the same itemUuid) - the merge propagates it as
                 // an update; a removal-without-tombstone would let the

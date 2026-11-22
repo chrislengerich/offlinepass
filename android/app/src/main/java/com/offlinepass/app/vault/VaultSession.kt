@@ -2559,8 +2559,9 @@ object VaultSession {
 
     // -- THE SIMPLELOGIN LINK (the api key = a vault item) -------------------
 
-    /** THE SL LINK'S DOMAIN: the aliases' mail domain (the user's SL
-     *  custom domain) — the item-page toggle's email gate. */
+    /** THE SL LINK'S DEFAULT DOMAIN: the aliases' mail domain — the
+     *  fallback when the item carries no domain list (the pre-existing
+     *  linked vaults). */
     const val SL_ALIAS_DOMAIN = "passmail.net"
     const val SL_HOST = "app.simplelogin.io"
 
@@ -2576,10 +2577,26 @@ object VaultSession {
         }
     }
 
-    /** The item's email = an SL alias on our domain (the item-page
-     *  toggle's gate). */
-    fun isSimpleLoginAlias(email: String): Boolean =
-        email.lowercase().endsWith("@$SL_ALIAS_DOMAIN")
+    /** THE SUPPORTED ALIAS DOMAINS: parsed from the SL item's note (the
+     *  marker line the link flow writes: "SimpleLogin alias domains: "
+     *  + the comma list) — the v5/alias/options' domains at the link
+     *  time. The fallback = passmail.net (the pre-existing linked
+     *  vaults whose item carries no list). */
+    fun simpleLoginDomains(): Set<String> {
+        val note = simpleLoginItem()?.note ?: return setOf(SL_ALIAS_DOMAIN)
+        val marker = "SimpleLogin alias domains: "
+        val line = note.lineSequence().firstOrNull { it.startsWith(marker) }
+            ?: return setOf(SL_ALIAS_DOMAIN)
+        val list = line.removePrefix(marker).split(",").map { it.trim() }.filter { it.isNotBlank() }
+        return if (list.isEmpty()) setOf(SL_ALIAS_DOMAIN) else list.toSet()
+    }
+
+    /** The item's email = an SL alias on ANY of the account's alias
+     *  domains (the item-page toggle's gate). */
+    fun isSimpleLoginAlias(email: String): Boolean {
+        val domain = email.substringAfter('@', "").lowercase()
+        return domain in simpleLoginDomains()
+    }
 
     /** Adds or updates a pairing record scanned from the extension's QR
      *  (R2: re-wrapped seeds / restored pairings update in place — newer

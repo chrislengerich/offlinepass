@@ -80,14 +80,20 @@ class AutofillAuthActivity : ComponentActivity() {
                         try {
                             val apiKey = VaultSession.simpleLoginItem()!!.password
                             val host = origin.takeIf { it.contains('.') && !it.contains(' ') }
-                            // THE PASSMAIL.NET-PINNED CREATION (the v5
-                            // options + the v3 custom/new): the signed
-                            // suffix = the passmail.net domain only.
+                            // THE DOMAIN-PINNED CREATION: the v5 options
+                            // (the signed suffixes) + the suffix picked
+                            // from the linked account's domains + the v3
+                            // custom/new with the default mailbox.
+                            // alias domains (the passmail.net preferred).
                             val opts = SimpleLoginHttp().aliasOptions(apiKey, host)
+                            val domains = VaultSession.simpleLoginDomains()
                             val suffix = opts.suffixes.firstOrNull {
-                                it.suffix.endsWith("@${VaultSession.SL_ALIAS_DOMAIN}")
+                                domains.contains(it.suffix.substringAfter('@')
+                                    .removePrefix(".").substringBefore('/'))
                             } ?: throw IllegalStateException(
-                                "no ${VaultSession.SL_ALIAS_DOMAIN} domain in the SL account")
+                                "the SimpleLogin account has no matching " +
+                                "alias domain (the supported: " +
+                                domains.joinToString(", ") + ")")
                             val mailbox = SimpleLoginHttp().mailboxes(apiKey)
                                 .firstOrNull { it.isDefault } ?: SimpleLoginHttp()
                                 .mailboxes(apiKey).first()

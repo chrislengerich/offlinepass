@@ -71,10 +71,16 @@ fun AddEntryScreen(
                             val opts = SimpleLoginHttp().aliasOptions(apiKey, host)
                             if (!opts.canCreate) throw Exception(
                                 "SimpleLogin: the alias limit is reached")
+                            // THE DOMAIN PICK: any of the linked account's
+                            // alias domains (the passmail.net preferred).
+                            val domains = VaultSession.simpleLoginDomains()
                             val suffix = opts.suffixes.firstOrNull {
-                                it.suffix.endsWith("@${VaultSession.SL_ALIAS_DOMAIN}")
+                                domains.contains(it.suffix.substringAfter('@')
+                                    .removePrefix(".").substringBefore('/'))
                             } ?: throw Exception(
-                                "the SimpleLogin account has no ${VaultSession.SL_ALIAS_DOMAIN} domain")
+                                "the SimpleLogin account has no matching " +
+                                "alias domain (the supported: " +
+                                domains.joinToString(", ") + ")")
                             val mailbox = SimpleLoginHttp().mailboxes(apiKey)
                                 .firstOrNull { it.isDefault } ?: SimpleLoginHttp()
                                 .mailboxes(apiKey).first()
