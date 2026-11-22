@@ -439,6 +439,46 @@ class VaultSaveTransactionTest {
     }
 
     @Test
+    fun upsertTargetMatchesIdentityAcrossBucketsAndStates() = runBlocking {
+        // THE UI's WORDING SOURCE: upsertTarget = the SAME match the
+        // upsert performs, in EITHER state (the sealed manifest's
+        // clear-text identities or the unlocked session's items) — the
+        // card's update-vs-new wording can't drift from the save.
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf(ProtonItem(
+                name = "github.com", username = "",
+                email = "alias@aleeas.com", password = "pw-old",
+                urls = listOf("https://github.com"))
+                .apply { modifyTime = 100 })
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        // THE SEALED STATE: the manifest's clear-text identities drive
+        // the lookup — the address in the username bucket matches the
+        // seeded item (the email bucket).
+        val aliasLogin = ProtonItem(
+            name = "github.com", username = "alias@aleeas.com",
+            password = "pw", urls = listOf("https://github.com"))
+        val sealed = VaultSession.upsertTarget(aliasLogin)
+        assertEquals("the sealed-manifest lookup: the same login",
+            "alias@aleeas.com", sealed?.identity?.trim())
+        assertNull("a different identity = the append (null target)",
+            VaultSession.upsertTarget(ProtonItem(
+                name = "github.com", username = "second@aleeas.com",
+                password = "pw", urls = listOf("https://github.com"))))
+        // THE UNLOCKED STATE: after the promote the lookup reads the
+        // session's items — the same answer.
+        assertTrue(VaultSession.upsertSealed(aliasLogin.copy(modifyTime = 0))
+            is VaultSession.Result.Success)
+        assertEquals("the unlocked-session lookup",
+            "alias@aleeas.com", VaultSession.upsertTarget(aliasLogin)?.identity?.trim())
+    }
+
+    @Test
     fun addSealedAppendsBrandNewEntry() = runBlocking {
         // THE MEASURED NO-OP: the generated entry went through the EDIT
         // path (the swap-by-uuid never matched) — "Saved ✓" with the

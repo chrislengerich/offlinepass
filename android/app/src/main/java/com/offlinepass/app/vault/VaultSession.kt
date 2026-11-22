@@ -2432,13 +2432,19 @@ object VaultSession {
      *  The empty-username generate re-run at the same site = the update
      *  (no duplicate pile-up). The measured drop: the SAVE mode's
      *  edit-path save no-opped the brand-new item (4→3). */
-    suspend fun upsertSealed(item: ProtonItem): Result {
-        when (val p = promoteSealedSession()) {
-            is Result.Success -> {}
-            else -> return p
-        }
+    /** THE UPSERT TARGET for [item]: the existing login the upsert would
+     *  update — the site + identity match (username.ifBlank { email }).
+     *  Works in EITHER state: the unlocked session's items or the sealed
+     *  manifest's clear-text identities. Null = the upsert would append
+     *  (a new record). The UI's update-vs-new wording reads THIS — the
+     *  single match implementation shared with [upsertSealed]. */
+    fun upsertTarget(item: ProtonItem): ProtonItem? {
         val items = (state as? State.Unlocked)?.items
-            ?: return Result.Error("Session unavailable")
+            ?: SealedVault.manifestItems()
+        return upsertMatch(items, item)
+    }
+
+    private fun upsertMatch(items: List<ProtonItem>, item: ProtonItem): ProtonItem? {
         val siteMatch: (ProtonItem) -> Boolean = if (item.urls.isNotEmpty()) { existing ->
             existing.urls.any { u -> item.urls.contains(u) }
         } else { existing ->
@@ -2451,10 +2457,20 @@ object VaultSession {
         // (if in doubt, one extra record — never a silent drop). The
         // password NEVER gates the match: a changed password on the same
         // login = the update.
-        val existing = items.firstOrNull { existing ->
+        return items.firstOrNull { existing ->
             siteMatch(existing) &&
                 existing.identity.trim() == item.identity.trim()
         }
+    }
+
+    suspend fun upsertSealed(item: ProtonItem): Result {
+        when (val p = promoteSealedSession()) {
+            is Result.Success -> {}
+            else -> return p
+        }
+        val items = (state as? State.Unlocked)?.items
+            ?: return Result.Error("Session unavailable")
+        val existing = upsertMatch(items, item)
         return if (existing != null) {
             Log.i(TAG, "upsertSealed: the existing entry ${existing.name.take(20)} " +
                 "(site+username) — the update")

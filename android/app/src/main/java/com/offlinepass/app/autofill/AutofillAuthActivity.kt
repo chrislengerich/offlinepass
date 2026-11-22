@@ -124,15 +124,22 @@ class AutofillAuthActivity : ComponentActivity() {
                                 AutofillManager.EXTRA_AUTHENTICATION_RESULT, it)
                         }
                     setResult(RESULT_OK, resultIntent)
+                    // THE UPDATE-VS-NEW WORDING: the card says which one
+                    // this is (the same site + identity lookup the upsert
+                    // performs).
+                    val updating = VaultSession.upsertTarget(item) != null
                     // THE IMMEDIATE SAVE CARD (the agreed design): the fill
                     // landed; the save question = OURS, immediately. The
                     // alias failure = VISIBLE (the reason line) — the
                     // password-only degradation is never silent.
                     AlertDialog.Builder(this@AutofillAuthActivity)
-                        .setTitle("Save this login to the vault?")
+                        .setTitle(if (updating) "Update this login in the vault?"
+                            else "Save this login to the vault?")
                         .setMessage("The site: $origin\n" +
                             (if (alias != null) "The alias: $alias\n" else "") +
                             (if (aliasError != null) "The alias failed: $aliasError\n" else "") +
+                            (if (updating) "The existing login for this site will be updated.\n"
+                                else "") +
                             "The password: ••••••••")
                         .setPositiveButton("Save") { _, _ ->
                             lifecycleScope.launch {
@@ -150,7 +157,8 @@ class AutofillAuthActivity : ComponentActivity() {
                                 when (r) {
                                     VaultSession.Result.Success ->
                                         Toast.makeText(this@AutofillAuthActivity,
-                                            "Saved ✓", Toast.LENGTH_LONG).show()
+                                            if (updating) "Updated ✓" else "Saved ✓",
+                                            Toast.LENGTH_LONG).show()
                                     else ->
                                         Toast.makeText(this@AutofillAuthActivity,
                                             "The save failed — $r", Toast.LENGTH_LONG).show()
@@ -196,6 +204,8 @@ class AutofillAuthActivity : ComponentActivity() {
                                 AutofillManager.EXTRA_AUTHENTICATION_RESULT, it)
                         }
                     setResult(RESULT_OK, resultIntent)
+                    // THE UPDATE-VS-NEW WORDING (the same as the alias chip).
+                    val updating = VaultSession.upsertTarget(item) != null
                     // THE IMMEDIATE SAVE CARD (replaces the silent tray
                     // trigger + its POST_NOTIFICATIONS dependency): the
                     // platform's save event = the user-typed-delta only —
@@ -205,9 +215,12 @@ class AutofillAuthActivity : ComponentActivity() {
                     // (the upsert by the site+user); Not now = the fill
                     // stands unsaved.
                     AlertDialog.Builder(this@AutofillAuthActivity)
-                        .setTitle("Save this login to the vault?")
+                        .setTitle(if (updating) "Update this login in the vault?"
+                            else "Save this login to the vault?")
                         .setMessage("The name: $origin\n" +
                             (if (typedEmail.isNotBlank()) "The email: $typedEmail\n" else "") +
+                            (if (updating) "The existing login for this site will be updated.\n"
+                                else "") +
                             "The password: ••••••••")
                         .setPositiveButton("Save") { _, _ ->
                             lifecycleScope.launch {
@@ -225,7 +238,8 @@ class AutofillAuthActivity : ComponentActivity() {
                                 when (r) {
                                     VaultSession.Result.Success ->
                                         Toast.makeText(this@AutofillAuthActivity,
-                                            "Saved ✓", Toast.LENGTH_LONG).show()
+                                            if (updating) "Updated ✓" else "Saved ✓",
+                                            Toast.LENGTH_LONG).show()
                                     else ->
                                         Toast.makeText(this@AutofillAuthActivity,
                                             "The save failed — $r", Toast.LENGTH_LONG).show()
@@ -259,16 +273,23 @@ class AutofillAuthActivity : ComponentActivity() {
                             finish()
                             return@launch
                         }
-                        val r = insertAutofill(
-                            origin,
-                            intent.getStringExtra(EXTRA_USERNAME) ?: "",
-                            intent.getStringExtra(EXTRA_PASSWORD) ?: "")
+                        val saveUsername = intent.getStringExtra(EXTRA_USERNAME) ?: ""
+                        val savePassword = intent.getStringExtra(EXTRA_PASSWORD) ?: ""
+                        // THE UPDATE-VS-NEW WORDING: the same site +
+                        // identity lookup the upsert performs.
+                        val saveItem = ProtonItem(
+                            name = origin, username = saveUsername,
+                            urls = if (origin.contains('.') && !origin.contains(' '))
+                                listOf("https://$origin") else emptyList())
+                        val updating = VaultSession.upsertTarget(saveItem) != null
+                        val r = insertAutofill(origin, saveUsername, savePassword)
                         when (r) {
                             VaultSession.Result.Success -> {
                                 Log.i(TAG, "the confirmed save: Saved ✓ " +
                                     "(rev ${VaultSession.currentRev()})")
                                 Toast.makeText(this@AutofillAuthActivity,
-                                    "Saved ✓", Toast.LENGTH_LONG).show()
+                                    if (updating) "Updated ✓" else "Saved ✓",
+                                    Toast.LENGTH_LONG).show()
                             }
                             else -> {
                                 Log.w(TAG, "the confirmed save FAILED: $r")
@@ -292,6 +313,12 @@ class AutofillAuthActivity : ComponentActivity() {
                     window.setLayout(
                         android.view.WindowManager.LayoutParams.MATCH_PARENT,
                         android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+                    // THE UPDATE-VS-NEW WORDING (the same lookup).
+                    val cardItem = ProtonItem(
+                        name = origin, username = intent.getStringExtra(EXTRA_USERNAME) ?: "",
+                        urls = if (origin.contains('.') && !origin.contains(' '))
+                            listOf("https://$origin") else emptyList())
+                    val updating = VaultSession.upsertTarget(cardItem) != null
                     val card = LinearLayout(this@AutofillAuthActivity).apply {
                         orientation = LinearLayout.VERTICAL
                         setPadding(56, 44, 56, 44)
@@ -301,7 +328,8 @@ class AutofillAuthActivity : ComponentActivity() {
                         }
                     }
                     card.addView(TextView(this@AutofillAuthActivity).apply {
-                        text = "Save this login to offlinepass?"
+                        text = if (updating) "Update this login in offlinepass?"
+                            else "Save this login to offlinepass?"
                         textSize = 17f
                         setTextColor(0xFFFFFFFF.toInt())
                     })
@@ -354,7 +382,8 @@ class AutofillAuthActivity : ComponentActivity() {
                                         Log.i(TAG, "the card save: Saved ✓ " +
                                             "(rev ${VaultSession.currentRev()})")
                                         Toast.makeText(this@AutofillAuthActivity,
-                                            "Saved ✓", Toast.LENGTH_LONG).show()
+                                            if (updating) "Updated ✓" else "Saved ✓",
+                                            Toast.LENGTH_LONG).show()
                                         setResult(RESULT_OK)
                                         finish()
                                     }
