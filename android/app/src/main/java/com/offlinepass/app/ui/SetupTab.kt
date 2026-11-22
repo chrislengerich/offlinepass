@@ -73,7 +73,7 @@ fun SetupTabScreen(
     onShowDeviceKey: () -> Unit = {},
     onExportTempUsb: () -> Unit = {},
     onExportTempQrft: () -> Unit = {},
-    onLinkSimpleLogin: (apiKey: String, email: String) -> Unit = { _, _ -> },
+    onLinkSimpleLogin: (apiKey: String) -> Unit = {},
     onUnlinkSimpleLogin: () -> Unit = {}
 ) {
     val cfg = VaultSession.config()
@@ -111,7 +111,7 @@ fun SetupTabScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showSlLink = false
-                    onLinkSimpleLogin(slKey.trim(), "")
+                    onLinkSimpleLogin(slKey.trim())
                 }, enabled = slKey.isNotBlank()) { Text("Link") }
             },
             dismissButton = {

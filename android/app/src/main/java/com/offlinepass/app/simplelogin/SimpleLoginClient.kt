@@ -60,6 +60,12 @@ interface SimpleLoginClient {
     /** The user's mailboxes (the create's owners; the default = first). */
     suspend fun mailboxes(apiKey: String): List<Mailbox>
 
+    /** GET /api/user_info with the api key: the account identity — and
+     *  THE KEY VALIDATION (401 = the wrong key). */
+    suspend fun userInfo(apiKey: String): UserInfo
+
+    data class UserInfo(val name: String?, val email: String, val isPremium: Boolean)
+
     /** The v5 options: what the account can create right now. */
     suspend fun aliasOptions(apiKey: String, hostname: String?): AliasOptions
 
@@ -98,6 +104,15 @@ class SimpleLoginHttp(
                     note = a.optString("note").ifBlank { null },
                 )
             }
+        }
+
+        /** GET /api/user_info: {name, email, is_premium...} */
+        fun parseUserInfo(body: String): SimpleLoginClient.UserInfo {
+            val o = JSONObject(body)
+            return SimpleLoginClient.UserInfo(
+                name = o.optString("name").ifBlank { null },
+                email = o.getString("email"),
+                isPremium = o.optBoolean("is_premium", false))
         }
 
         /** The random/new response: {"alias": "..."} */
@@ -199,6 +214,13 @@ class SimpleLoginHttp(
         val (code, body) = call(apiKey, "/api/v2/aliases", q, method = "POST", jsonBody = "{}")
         if (code !in 200..299) throw SimpleLoginException(err(code, body))
         return parseAliases(body)
+    }
+
+    override suspend fun userInfo(apiKey: String): SimpleLoginClient.UserInfo {
+        val (code, body) = call(apiKey, "/api/user_info")
+        if (code == 401) throw SimpleLoginException("the SimpleLogin API key is incorrect")
+        if (code !in 200..299) throw SimpleLoginException(err(code, body))
+        return parseUserInfo(body)
     }
 
     override suspend fun toggleAlias(apiKey: String, aliasId: Long): Boolean {

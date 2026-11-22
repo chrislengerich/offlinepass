@@ -34,6 +34,8 @@ import com.offlinepass.app.vault.PasswordGen
 import com.offlinepass.app.vault.ProtonItem
 import com.offlinepass.app.vault.SealedVault
 import com.offlinepass.app.vault.VaultMerge
+import com.offlinepass.app.simplelogin.SimpleLoginHttp
+import com.offlinepass.app.simplelogin.SimpleLoginException
 import com.offlinepass.app.vault.VaultSession
 import com.offlinepass.app.ui.ExportTargetPickScreen
 import com.offlinepass.app.ui.PairScanScreen
@@ -335,24 +337,34 @@ class MainActivity : androidx.activity.ComponentActivity() {
      *  synced storage; the item-page alias toggle + the autofill's alias
      *  generation arm on its presence. The replace-semantics: an existing
      *  SL item = updated in place (the re-link). */
-    private fun linkSimpleLogin(apiKey: String, email: String): String {
-        val slItem = ProtonItem(
-            name = "SimpleLogin API",
-            username = "",
-            password = apiKey,
-            urls = listOf("https://${VaultSession.SL_HOST}"))
-        val existing = VaultSession.simpleLoginItem()
-        val items = ((VaultSession.state as? VaultSession.State.Unlocked)?.items
-            ?: emptyList()).toMutableList()
-        if (existing != null) items.removeAll { it.itemUuid == existing.itemUuid }
-        items.add(slItem)
+    /** THE SIMPLELOGIN LINK: the pasted api key → the GET /api/user_info
+     *  VALIDATION (401 = the wrong key, refused by name) → the account's
+     *  email → the api key stores as a vault item with the email field =
+     *  the linked account (the cache the alias features read). */
+    private fun linkSimpleLogin(apiKey: String) {
+        status = "Verifying the SimpleLogin key…"
         lifecycleScope.launch {
-            val r = saveLoop(items)
-            status = if (r is VaultSession.Result.Success)
-                "SimpleLogin linked — the api key stores as a vault item."
-            else "SimpleLogin link failed: $r"
+            try {
+                val info = SimpleLoginHttp().userInfo(apiKey)
+                val slItem = ProtonItem(
+                    name = "SimpleLogin API",
+                    email = info.email,
+                    password = apiKey,
+                    urls = listOf("https://${VaultSession.SL_HOST}"))
+                val existing = VaultSession.simpleLoginItem()
+                val items = ((VaultSession.state as? VaultSession.State.Unlocked)?.items
+                    ?: emptyList()).toMutableList()
+                if (existing != null) items.removeAll { it.itemUuid == existing.itemUuid }
+                items.add(slItem)
+                val r = saveLoop(items)
+                status = if (r is VaultSession.Result.Success)
+                    "SimpleLogin linked (${info.email}) — the api key stores " +
+                        "as a vault item."
+                else "SimpleLogin link failed: $r"
+            } catch (e: SimpleLoginException) {
+                status = "SimpleLogin link failed: ${e.message}"
+            }
         }
-        return "Linking SimpleLogin…"
     }
 
     private fun unlinkSimpleLogin(): String {
@@ -2530,8 +2542,8 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             status = "Commit signer: the YubiKey (SIG slot, touch to sign each commit)."
                         }
                     },
-                    onLinkSimpleLogin = { apiKey, email ->
-                        lifecycleScope.launch { status = linkSimpleLogin(apiKey, email) }
+                    onLinkSimpleLogin = { apiKey ->
+                        linkSimpleLogin(apiKey)
                     },
                     onUnlinkSimpleLogin = {
                         lifecycleScope.launch { status = unlinkSimpleLogin() }
