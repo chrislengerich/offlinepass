@@ -8,7 +8,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.offlinepass.app.crypto.OpenPgpClient
-import com.offlinepass.app.simplelogin.SimpleLoginChain
 import com.offlinepass.app.crypto.OpenPgpOps
 import com.offlinepass.app.crypto.PgpSshBridge
 import com.offlinepass.app.crypto.SshKeyManager
@@ -2577,18 +2576,18 @@ object VaultSession {
         }
     }
 
-    /** THE SUPPORTED ALIAS DOMAINS: parsed from the SL item's note (the
+    /** THE LINKED ALIAS DOMAINS: parsed from the SL item's note (the
      *  marker line the link flow writes: "SimpleLogin alias domains: "
      *  + the comma list) — the v5/alias/options' domains at the link
-     *  time. The fallback = passmail.net (the pre-existing linked
-     *  vaults whose item carries no list). */
+     *  time. Display-only: the CREATION always uses the account's
+     *  default domain (SimpleLoginChain). Empty when the item carries
+     *  no list. */
     fun simpleLoginDomains(): Set<String> {
-        val note = simpleLoginItem()?.note ?: return setOf(SimpleLoginChain.SL_ALIAS_DOMAIN)
+        val note = simpleLoginItem()?.note ?: return emptySet()
         val marker = "SimpleLogin alias domains: "
         val line = note.lineSequence().firstOrNull { it.startsWith(marker) }
-            ?: return setOf(SimpleLoginChain.SL_ALIAS_DOMAIN)
-        val list = line.removePrefix(marker).split(",").map { it.trim() }.filter { it.isNotBlank() }
-        return if (list.isEmpty()) setOf(SimpleLoginChain.SL_ALIAS_DOMAIN) else list.toSet()
+            ?: return emptySet()
+        return line.removePrefix(marker).split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
     }
 
     /** The item's email = an SL alias on ANY of the account's alias

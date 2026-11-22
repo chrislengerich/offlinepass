@@ -66,34 +66,12 @@ fun AddEntryScreen(
                     slBusy = true; slError = null
                     slScope.launch {
                         try {
-                            // THE PASSMAIL.NET-PINNED CREATION: the v5
-                            // options (the hostname = the entry's site)
-                            // → the signed passmail.net suffix → the
-                            // v3 custom/new with the default mailbox.
-                            val opts = SimpleLoginHttp().aliasOptions(apiKey, host)
-                            if (!opts.canCreate) throw Exception(
-                                "SimpleLogin: the alias limit is reached")
-                            // THE DOMAIN PICK: any of the linked account's
-                            // alias domains (the passmail.net preferred).
-                            val domains = VaultSession.simpleLoginDomains()
-                            val suffix = opts.suffixes.firstOrNull {
-                                domains.contains(it.suffix.substringAfter('@')
-                                    .removePrefix(".").substringBefore('/'))
-                            } ?: throw Exception(
-                                "the SimpleLogin account has no matching " +
-                                "alias domain (the supported: " +
-                                domains.joinToString(", ") + ")")
-                            val mailbox = SimpleLoginHttp().mailboxes(apiKey)
-                                .firstOrNull { it.isDefault } ?: SimpleLoginHttp()
-                                .mailboxes(apiKey).first()
-                            val created = SimpleLoginHttp().createCustomAlias(
-                                apiKey,
-                                prefix = opts.prefixSuggestion
-                                    ?: host?.substringBefore(".") ?: "alias",
-                                signedSuffix = suffix.signedSuffix,
-                                mailboxIds = listOf(mailbox.id),
-                                hostname = host)
-                            slAlias = created.email
+                            // THE SHARED CHAIN: the v5 options (the
+                            // hostname = the entry's site) → the account's
+                            // DEFAULT domain (the first offered suffix) →
+                            // the v3 custom/new with the default mailbox.
+                            slAlias = SimpleLoginChain.createAlias(
+                                SimpleLoginHttp(), apiKey, host)
                         } catch (e: Exception) {
                             slError = "SimpleLogin error: ${e.message}"
                         }; slBusy = false
@@ -103,7 +81,7 @@ fun AddEntryScreen(
                 }
             }
             if (slAlias != null) Text(
-                "Alias: $slAlias (created on SimpleLogin - ${SimpleLoginChain.SL_ALIAS_DOMAIN})",
+                "Alias: $slAlias (created on SimpleLogin)",
                 style = MaterialTheme.typography.bodySmall)
             slError?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }

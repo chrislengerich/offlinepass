@@ -61,10 +61,11 @@ class AutofillAuthActivity : ComponentActivity() {
             when (mode) {
                 MODE_GENERATE_ALIAS -> {
                     // THE ALIAS CHIP'S FLOW: the gate → the SL chain (the
-                    // options → the passmail.net suffix → the create, the
-                    // hostname = the web origin) → the alias + the local
-                    // password → the item fills BOTH the email/username
-                    // and the password fields → the immediate save card.
+                    // options → the account's default-domain suffix → the
+                    // create, the hostname = the web origin) → the alias
+                    // + the local password → the item fills BOTH the
+                    // email/username and the password fields → the
+                    // immediate save card.
                     val ok = ScreenlockGate.promptGate(
                         this@AutofillAuthActivity,
                         "Generate SimpleLogin alias & fill",
@@ -78,20 +79,22 @@ class AutofillAuthActivity : ComponentActivity() {
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Generated login"
                     val generatedPassword = PasswordGen.password()
                     var alias: String? = null
+                    var aliasError: String? = null
                     try {
                         // THE EXTRACTED CHAIN (SimpleLoginChainTest pins the
-                        // order): the options → the passmail.net signed
-                        // suffix → the v3-custom-create with the default
-                        // mailbox → the alias. The api key comes from
-                        // EITHER state: the unlocked session, or — the
+                        // order): the options → the account's DEFAULT-domain
+                        // signed suffix → the v3-custom-create with the
+                        // default mailbox → the alias. The api key comes
+                        // from EITHER state: the unlocked session, or — the
                         // common case, the vault auto-locks — the sealed
                         // cache (the gate ABOVE opened the keystore auth
                         // window, so the reveal is authorized now).
                         val apiKey = resolveSimpleLoginApiKey()
-                        alias = SimpleLoginChain.createLinkedAlias(
-                            SimpleLoginHttp(), apiKey, origin, generatedPassword).email
+                        alias = SimpleLoginChain.createAlias(
+                            SimpleLoginHttp(), apiKey, origin)
                     } catch (e: Exception) {
                         Log.w(TAG, "the SL alias failed in the alias chip: ${e.message}")
+                        aliasError = e.message
                     }
                     val item = ProtonItem(
                         name = origin,
@@ -102,11 +105,14 @@ class AutofillAuthActivity : ComponentActivity() {
                     AutofillRevealStore.put(item, "generate_alias")
                     setResult(RESULT_OK)
                     // THE IMMEDIATE SAVE CARD (the agreed design): the fill
-                    // landed; the save question = OURS, immediately.
+                    // landed; the save question = OURS, immediately. The
+                    // alias failure = VISIBLE (the reason line) — the
+                    // password-only degradation is never silent.
                     AlertDialog.Builder(this@AutofillAuthActivity)
                         .setTitle("Save this login to the vault?")
                         .setMessage("The site: $origin\n" +
                             (if (alias != null) "The alias: $alias\n" else "") +
+                            (if (aliasError != null) "The alias failed: $aliasError\n" else "") +
                             "The password: ••••••••")
                         .setPositiveButton("Save") { _, _ ->
                             lifecycleScope.launch {

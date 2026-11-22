@@ -25,7 +25,8 @@ updated; the entries then move under that release's version heading here.
     with a username/email field, with the vault unlocked OR sealed (the
     common case: the sealed sheet finds the linked SimpleLogin entry in
     the manifest and the device-lock gate authorizes the api-key
-    reveal). One tap: the gate → a real **passmail.net** alias + the
+    reveal). One tap: the gate → a real alias on the account's default
+    domain + the
     generated password → both filled. SimpleLogin unreachable = the
     password-only fill, never a dead end.
 - **Generated password default** — 10 characters over letters and

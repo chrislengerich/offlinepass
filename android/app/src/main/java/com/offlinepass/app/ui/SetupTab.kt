@@ -100,8 +100,8 @@ fun SetupTabScreen(
                         }
                     }) { Text("Open the API-keys page") }
                     Text("c. Generate the key and paste it here — it stores " +
-                        "as a card-encrypted vault item (the passmail.net " +
-                        "aliases only).",
+                        "as a card-encrypted vault item (the aliases are " +
+                        "created on the account's default domain).",
                         style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(value = slKey, onValueChange = { slKey = it },
                         label = { Text("SimpleLogin API key") }, singleLine = true)
@@ -375,8 +375,8 @@ fun SetupTabScreen(
         Text("Linked accounts:", style = MaterialTheme.typography.titleSmall)
         val slItem = VaultSession.simpleLoginItem()
         if (slItem == null) {
-            Text("SimpleLogin: not linked. Currently supports the " +
-                "passmail.net aliases only.",
+            Text("SimpleLogin: not linked. The aliases are created on " +
+                "the account's default domain.",
                 style = MaterialTheme.typography.bodySmall)
             Button(onClick = { showSlLink = true }, enabled = busy == null,
                 modifier = Modifier.fillMaxWidth()) { Text("Link SimpleLogin") }
