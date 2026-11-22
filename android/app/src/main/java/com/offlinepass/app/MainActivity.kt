@@ -351,10 +351,15 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     email = info.email,
                     password = apiKey,
                     urls = listOf("https://${VaultSession.SL_HOST}"))
+                // THE UUID REUSE: a relink UPDATES the existing item in
+                // place (the same itemUuid) - the merge propagates it as
+                // an update; a removal-without-tombstone would let the
+                // peer's copy resurrect the old key on the next sync.
                 val existing = VaultSession.simpleLoginItem()
                 val items = ((VaultSession.state as? VaultSession.State.Unlocked)?.items
                     ?: emptyList()).toMutableList()
-                if (existing != null) items.removeAll { it.itemUuid == existing.itemUuid }
+                if (existing != null) slItem.itemUuid = existing.itemUuid
+                items.removeAll { it.itemUuid == slItem.itemUuid }
                 items.add(slItem)
                 val r = saveLoop(items)
                 status = if (r is VaultSession.Result.Success)

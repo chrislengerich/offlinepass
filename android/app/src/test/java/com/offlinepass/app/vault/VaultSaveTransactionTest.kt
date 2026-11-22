@@ -1148,4 +1148,62 @@ class VaultSaveTransactionTest {
         val state = VaultSession.state as VaultSession.State.Unlocked
         assertEquals(listOf("New"), state.items.map { it.name })
     }
+
+    @Test
+    fun relinkKeepsExactlyOneSimpleLoginItemAfterSync() = runBlocking {
+        // THE RESURRECTION PIN (the linkSimpleLogin's uuid reuse): the
+        // relink UPDATES the SL api-key item IN PLACE (the same uuid) —
+        // a removal-without-tombstone would let the peer's copy
+        // resurrect the OLD key on the next divergence merge.
+        VaultSession.patOverride = "fake-pat" // ignored by the file:// transport
+        val remoteDir = File(app.cacheDir, "op-sl-relink-remote.git")
+        remoteDir.deleteRecursively()
+        org.eclipse.jgit.api.Git.init().setBare(true).setDirectory(remoteDir).call().close()
+        val remoteUrl = "file://" + remoteDir.absolutePath
+        VaultSession.configure(remoteUrl, listOf("user@example.com"))
+        seedRepo("PREVIOUS".toByteArray())
+
+        // 1. The local: the SL api-key item with the OLD key → the save+push.
+        val slItemOld = ProtonItem(
+            name = "SimpleLogin API",
+            email = "me@passmail.net",
+            password = "OLD-KEY",
+            urls = listOf("https://app.simplelogin.io"))
+        assertTrue(VaultSession.save(listOf(item("Local Item"), slItemOld))
+            is VaultSession.Result.Success)
+        VaultGitClient().pushBranch(remoteUrl, "fake-pat", gitRoot())
+
+        // 2. The peer: the clone, the relink = the NEW key REUSING the old
+        //    item's uuid (the linkSimpleLogin's behavior) → the commit+push.
+        val second = File(app.cacheDir, "op-sl-relink-second")
+        second.deleteRecursively()
+        Git.cloneRepository().setURI(remoteUrl).setDirectory(second).call().use { g ->
+            val env = Envelope.fromJson(String(
+                java.util.Base64.getDecoder().decode(
+                    File(second, "state/10.gpg").readBytes())))
+            val peerItems = env.items.map { item ->
+                if (item.name == "SimpleLogin API") item.copy(
+                    password = "NEW-KEY",
+                    modifyTime = (System.currentTimeMillis() / 1000) + 60)
+                else item
+            }.toMutableList()
+            env.items = peerItems
+            File(second, "state/10.gpg").writeBytes(
+                java.util.Base64.getEncoder().encode(env.toJsonObject().toString().toByteArray()))
+            g.add().addFilepattern(".").call()
+            g.commit().setAuthor(PersonIdent("peer", "peer@test"))
+                .setCommitter(PersonIdent("peer", "peer@test"))
+                .setMessage("the peer's relink: the new key").call()
+            g.push().setRemote("origin").call()
+        }
+
+        // 3. The local syncNow: the divergence → the merge → the SL item =
+        //    the NEW key, EXACTLY ONE (the old key must not resurrect).
+        val r = VaultSession.syncNow()
+        assertTrue("sync must succeed, got $r", r is VaultSession.Result.Success)
+        val slItems = (VaultSession.state as VaultSession.State.Unlocked)
+            .items.filter { it.name == "SimpleLogin API" }
+        assertEquals("exactly one SimpleLogin item", 1, slItems.size)
+        assertEquals("NEW-KEY", slItems.first().password)
+    }
 }
