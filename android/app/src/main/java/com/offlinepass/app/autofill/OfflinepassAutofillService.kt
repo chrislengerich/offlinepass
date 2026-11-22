@@ -347,6 +347,41 @@ class OfflinepassAutofillService : AutofillService() {
         return ds.build()
     }
 
+    /** The "✨ Generate SimpleLogin alias + password" dataset: the auth =
+     *  the auth activity's GENERATE_ALIAS mode (the screenlock gates, the
+     *  SL chain creates the alias on the linked account); the fill = the
+     *  alias into the username/email ids AND the generated password into
+     *  the password ids — the full signup fill in one tap. Offered only
+     *  when the SimpleLogin is linked. Null when no username/email field
+     *  exists. */
+    private fun generateAliasDataset(
+        fields: Fields, requestCode: Int = 40
+    ): Dataset? {
+        val ids = fields.username
+        if (ids.isEmpty()) {
+            Log.i(TAG, "alias chip skipped — no username/email field detected")
+            return null
+        }
+        val origin = fields.webDomain ?: fields.appPackage
+        val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
+            .putExtra(AutofillAuthActivity.EXTRA_MODE, AutofillAuthActivity.MODE_GENERATE_ALIAS)
+            .putExtra(AutofillAuthActivity.EXTRA_NAME, origin)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        val pi = android.app.PendingIntent.getActivity(
+            appContext(), requestCode, intent,
+            android.app.PendingIntent.FLAG_IMMUTABLE or
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+        val view = RemoteViews(packageName, R.layout.autofill_item).apply {
+            setTextViewText(R.id.autofill_text, "✨ Generate SimpleLogin alias + password")
+        }
+        val ds = Dataset.Builder().setAuthentication(pi.intentSender)
+            .setId("generate_alias")
+        for (id in fields.username) ds.setValue(id, AutofillValue.forText(""), view)
+        for (id in fields.password) ds.setValue(id, AutofillValue.forText(""), view)
+        Log.i(TAG, "alias chip offered for $origin (id=generate_alias)")
+        return ds.build()
+    }
+
     private fun parse(structure: AssistStructure): Fields {
         val username = mutableListOf<AutofillId>()
         val password = mutableListOf<AutofillId>()

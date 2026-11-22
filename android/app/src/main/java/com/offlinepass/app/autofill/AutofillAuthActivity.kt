@@ -58,6 +58,88 @@ class AutofillAuthActivity : ComponentActivity() {
         }
         lifecycleScope.launch {
             when (mode) {
+                MODE_GENERATE_ALIAS -> {
+                    // THE ALIAS CHIP'S FLOW: the gate → the SL chain (the
+                    // options → the passmail.net suffix → the create, the
+                    // hostname = the web origin) → the alias + the local
+                    // password → the item fills BOTH the email/username
+                    // and the password fields → the immediate save card.
+                    val ok = ScreenlockGate.promptGate(
+                        this@AutofillAuthActivity,
+                        "Generate SimpleLogin alias & fill",
+                        "The device lock authorizes creating a SimpleLogin alias and filling the signup")
+                    if (!ok) {
+                        Log.i(TAG, "the alias generate's gate declined — RESULT_CANCELED")
+                        setResult(RESULT_CANCELED)
+                        finish()
+                        return@launch
+                    }
+                    val origin = name?.takeIf { it.isNotBlank() } ?: "Generated login"
+                    var alias: String? = null
+                    try {
+                        val apiKey = VaultSession.simpleLoginItem()?.password
+                            ?: throw IllegalStateException("SimpleLogin not linked")
+                        val opts = SimpleLoginHttp().aliasOptions(apiKey, origin)
+                        val suffix = opts.suffixes.firstOrNull {
+                            it.suffix.endsWith("@${VaultSession.SL_ALIAS_DOMAIN}")
+                        } ?: throw IllegalStateException(
+                            "no ${VaultSession.SL_ALIAS_DOMAIN} domain in the SL account")
+                        val mailbox = SimpleLoginHttp().mailboxes(apiKey)
+                            .firstOrNull { it.isDefault } ?: SimpleLoginHttp()
+                            .mailboxes(apiKey).first()
+                        val created = SimpleLoginHttp().createCustomAlias(
+                            apiKey,
+                            prefix = opts.prefixSuggestion ?: "alias",
+                            signedSuffix = suffix.signedSuffix,
+                            mailboxIds = listOf(mailbox.id),
+                            hostname = origin)
+                        alias = created.email
+                    } catch (e: Exception) {
+                        Log.w(TAG, "the SL alias failed in the alias chip: ${e.message}")
+                    }
+                    val generatedPassword = PasswordGen.password()
+                    val item = ProtonItem(
+                        name = origin,
+                        email = alias ?: "",
+                        username = alias ?: "",
+                        urls = listOf("https://$origin"),
+                        password = generatedPassword)
+                    AutofillRevealStore.put(item, "generate_alias")
+                    setResult(RESULT_OK)
+                    // THE IMMEDIATE SAVE CARD (the agreed design): the fill
+                    // landed; the save question = OURS, immediately.
+                    AlertDialog.Builder(this@AutofillAuthActivity)
+                        .setTitle("Save this login to the vault?")
+                        .setMessage("The site: $origin\n" +
+                            (if (alias != null) "The alias: $alias\n" else "") +
+                            "The password: ••••••••")
+                        .setPositiveButton("Save") { _, _ ->
+                            lifecycleScope.launch {
+                                val gate = ScreenlockGate.promptGate(
+                                    this@AutofillAuthActivity, "Save & sync",
+                                    "The device lock authorizes saving the login")
+                                if (!gate) {
+                                    Toast.makeText(this@AutofillAuthActivity,
+                                        "Not saved — the screen lock declined",
+                                        Toast.LENGTH_LONG).show()
+                                    finish()
+                                    return@launch
+                                }
+                                val r = insertAutofill(origin, item.username, item.password)
+                                when (r) {
+                                    VaultSession.Result.Success ->
+                                        Toast.makeText(this@AutofillAuthActivity,
+                                            "Saved ✓", Toast.LENGTH_LONG).show()
+                                    else ->
+                                        Toast.makeText(this@AutofillAuthActivity,
+                                            "The save failed — $r", Toast.LENGTH_LONG).show()
+                                }
+                                finish()
+                            }
+                        }
+                        .setNegativeButton("Not now") { _, _ -> finish() }
+                        .show()
+                }
                 MODE_GENERATE -> {
                     val ok = ScreenlockGate.promptGate(
                         this@AutofillAuthActivity,
@@ -495,6 +577,7 @@ class AutofillAuthActivity : ComponentActivity() {
         const val EXTRA_CONFIRMED = "confirmed"
         const val MODE_REVEAL = "reveal"
         const val MODE_GENERATE = "generate"
+        const val MODE_GENERATE_ALIAS = "generate_alias"
         const val MODE_SAVE = "save"
     }
 }
