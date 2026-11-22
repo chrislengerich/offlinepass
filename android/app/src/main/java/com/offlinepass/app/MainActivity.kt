@@ -330,6 +330,45 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
     }
 
+    /** THE SIMPLELOGIN LINK/UNLINK: the api key = a vault item (the name
+     *  "SimpleLogin API", the URL = the SL host) — the card-encrypted,
+     *  synced storage; the item-page alias toggle + the autofill's alias
+     *  generation arm on its presence. The replace-semantics: an existing
+     *  SL item = updated in place (the re-link). */
+    private fun linkSimpleLogin(apiKey: String, email: String): String {
+        val slItem = ProtonItem(
+            name = "SimpleLogin API",
+            username = email,
+            password = apiKey,
+            urls = listOf("https://${VaultSession.SL_HOST}"))
+        val existing = VaultSession.simpleLoginItem()
+        val items = ((VaultSession.state as? VaultSession.State.Unlocked)?.items
+            ?: emptyList()).toMutableList()
+        if (existing != null) items.removeAll { it.itemUuid == existing.itemUuid }
+        items.add(slItem)
+        lifecycleScope.launch {
+            val r = saveLoop(items)
+            status = if (r is VaultSession.Result.Success)
+                "SimpleLogin linked — the api key stores as a vault item."
+            else "SimpleLogin link failed: $r"
+        }
+        return "Linking SimpleLogin…"
+    }
+
+    private fun unlinkSimpleLogin(): String {
+        val existing = VaultSession.simpleLoginItem() ?: return "SimpleLogin not linked."
+        val items = ((VaultSession.state as? VaultSession.State.Unlocked)?.items
+            ?: emptyList()).toMutableList()
+        items.removeAll { it.itemUuid == existing.itemUuid }
+        lifecycleScope.launch {
+            val r = saveLoop(items)
+            status = if (r is VaultSession.Result.Success)
+                "SimpleLogin unlinked (the api-key item deleted)."
+            else "Unlink failed: $r"
+        }
+        return "Unlinking SimpleLogin…"
+    }
+
     private suspend fun saveLoop(
         items: List<ProtonItem>,
         editedUuid: String? = null
@@ -2490,6 +2529,12 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             VaultSession.setCommitSigningMode(VaultSession.SIGNING_YUBIKEY)
                             status = "Commit signer: the YubiKey (SIG slot, touch to sign each commit)."
                         }
+                    },
+                    onLinkSimpleLogin = { apiKey, email ->
+                        lifecycleScope.launch { status = linkSimpleLogin(apiKey, email) }
+                    },
+                    onUnlinkSimpleLogin = {
+                        lifecycleScope.launch { status = unlinkSimpleLogin() }
                     },
                     deviceCredentialReady = VaultSession.isDeviceCredentialReady() == 0,
                     onEnrollScreenlock = {

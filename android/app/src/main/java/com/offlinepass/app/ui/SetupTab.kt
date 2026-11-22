@@ -72,11 +72,44 @@ fun SetupTabScreen(
     onScanTempRecipient: () -> Unit = {},
     onShowDeviceKey: () -> Unit = {},
     onExportTempUsb: () -> Unit = {},
-    onExportTempQrft: () -> Unit = {}
+    onExportTempQrft: () -> Unit = {},
+    onLinkSimpleLogin: (apiKey: String, email: String) -> Unit = { _, _ -> },
+    onUnlinkSimpleLogin: () -> Unit = {}
 ) {
     val cfg = VaultSession.config()
     var confirmDialog by remember { mutableStateOf<String?>(null) }
     var deviceNameDialog by remember { mutableStateOf<String?>(null) }
+    var showSlLink by remember { mutableStateOf(false) }
+    if (showSlLink) {
+        // THE SL LINK DIALOG: the pasted api key (+ the optional email)
+        // → the vault item (the onLinkSimpleLogin callback's save).
+        var slKey by remember { mutableStateOf("") }
+        var slEmail by remember { mutableStateOf("") }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showSlLink = false },
+            title = { Text("Link SimpleLogin") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Create an API key in the SimpleLogin dashboard " +
+                        "(Settings → Advanced → API Keys) and paste it. " +
+                        "It stores as a card-encrypted vault item.",
+                        style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(value = slKey, onValueChange = { slKey = it },
+                        label = { Text("SimpleLogin API key") }, singleLine = true)
+                    OutlinedTextField(value = slEmail, onValueChange = { slEmail = it },
+                        label = { Text("SimpleLogin email (optional)") }, singleLine = true)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showSlLink = false
+                    onLinkSimpleLogin(slKey.trim(), slEmail.trim())
+                }, enabled = slKey.isNotBlank()) { Text("Link") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSlLink = false }) { Text("Cancel") }
+            })
+    }
     deviceNameDialog?.let { pre ->
         var nameInput by androidx.compose.runtime.remember(pre) {
             androidx.compose.runtime.mutableStateOf(pre)
@@ -325,6 +358,29 @@ fun SetupTabScreen(
             modifier = Modifier.fillMaxWidth()) {
             Text("Add recipient (pick in OpenKeyChain)")
         }
+        HorizontalDivider()
+
+        // -- LINKED ACCOUNTS: the SimpleLogin (the alias management) and
+        // the Proton (the planned). The SL's api key = a VAULT ITEM (the
+        // card-encrypted, synced) — the presence = the linked state; the
+        // item-page alias toggle + the autofill's alias generation arm
+        // when it exists.
+        Text("Linked accounts", style = MaterialTheme.typography.titleSmall)
+        val slItem = VaultSession.simpleLoginItem()
+        if (slItem == null) {
+            Text("SimpleLogin: not linked. Create an API key in the " +
+                "SimpleLogin dashboard (Settings → Advanced → API Keys) " +
+                "and paste it here — it stores as a vault item.",
+                style = MaterialTheme.typography.bodySmall)
+            Button(onClick = { showSlLink = true }, enabled = busy == null,
+                modifier = Modifier.fillMaxWidth()) { Text("Link SimpleLogin") }
+        } else {
+            Text("SimpleLogin: linked (${slItem.username.ifBlank { "account" }}).",
+                style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = onUnlinkSimpleLogin, enabled = busy == null,
+                modifier = Modifier.fillMaxWidth()) { Text("Unlink SimpleLogin") }
+        }
+        Text("Proton: not linked (planned).", style = MaterialTheme.typography.bodySmall)
         HorizontalDivider()
 
         // THE SHARE SECTION: how a vault moves between people. A scanned

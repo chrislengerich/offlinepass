@@ -15,6 +15,7 @@ import com.offlinepass.app.crypto.ScreenlockGate
 import com.offlinepass.app.vault.PasswordGen
 import com.offlinepass.app.vault.ProtonItem
 import com.offlinepass.app.vault.SealedVault
+import com.offlinepass.app.simplelogin.SimpleLoginHttp
 import com.offlinepass.app.vault.VaultSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -69,10 +70,27 @@ class AutofillAuthActivity : ComponentActivity() {
                         return@launch
                     }
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Generated password"
+                    // THE SIMPLELOGIN ROUTE: when the vault carries the SL
+                    // api key, the generated identity = a REAL alias (the
+                    // hostname = the autofill's web origin). The failure =
+                    // non-fatal: the local password generation always
+                    // stands; the alias = the enhancement.
+                    var alias: String? = null
+                    if (VaultSession.simpleLoginItem() != null) {
+                        try {
+                            val apiKey = VaultSession.simpleLoginItem()!!.password
+                            val host = origin.takeIf { it.contains('.') && !it.contains(' ') }
+                            alias = SimpleLoginHttp().randomAlias(apiKey, host)
+                            Log.i(TAG, "the SL alias generated for $host")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "the SL alias failed (the local fallback): ${e.message}")
+                        }
+                    }
                     val item = ProtonItem(
                         name = origin,
                         urls = if (origin.contains('.') && !origin.contains(' '))
                             listOf("https://$origin") else emptyList(),
+                        email = alias ?: "",
                         password = PasswordGen.password())
                     AutofillRevealStore.put(item, "generate")
                     // THE SILENT TRAY TRIGGER (not the UI — the UI = the

@@ -2557,6 +2557,30 @@ object VaultSession {
 
     fun pairedDevices(): List<DeviceRecord> = loadedEnvelope?.devices ?: emptyList()
 
+    // -- THE SIMPLELOGIN LINK (the api key = a vault item) -------------------
+
+    /** THE SL LINK'S DOMAIN: the aliases' mail domain (the user's SL
+     *  custom domain) — the item-page toggle's email gate. */
+    const val SL_ALIAS_DOMAIN = "passmail.net"
+    const val SL_HOST = "app.simplelogin.io"
+
+    /** THE SL LINK = the vault item holding the api key: the URL = the
+     *  SL host, a password present. The item = card-encrypted, synced,
+     *  user-visible/editable — the strongest storage this architecture
+     *  has. Null = not linked. */
+    fun simpleLoginItem(): ProtonItem? = loadedEnvelope?.items?.firstOrNull { item ->
+        item.password.isNotBlank() && item.urls.any { url ->
+            runCatching {
+                java.net.URI(url.trim()).host?.removePrefix("www.") == SL_HOST
+            }.getOrDefault(false)
+        }
+    }
+
+    /** The item's email = an SL alias on our domain (the item-page
+     *  toggle's gate). */
+    fun isSimpleLoginAlias(email: String): Boolean =
+        email.lowercase().endsWith("@$SL_ALIAS_DOMAIN")
+
     /** Adds or updates a pairing record scanned from the extension's QR
      *  (R2: re-wrapped seeds / restored pairings update in place — newer
      *  wins). Persists via save(). */

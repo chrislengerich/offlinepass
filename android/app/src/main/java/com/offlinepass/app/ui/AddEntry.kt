@@ -3,12 +3,15 @@ package com.offlinepass.app.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.offlinepass.app.simplelogin.SimpleLoginHttp
 import com.offlinepass.app.vault.PasswordGen
 import com.offlinepass.app.vault.ProtonItem
+import com.offlinepass.app.vault.VaultSession
 
 /** The stub note the alias flow carries (TUI parity); user-editable. */
 private const val ALIAS_NOTE = "Created via offlinepass (SimpleLogin stub)"
@@ -35,12 +38,46 @@ fun AddEntryScreen(
     var note by remember { mutableStateOf("") }
     val alias = remember { PasswordGen.alias() }
 
+    // THE REAL SIMPLELOGIN ALIAS (when linked): the link under the URL
+    // creates a REAL alias on the SL account (the hostname = the URL's
+    // domain) — it rides the email field on the save. The items carry
+    // no SL state; this = the explicit user action.
+    var slAlias by remember { mutableStateOf<String?>(null) }
+    var slBusy by remember { mutableStateOf(false) }
+    var slError by remember { mutableStateOf<String?>(null) }
+    val slLinked = VaultSession.simpleLoginItem() != null
+    val slScope = androidx.compose.runtime.rememberCoroutineScope()
+
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text("Add entry", style = MaterialTheme.typography.titleLarge)
         OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("URL") }, singleLine = true)
+        if (slLinked) {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                TextButton(onClick = {
+                    val apiKey = VaultSession.simpleLoginItem()?.password ?: return@TextButton
+                    val host = runCatching {
+                        java.net.URI(url.trim().let { if (it.contains("://")) it else "https://$it" }).host
+                    }.getOrNull()
+                    slBusy = true; slError = null
+                    slScope.launch {
+                        try {
+                            slAlias = SimpleLoginHttp().randomAlias(apiKey, host)
+                        } catch (e: Exception) {
+                            slError = "SimpleLogin error: ${e.message}"
+                        }; slBusy = false
+                    }
+                }, enabled = !slBusy) {
+                    Text(if (slBusy) "Creating alias…" else "✨ SimpleLogin alias")
+                }
+            }
+            if (slAlias != null) Text(
+                "Alias: $slAlias (created on SimpleLogin)",
+                style = MaterialTheme.typography.bodySmall)
+            slError?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
         if (!useAlias) {
             OutlinedTextField(
                 value = username, onValueChange = { username = it },
@@ -83,7 +120,7 @@ fun AddEntryScreen(
                 onSave(ProtonItem(
                     name = "",
                     username = if (useAlias) "" else username,
-                    email = if (useAlias) alias else "",
+                    email = slAlias ?: if (useAlias) alias else "",
                     password = generated,
                     urls = listOf(url).filter { it.isNotBlank() },
                     note = note

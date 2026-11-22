@@ -6,12 +6,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.offlinepass.app.simplelogin.SimpleLoginHttp
 import com.offlinepass.app.vault.ProtonItem
+import com.offlinepass.app.vault.VaultSession
 import com.offlinepass.app.vault.Totp
 import org.json.JSONObject
 
@@ -53,6 +56,19 @@ fun EntryDetailScreen(
     var showTotpEntry by remember { mutableStateOf(false) }
     var totpInput by remember { mutableStateOf("") }
 
+    // -- THE SIMPLELOGIN ALIAS TOGGLE (the item-page management) ------------
+    // The gate: the SL api-key item exists AND the email = an SL alias on
+    // our domain. The items carry NO SL state and make NO network requests
+    // by default: the status check = one list call; the toggle = one
+    // call. The state lives in the screen only.
+    val slLinked = VaultSession.simpleLoginItem() != null
+    val slCandidate = slLinked && VaultSession.isSimpleLoginAlias(email)
+    var slStatus by remember(item.itemUuid) { mutableStateOf<String?>(null) }
+    var slAliasEnabled by remember(item.itemUuid) { mutableStateOf<Boolean?>(null) }
+    var slBusy by remember(item.itemUuid) { mutableStateOf(false) }
+    var slAliasId by remember(item.itemUuid) { mutableStateOf<Long?>(null) }
+    val slScope = androidx.compose.runtime.rememberCoroutineScope()
+
     if (item.totpUri.isNotBlank()) {
         LaunchedEffect(item.totpUri) {
             while (true) {
@@ -88,6 +104,53 @@ fun EntryDetailScreen(
             label = { Text("Email") }, singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
+        if (slCandidate) {
+            // THE SL ALIAS MANAGEMENT: the status check (one list call)
+            // reveals the enabled state and arms the toggle (one call).
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = {
+                    val apiKey = VaultSession.simpleLoginItem()?.password ?: return@TextButton
+                    slBusy = true; slStatus = null
+                    slScope.launch {
+                        slStatus = try {
+                            val found = SimpleLoginHttp().listAliases(
+                                apiKey, query = email.trim())
+                                .firstOrNull { it.email.equals(email.trim(), true) }
+                            if (found == null) {
+                                slAliasId = null; slAliasEnabled = null
+                                "No SimpleLogin alias matches this email."
+                            } else {
+                                slAliasId = found.id; slAliasEnabled = found.enabled
+                                "SimpleLogin: ${found.email} is " +
+                                    if (found.enabled) "ENABLED" else "DISABLED"
+                            }
+                        } catch (e: Exception) {
+                            "SimpleLogin error: ${e.message}"
+                        }; slBusy = false
+                    }
+                }, enabled = !slBusy) { Text(if (slBusy) "Checking…" else "Check SimpleLogin status") }
+                if (slAliasId != null && slAliasEnabled != null && !slBusy) {
+                    Button(onClick = {
+                        val apiKey = VaultSession.simpleLoginItem()?.password ?: return@Button
+                        val id = slAliasId ?: return@Button
+                        slBusy = true
+                        slScope.launch {
+                            slStatus = try {
+                                slAliasEnabled = SimpleLoginHttp().toggleAlias(apiKey, id)
+                                "SimpleLogin: ${email.trim()} is now " +
+                                    if (slAliasEnabled == true) "ENABLED" else "DISABLED"
+                            } catch (e: Exception) {
+                                "SimpleLogin error: ${e.message}"
+                            }; slBusy = false
+                        }
+                    }, enabled = !slBusy) {
+                        Text(if (slAliasEnabled == true) "Disable alias" else "Enable alias")
+                    }
+                }
+            }
+            if (slStatus != null) Text(slStatus!!, style = MaterialTheme.typography.bodySmall)
+        }
         OutlinedTextField(
             value = password, onValueChange = { password = it },
             label = { Text("Password") }, singleLine = true,
