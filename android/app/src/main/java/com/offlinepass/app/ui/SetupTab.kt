@@ -376,13 +376,15 @@ fun SetupTabScreen(
         if (slItem == null) {
             Text("SimpleLogin: not linked. Create an API key in the " +
                 "SimpleLogin dashboard (Settings → Advanced → API Keys) " +
-                "and paste it here — it stores as a vault item.",
+                "and paste it here — it stores as a vault item. " +
+                "Currently supports the passmail.net alias domain only.",
                 style = MaterialTheme.typography.bodySmall)
             Button(onClick = { showSlLink = true }, enabled = busy == null,
                 modifier = Modifier.fillMaxWidth()) { Text("Link SimpleLogin") }
         } else {
             Text("SimpleLogin: linked. The api key = the vault item " +
-                "(the name \"SimpleLogin API\", the URL = the SL host).",
+                "(the name \"SimpleLogin API\", the URL = the SL host). " +
+                "The aliases = the passmail.net domain.",
                 style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = onUnlinkSimpleLogin, enabled = busy == null,
                 modifier = Modifier.fillMaxWidth()) { Text("Unlink SimpleLogin") }

@@ -9,9 +9,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.offlinepass.app.simplelogin.SimpleLoginHttp
+import com.offlinepass.app.vault.VaultSession
 import com.offlinepass.app.vault.PasswordGen
 import com.offlinepass.app.vault.ProtonItem
-import com.offlinepass.app.vault.VaultSession
 
 /** The stub note the alias flow carries (TUI parity); user-editable. */
 private const val ALIAS_NOTE = "Created via offlinepass (SimpleLogin stub)"
@@ -64,7 +64,28 @@ fun AddEntryScreen(
                     slBusy = true; slError = null
                     slScope.launch {
                         try {
-                            slAlias = SimpleLoginHttp().randomAlias(apiKey, host)
+                            // THE PASSMAIL.NET-PINNED CREATION: the v5
+                            // options (the hostname = the entry's site)
+                            // → the signed passmail.net suffix → the
+                            // v3 custom/new with the default mailbox.
+                            val opts = SimpleLoginHttp().aliasOptions(apiKey, host)
+                            if (!opts.canCreate) throw Exception(
+                                "SimpleLogin: the alias limit is reached")
+                            val suffix = opts.suffixes.firstOrNull {
+                                it.suffix.endsWith("@${VaultSession.SL_ALIAS_DOMAIN}")
+                            } ?: throw Exception(
+                                "the SimpleLogin account has no ${VaultSession.SL_ALIAS_DOMAIN} domain")
+                            val mailbox = SimpleLoginHttp().mailboxes(apiKey)
+                                .firstOrNull { it.isDefault } ?: SimpleLoginHttp()
+                                .mailboxes(apiKey).first()
+                            val created = SimpleLoginHttp().createCustomAlias(
+                                apiKey,
+                                prefix = opts.prefixSuggestion
+                                    ?: host?.substringBefore(".") ?: "alias",
+                                signedSuffix = suffix.signedSuffix,
+                                mailboxIds = listOf(mailbox.id),
+                                hostname = host)
+                            slAlias = created.email
                         } catch (e: Exception) {
                             slError = "SimpleLogin error: ${e.message}"
                         }; slBusy = false
@@ -74,7 +95,7 @@ fun AddEntryScreen(
                 }
             }
             if (slAlias != null) Text(
-                "Alias: $slAlias (created on SimpleLogin)",
+                "Alias: $slAlias (created on SimpleLogin - ${VaultSession.SL_ALIAS_DOMAIN})",
                 style = MaterialTheme.typography.bodySmall)
             slError?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }

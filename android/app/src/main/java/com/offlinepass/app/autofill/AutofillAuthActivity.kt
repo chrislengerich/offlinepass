@@ -80,8 +80,25 @@ class AutofillAuthActivity : ComponentActivity() {
                         try {
                             val apiKey = VaultSession.simpleLoginItem()!!.password
                             val host = origin.takeIf { it.contains('.') && !it.contains(' ') }
-                            alias = SimpleLoginHttp().randomAlias(apiKey, host)
-                            Log.i(TAG, "the SL alias generated for $host")
+                            // THE PASSMAIL.NET-PINNED CREATION (the v5
+                            // options + the v3 custom/new): the signed
+                            // suffix = the passmail.net domain only.
+                            val opts = SimpleLoginHttp().aliasOptions(apiKey, host)
+                            val suffix = opts.suffixes.firstOrNull {
+                                it.suffix.endsWith("@${VaultSession.SL_ALIAS_DOMAIN}")
+                            } ?: throw IllegalStateException(
+                                "no ${VaultSession.SL_ALIAS_DOMAIN} domain in the SL account")
+                            val mailbox = SimpleLoginHttp().mailboxes(apiKey)
+                                .firstOrNull { it.isDefault } ?: SimpleLoginHttp()
+                                .mailboxes(apiKey).first()
+                            val created = SimpleLoginHttp().createCustomAlias(
+                                apiKey,
+                                prefix = opts.prefixSuggestion ?: host?.substringBefore(".") ?: "alias",
+                                signedSuffix = suffix.signedSuffix,
+                                mailboxIds = listOf(mailbox.id),
+                                hostname = host)
+                            alias = created.email
+                            Log.i(TAG, "the SL alias generated: $alias")
                         } catch (e: Exception) {
                             Log.w(TAG, "the SL alias failed (the local fallback): ${e.message}")
                         }

@@ -55,6 +55,45 @@ class SimpleLoginClientTest {
     }
 
     @Test
+    fun `the v5 options parse - the suffixes and the can_create`() {
+        val body = """{"can_create":true,"prefix_suggestion":"github",
+            "suffixes":[
+                {"suffix":".word@passmail.net","signed_suffix":".word@passmail.net.SIG","is_custom":true},
+                {"suffix":".cat@d1.test.X6","signed_suffix":".cat@d1.test.X6.SIG","is_custom":false}
+            ],
+            "recommendation":{"alias":"old@passmail.net","hostname":"github.com"}}"""
+        val opts = SimpleLoginHttp.parseAliasOptions(body)
+        assertTrue(opts.canCreate)
+        assertEquals("github", opts.prefixSuggestion)
+        assertEquals(2, opts.suffixes.size)
+        assertTrue(opts.suffixes[0].suffix.endsWith("@passmail.net"))
+        // THE PASSMAIL.NET PICK: the domain-pinned creation's filter.
+        val passmail = opts.suffixes.firstOrNull { it.suffix.endsWith("@passmail.net") }
+        assertEquals(".word@passmail.net.SIG", passmail!!.signedSuffix)
+    }
+
+    @Test
+    fun `the mailboxes parse - the default flag`() {
+        val body = """{"mailboxes":[
+            {"id":3,"email":"real@inbox.test","default":true},
+            {"id":4,"email":"other@inbox.test","default":false}
+        ]}"""
+        val mailboxes = SimpleLoginHttp.parseMailboxes(body)
+        assertEquals(2, mailboxes.size)
+        assertTrue(mailboxes.first { it.isDefault }.email == "real@inbox.test")
+    }
+
+    @Test
+    fun `the alias-info parse - the v3-custom's 201 shape`() {
+        val body = """{"id":99,"email":"github.word@passmail.net","name":"github",
+            "enabled":true,"note":""}"""
+        val info = SimpleLoginHttp.parseAliasInfo(body)
+        assertEquals(99L, info.id)
+        assertEquals("github.word@passmail.net", info.email)
+        assertTrue(info.enabled)
+    }
+
+    @Test
     fun `the error mapping - the SL's error json surfaces by name`() {
         val message = SimpleLoginHttp.err(401, """{"error":"Wrong api key"}""")
         assertTrue(message.contains("401"))

@@ -34,6 +34,35 @@ interface SimpleLoginClient {
     /** Toggles an alias's enabled state; returns the NEW state. */
     suspend fun toggleAlias(apiKey: String, aliasId: Long): Boolean
 
+    /** The v5 options: what the account can create right now. */
+    data class AliasOptions(
+        val canCreate: Boolean,
+        val prefixSuggestion: String?,
+        /** The signed suffixes filtered to ONE domain: the suffix, the
+         *  signed form, and whether it is a custom domain. */
+        val suffixes: List<Suffix>,
+    ) {
+        data class Suffix(val suffix: String, val signedSuffix: String, val isCustom: Boolean)
+    }
+
+    data class Mailbox(val id: Long, val email: String, val isDefault: Boolean)
+
+    /** Creates a CUSTOM alias pinned to a domain: the prefix + the SIGNED
+     *  suffix (from the v5 options) + the owning mailbox ids. */
+    suspend fun createCustomAlias(
+        apiKey: String,
+        prefix: String,
+        signedSuffix: String,
+        mailboxIds: List<Long>,
+        hostname: String? = null,
+    ): AliasInfo
+
+    /** The user's mailboxes (the create's owners; the default = first). */
+    suspend fun mailboxes(apiKey: String): List<Mailbox>
+
+    /** The v5 options: what the account can create right now. */
+    suspend fun aliasOptions(apiKey: String, hostname: String?): AliasOptions
+
     data class AliasInfo(
         val id: Long,
         val email: String,
@@ -74,6 +103,47 @@ class SimpleLoginHttp(
         /** The random/new response: {"alias": "..."} */
         fun parseNewAlias(body: String): String =
             JSONObject(body).getString("alias")
+
+        /** The v5 options parse: can_create, the prefix suggestion, and
+         *  the SIGNED suffixes. */
+        fun parseAliasOptions(body: String): SimpleLoginClient.AliasOptions {
+            val o = JSONObject(body)
+            val suffixes = o.getJSONArray("suffixes")
+            return SimpleLoginClient.AliasOptions(
+                canCreate = o.optBoolean("can_create", false),
+                prefixSuggestion = o.optString("prefix_suggestion").ifBlank { null },
+                suffixes = (0 until suffixes.length()).map { i ->
+                    val s = suffixes.getJSONObject(i)
+                    SimpleLoginClient.AliasOptions.Suffix(
+                        suffix = s.getString("suffix"),
+                        signedSuffix = s.getString("signed_suffix"),
+                        isCustom = s.optBoolean("is_custom", false))
+                })
+        }
+
+        /** The mailboxes parse: the id, the email, the default flag. */
+        fun parseMailboxes(body: String): List<SimpleLoginClient.Mailbox> {
+            val arr = JSONObject(body).getJSONArray("mailboxes")
+            return (0 until arr.length()).map { i ->
+                val m = arr.getJSONObject(i)
+                SimpleLoginClient.Mailbox(
+                    id = m.getLong("id"),
+                    email = m.getString("email"),
+                    isDefault = m.optBoolean("default", false))
+            }
+        }
+
+        /** The alias-info parse (the v3-custom's 201 shape = the same as
+         *  GET /api/aliases/:id): the id, the email, the enabled. */
+        fun parseAliasInfo(body: String): SimpleLoginClient.AliasInfo {
+            val a = JSONObject(body)
+            return SimpleLoginClient.AliasInfo(
+                id = a.getLong("id"),
+                email = a.getString("email"),
+                name = a.optString("name").ifBlank { null },
+                enabled = a.optBoolean("enabled", true),
+                note = a.optString("note").ifBlank { null })
+        }
 
         /** The toggle response: {"enabled": bool} */
         fun parseToggle(body: String): Boolean =
@@ -135,6 +205,34 @@ class SimpleLoginHttp(
         val (code, body) = call(apiKey, "/api/aliases/$aliasId/toggle", method = "POST")
         if (code !in 200..299) throw SimpleLoginException(err(code, body))
         return parseToggle(body)
+    }
+
+    override suspend fun aliasOptions(apiKey: String, hostname: String?): SimpleLoginClient.AliasOptions {
+        val q = buildMap { hostname?.takeIf { it.isNotBlank() }?.let { put("hostname", it) } }
+        val (code, body) = call(apiKey, "/api/v5/alias/options", q)
+        if (code !in 200..299) throw SimpleLoginException(err(code, body))
+        return parseAliasOptions(body)
+    }
+
+    override suspend fun mailboxes(apiKey: String): List<SimpleLoginClient.Mailbox> {
+        val (code, body) = call(apiKey, "/api/v2/mailboxes")
+        if (code !in 200..299) throw SimpleLoginException(err(code, body))
+        return parseMailboxes(body)
+    }
+
+    override suspend fun createCustomAlias(
+        apiKey: String, prefix: String, signedSuffix: String,
+        mailboxIds: List<Long>, hostname: String?,
+    ): SimpleLoginClient.AliasInfo {
+        val q = buildMap { hostname?.takeIf { it.isNotBlank() }?.let { put("hostname", it) } }
+        val payload = JSONObject().apply {
+            put("alias_prefix", prefix)
+            put("signed_suffix", signedSuffix)
+            put("mailbox_ids", org.json.JSONArray(mailboxIds))
+        }.toString()
+        val (code, body) = call(apiKey, "/api/v3/alias/custom/new", q, method = "POST", jsonBody = payload)
+        if (code != 201) throw SimpleLoginException(err(code, body))
+        return parseAliasInfo(body)
     }
 }
 
