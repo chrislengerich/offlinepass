@@ -116,19 +116,47 @@ class AutofillAuthActivity : ComponentActivity() {
                         email = alias ?: "",
                         password = PasswordGen.password())
                     AutofillRevealStore.put(item, "generate")
-                    // THE SILENT TRAY TRIGGER (not the UI — the UI = the
-                    // bottom card): the platform's save event = the
-                    // user-typed-delta only — an all-autofilled submission
-                    // fires NOTHING — so the save question must be OURS
-                    // for generated passwords. The tray item = SILENT
-                    // (the LOW importance: no banner, no vibration — the
-                    // user's "too noisy"); its TAP = the bottom card
-                    // (yes/no) → the screenlock → the insert.
-                    AutofillSaveOffer.postSilentTrigger(
-                        this@AutofillAuthActivity, origin, null, item.password)
-                    Log.i(TAG, "generated a password for $origin — RESULT_OK (the fill) + the silent trigger")
                     setResult(RESULT_OK)
-                    finish()
+                    // THE IMMEDIATE SAVE CARD (replaces the silent tray
+                    // trigger + its POST_NOTIFICATIONS dependency): the
+                    // platform's save event = the user-typed-delta only —
+                    // an all-autofilled submission fires NOTHING — so the
+                    // save question = OURS, immediately, in-context. The
+                    // card's Save = the screenlock gate + the insertAutofill
+                    // (the upsert by the site+user); Not now = the fill
+                    // stands unsaved.
+                    AlertDialog.Builder(this@AutofillAuthActivity)
+                        .setTitle("Save this login to the vault?")
+                        .setMessage("The name: $origin\n" +
+                            (if (item.email.isNotBlank()) "The email: ${item.email}\n" else "") +
+                            "The password: ••••••••")
+                        .setPositiveButton("Save") { _, _ ->
+                            lifecycleScope.launch {
+                                val gate = ScreenlockGate.promptGate(
+                                    this@AutofillAuthActivity, "Save & sync",
+                                    "The device lock authorizes saving the login")
+                                if (!gate) {
+                                    Toast.makeText(this@AutofillAuthActivity,
+                                        "Not saved — the screen lock declined",
+                                        Toast.LENGTH_LONG).show()
+                                    finish()
+                                    return@launch
+                                }
+                                val r = insertAutofill(origin, item.username, item.password)
+                                when (r) {
+                                    VaultSession.Result.Success ->
+                                        Toast.makeText(this@AutofillAuthActivity,
+                                            "Saved ✓", Toast.LENGTH_LONG).show()
+                                    else ->
+                                        Toast.makeText(this@AutofillAuthActivity,
+                                            "The save failed — $r", Toast.LENGTH_LONG).show()
+                                }
+                                finish()
+                            }
+                        }
+                        .setNegativeButton("Not now") { _, _ -> finish() }
+                        .show()
+                    Log.i(TAG, "generated a password for $origin — RESULT_OK (the fill) + the save card")
                 }
                 MODE_SAVE -> {
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Login"
