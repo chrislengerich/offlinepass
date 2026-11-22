@@ -91,17 +91,19 @@ fun SetupTabScreen(
             title = { Text("Link SimpleLogin") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Log in to SimpleLogin, then open the API-keys page " +
-                        "and create a key. Paste it here — it stores as a " +
-                        "card-encrypted vault item.",
-                        style = MaterialTheme.typography.bodySmall)
+                    Text("a. Log in to SimpleLogin.", style = MaterialTheme.typography.bodySmall)
+                    Text("b. Open the API-keys page:", style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = {
                         runCatching {
                             context.startActivity(android.content.Intent(
                                 android.content.Intent.ACTION_VIEW,
                                 android.net.Uri.parse("https://app.simplelogin.io/dashboard/api_key")))
                         }
-                    }) { Text("Open SimpleLogin API keys") }
+                    }) { Text("Open the API-keys page") }
+                    Text("c. Generate the key and paste it here — it stores " +
+                        "as a card-encrypted vault item (the passmail.net " +
+                        "aliases only).",
+                        style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(value = slKey, onValueChange = { slKey = it },
                         label = { Text("SimpleLogin API key") }, singleLine = true)
                 }
@@ -389,7 +391,6 @@ fun SetupTabScreen(
             TextButton(onClick = onUnlinkSimpleLogin, enabled = busy == null,
                 modifier = Modifier.fillMaxWidth()) { Text("Unlink SimpleLogin") }
         }
-        Text("Proton: not linked (planned).", style = MaterialTheme.typography.bodySmall)
         HorizontalDivider()
 
         // THE SHARE SECTION: how a vault moves between people. A scanned
