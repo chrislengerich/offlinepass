@@ -2444,9 +2444,16 @@ object VaultSession {
         } else { existing ->
             existing.name.equals(item.name, ignoreCase = true)
         }
+        // THE IDENTITY = THE DEDUP KEY's second half (site + identity):
+        // username.ifBlank { email } — the same login whose address sits
+        // in EITHER bucket updates in place; a genuinely different
+        // identity (a second account, a different address) = the append
+        // (if in doubt, one extra record — never a silent drop). The
+        // password NEVER gates the match: a changed password on the same
+        // login = the update.
         val existing = items.firstOrNull { existing ->
             siteMatch(existing) &&
-                existing.username.trim() == item.username.trim()
+                existing.identity.trim() == item.identity.trim()
         }
         return if (existing != null) {
             Log.i(TAG, "upsertSealed: the existing entry ${existing.name.take(20)} " +

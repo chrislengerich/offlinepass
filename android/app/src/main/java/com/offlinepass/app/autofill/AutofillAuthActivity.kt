@@ -566,10 +566,10 @@ class AutofillAuthActivity : ComponentActivity() {
     private suspend fun insertAutofill(
         origin: String, username: String, password: String
     ): VaultSession.Result {
-        if (AutofillSaveOffer.isSaved(password)) {
-            Log.i(TAG, "insertAutofill: already saved this session — the ack")
-            return VaultSession.Result.Success
-        }
+        // NO password-value dedup here: upsertSealed IS the dedup — the
+        // site + identity match updates the same login in place (a
+        // changed password, a re-save) and appends a new record only for
+        // a genuinely different identity (if in doubt, one extra record).
         val item = ProtonItem(
             name = origin,
             username = username,
@@ -582,7 +582,6 @@ class AutofillAuthActivity : ComponentActivity() {
             VaultSession.Result.Error("${e.javaClass.simpleName}: ${e.message}")
         }
         if (r == VaultSession.Result.Success) {
-            AutofillSaveOffer.markSaved(password)
             AutofillSaveOffer.cancelTrigger(this)
         }
         return r

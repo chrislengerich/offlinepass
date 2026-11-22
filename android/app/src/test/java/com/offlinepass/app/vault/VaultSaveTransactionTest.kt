@@ -352,6 +352,93 @@ class VaultSaveTransactionTest {
     }
 
     @Test
+    fun upsertSealedMatchesIdentityAcrossBucketsAndAppendsOnIdentityChange() = runBlocking {
+        // THE SITE + IDENTITY KEY (username.ifBlank { email }): the same
+        // login whose address sits in the OTHER bucket updates in place
+        // (no spurious duplicates from the bucket shuffle); a genuinely
+        // different identity appends (if in doubt, one extra record).
+        // The password NEVER gates the match — a changed password on the
+        // same login = the update.
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        // The Add-entry shape: the username blank, the address in the
+        // email field.
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf(ProtonItem(
+                name = "github.com", username = "",
+                email = "alias@aleeas.com", password = "pw-old",
+                urls = listOf("https://github.com"))
+                .apply { modifyTime = 100 })
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        // The autofill's save: the address in the USERNAME bucket, the
+        // email bucket empty — the SAME identity, the other bucket.
+        val fromUsernameBucket = ProtonItem(
+            name = "github.com", username = "alias@aleeas.com",
+            password = "pw-new", urls = listOf("https://github.com"))
+        val r1 = VaultSession.upsertSealed(fromUsernameBucket
+            .copy(modifyTime = 0))
+        assertTrue("the bucket-shuffle save = the update: $r1",
+            r1 is VaultSession.Result.Success)
+        var plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertTrue("the new password landed", plain.contains("pw-new"))
+        assertFalse("the old password replaced", plain.contains("pw-old"))
+        assertEquals("exactly ONE record — the bucket shuffle is not a new login",
+            1, plain.split("\"itemUuid\"").size - 1)
+
+        // A genuinely different identity = the append (one extra record).
+        val other = ProtonItem(
+            name = "github.com", username = "second@aleeas.com",
+            password = "pw-second", urls = listOf("https://github.com"))
+        val r2 = VaultSession.upsertSealed(other.copy(modifyTime = 0))
+        assertTrue("the different identity appends: $r2",
+            r2 is VaultSession.Result.Success)
+        plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertEquals("two records after the identity change",
+            2, plain.split("\"itemUuid\"").size - 1)
+
+        // The password change on the SAME identity = the update again.
+        val pwChange = ProtonItem(
+            name = "github.com", username = "second@aleeas.com",
+            password = "pw-rotated", urls = listOf("https://github.com"))
+        assertTrue(VaultSession.upsertSealed(pwChange.copy(modifyTime = 0))
+            is VaultSession.Result.Success)
+        plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertTrue("the rotated password landed", plain.contains("pw-rotated"))
+        assertFalse(plain.contains("pw-second"))
+        assertEquals("still two records", 2, plain.split("\"itemUuid\"").size - 1)
+    }
+
+    @Test
+    fun upsertSealedDoubleSaveYieldsOneRecord() = runBlocking {
+        // THE DOUBLE-SAVE (the card's Save + the platform's confirmed
+        // save both arriving): the same site + identity = the update —
+        // exactly one record, no duplicate.
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf()
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        val gen = ProtonItem(
+            name = "github.com", username = "alias@aleeas.com",
+            password = "pw-gen", urls = listOf("https://github.com"))
+        assertTrue(VaultSession.upsertSealed(gen.copy(modifyTime = 0))
+            is VaultSession.Result.Success)
+        assertTrue(VaultSession.upsertSealed(gen.copy(modifyTime = 0))
+            is VaultSession.Result.Success)
+        val plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertEquals("the double-save = one record",
+            1, plain.split("\"itemUuid\"").size - 1)
+    }
+
+    @Test
     fun addSealedAppendsBrandNewEntry() = runBlocking {
         // THE MEASURED NO-OP: the generated entry went through the EDIT
         // path (the swap-by-uuid never matched) — "Saved ✓" with the

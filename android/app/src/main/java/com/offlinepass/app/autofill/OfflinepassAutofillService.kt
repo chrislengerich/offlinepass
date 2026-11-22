@@ -138,7 +138,8 @@ class OfflinepassAutofillService : AutofillService() {
         if (allIds.isEmpty()) return this
         return setSaveInfo(android.service.autofill.SaveInfo.Builder(
             android.service.autofill.SaveInfo.SAVE_DATA_TYPE_PASSWORD or
-                android.service.autofill.SaveInfo.SAVE_DATA_TYPE_USERNAME,
+                android.service.autofill.SaveInfo.SAVE_DATA_TYPE_USERNAME or
+                android.service.autofill.SaveInfo.SAVE_DATA_TYPE_EMAIL_ADDRESS,
             allIds
         ).build())
     }
