@@ -110,9 +110,11 @@ class ChipOfferConditionsTest {
     }
 
     @Test
-    fun `the password chip - suppressed when an entry matches the page`() {
+    fun `the password chip - offered even when an entry matches the page`() {
+        // The user's call: the generate option must never be missing
+        // from a password field — the matched entries fill alongside it.
         val f = fields(passwords = 1, domain = "github.com")
-        assertFalse(svc.passwordChipOffered(
+        assertTrue(svc.passwordChipOffered(
             f, listOf(siteItem("gh", "https://github.com"))))
     }
 

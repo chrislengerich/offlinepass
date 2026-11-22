@@ -164,10 +164,9 @@ class OfflinepassAutofillService : AutofillService() {
         for (item in shown) {
             builder.addDataset(datasetFor(item, fields, "${item.displayName} — ${item.identity}"))
         }
-        // THE GENERATE CHIP: the registration / new-credentials case — no
-        // entry matches the page. Tapping gates, generates, and the
-        // re-invoke fills the fresh password. Only WITH a password field
-        // (a zero-value dataset = the platform build() throws).
+        // THE GENERATE CHIP: offered on EVERY password field (the user's
+        // call — the generate option must never be missing). Tapping
+        // gates, generates, and the fill rides the auth result.
         if (passwordChipOffered(fields, shown)) {
             generateDataset(fields)?.let { builder.addDataset(it) }
         }
@@ -249,12 +248,10 @@ class OfflinepassAutofillService : AutofillService() {
         }
         val ids = (fields.username + fields.password)
         var requestCode = 10
-        // THE GENERATE CHIP: no entry matches the page (the registration
-        // case) — the tap gates, generates, the re-invoke fills.
-        if (ranked.none { fields.matches(it) }) {
-            generateDataset(fields, requestCode++)?.let { builder.addDataset(it) }
-            count++
-        }
+        // THE GENERATE CHIP: offered on EVERY password field here too
+        // (the tap gates, generates, the fill rides the auth result).
+        generateDataset(fields, requestCode++)?.let { builder.addDataset(it) }
+        count++
         // THE ALIAS CHIP in the SEALED sheet: the vault auto-locks, so the
         // fill requests are sealed in practice — the chip is offered when
         // the SL entry exists in the manifest (its urls are clear text)
@@ -395,11 +392,12 @@ class OfflinepassAutofillService : AutofillService() {
         return ds.build()
     }
 
-    /** THE CHIP-OFFER CONDITIONS (internal for the Robolectric pins —
-     *  the on-device failure mode "the chip never appears" is decided
-     *  exactly here, so the decisions must not drift untested). */
+    /** THE ⚡ CHIP: offered on EVERY form with a password field — the
+     *  user's call: the generate option must never be missing from a
+     *  password field (the matched-entry datasets fill from the vault;
+     *  the chip joins them). */
     internal fun passwordChipOffered(fields: Fields, shown: List<ProtonItem>) =
-        fields.password.isNotEmpty() && shown.none { fields.matches(it) }
+        fields.password.isNotEmpty()
 
     internal fun aliasChipOffered(fields: Fields, slReachable: Boolean) =
         fields.username.isNotEmpty() && slReachable
