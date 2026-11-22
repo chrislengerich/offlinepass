@@ -237,6 +237,14 @@ class OfflinepassAutofillService : AutofillService() {
                 "✓ ${revealed.displayName} — ${revealed.identity}",
                 revealedId ?: revealed.itemUuid))
             count++
+            // THE RE-INVOKE FILL'S TRACE (the ✨ chip's post-save fill was
+            // reported missing while the ⚡'s worked — the mechanisms are
+            // identical, so this line pins what the re-invoked response
+            // actually carried: the identity, the secret's presence, and
+            // the field ids the framework can apply).
+            Log.i(TAG, "revealed dataset: id=${revealedId ?: revealed.itemUuid} " +
+                "identity=${revealed.identity} pwLen=${revealed.password.length} " +
+                "usernameIds=${fields.username.size} passwordIds=${fields.password.size}")
         }
         val ids = (fields.username + fields.password)
         var requestCode = 10

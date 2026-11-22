@@ -83,7 +83,7 @@ object Totp {
 object PasswordGen {
     private const val ALPHANUMERIC = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-    fun password(length: Int = 10): String {
+    fun password(length: Int = 16): String {
         val rnd = java.security.SecureRandom()
         return buildString { repeat(length) { append(ALPHANUMERIC[rnd.nextInt(ALPHANUMERIC.length)]) } }
     }

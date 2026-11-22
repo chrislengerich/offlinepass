@@ -92,6 +92,7 @@ class AutofillAuthActivity : ComponentActivity() {
                         val apiKey = resolveSimpleLoginApiKey()
                         alias = SimpleLoginChain.createAlias(
                             SimpleLoginHttp(), apiKey, origin)
+                        Log.i(TAG, "the alias created: $alias — the reveal store armed (generate_alias)")
                     } catch (e: Exception) {
                         Log.w(TAG, "the SL alias failed in the alias chip: ${e.message}")
                         aliasError = e.message

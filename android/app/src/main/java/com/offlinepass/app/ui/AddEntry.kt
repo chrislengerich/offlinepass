@@ -70,8 +70,15 @@ fun AddEntryScreen(
                             // hostname = the entry's site) → the account's
                             // DEFAULT domain (the first offered suffix) →
                             // the v3 custom/new with the default mailbox.
-                            slAlias = SimpleLoginChain.createAlias(
+                            val created = SimpleLoginChain.createAlias(
                                 SimpleLoginHttp(), apiKey, host)
+                            // THE EMAIL FIELD = THE DELIVERY TARGET: the
+                            // alias MUST land in the field (the Save
+                            // carries the field's value — the status line
+                            // alone left the saved item email-less, the
+                            // measured miss).
+                            slAlias = created
+                            email = created
                         } catch (e: Exception) {
                             slError = "SimpleLogin error: ${e.message}"
                         }; slBusy = false

@@ -29,7 +29,7 @@ updated; the entries then move under that release's version heading here.
     domain + the
     generated password → both filled. SimpleLogin unreachable = the
     password-only fill, never a dead end.
-- **Generated password default** — 10 characters over letters and
+- **Generated password default** — 16 characters over letters and
   digits (was 24 with symbols).
 - **SimpleLogin linked accounts** — Setup → Linked accounts links the
   SimpleLogin account by pasting an API key from the dashboard

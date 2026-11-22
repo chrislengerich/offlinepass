@@ -223,7 +223,7 @@ class PasswordGenTest {
      *  hands this straight into a registration form). */
     @Test
     fun defaultDrawsAreUnique() {
-        assertEquals(10, PasswordGen.password().length)
+        assertEquals(16, PasswordGen.password().length)
         val draws = (1..100).map { PasswordGen.password() }.toSet()
         assertEquals("no duplicates in 100 draws", 100, draws.size)
     }
