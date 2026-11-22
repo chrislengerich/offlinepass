@@ -74,7 +74,6 @@ fun SetupTabScreen(
     onExportTempUsb: () -> Unit = {},
     onExportTempQrft: () -> Unit = {},
     onLinkSimpleLogin: (apiKey: String) -> Unit = {},
-    onUnlinkSimpleLogin: () -> Unit = {}
 ) {
     val cfg = VaultSession.config()
     var confirmDialog by remember { mutableStateOf<String?>(null) }
@@ -382,11 +381,11 @@ fun SetupTabScreen(
             Button(onClick = { showSlLink = true }, enabled = busy == null,
                 modifier = Modifier.fillMaxWidth()) { Text("Link SimpleLogin") }
         } else {
-            Text("SimpleLogin: linked. The api key = the vault item " +
-                "(the name \"SimpleLogin API\").",
+            Text("SimpleLogin: linked. The api key = the vault item (the " +
+                "name \"SimpleLogin API\").",
                 style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = onUnlinkSimpleLogin, enabled = busy == null,
-                modifier = Modifier.fillMaxWidth()) { Text("Unlink SimpleLogin") }
+            Button(onClick = { showSlLink = true }, enabled = busy == null,
+                modifier = Modifier.fillMaxWidth()) { Text("Relink SimpleLogin") }
         }
         HorizontalDivider()
 

@@ -381,19 +381,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
         }
     }
 
-    private fun unlinkSimpleLogin(): String {
-        val existing = VaultSession.simpleLoginItem() ?: return "SimpleLogin not linked."
-        val items = ((VaultSession.state as? VaultSession.State.Unlocked)?.items
-            ?: emptyList()).toMutableList()
-        items.removeAll { it.itemUuid == existing.itemUuid }
-        lifecycleScope.launch {
-            val r = saveLoop(items)
-            status = if (r is VaultSession.Result.Success)
-                "SimpleLogin unlinked (the api-key item deleted)."
-            else "Unlink failed: $r"
-        }
-        return "Unlinking SimpleLogin…"
-    }
 
     private suspend fun saveLoop(
         items: List<ProtonItem>,
@@ -2558,9 +2545,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     },
                     onLinkSimpleLogin = { apiKey ->
                         linkSimpleLogin(apiKey)
-                    },
-                    onUnlinkSimpleLogin = {
-                        lifecycleScope.launch { status = unlinkSimpleLogin() }
                     },
                     deviceCredentialReady = VaultSession.isDeviceCredentialReady() == 0,
                     onEnrollScreenlock = {
