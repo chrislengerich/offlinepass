@@ -1,16 +1,25 @@
 package com.offlinepass.app.autofill
 
 import android.app.AlertDialog
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
+import android.service.autofill.Dataset
+import android.service.autofill.FillResponse
 import android.util.Log
 import android.view.View
+import android.view.autofill.AutofillId
+import android.view.autofill.AutofillManager
+import android.view.autofill.AutofillValue
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.RemoteViews
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
+import com.offlinepass.app.R
 import com.offlinepass.app.crypto.ScreenlockGate
 import com.offlinepass.app.vault.PasswordGen
 import com.offlinepass.app.vault.ProtonItem
@@ -104,7 +113,17 @@ class AutofillAuthActivity : ComponentActivity() {
                         urls = listOf("https://$origin"),
                         password = generatedPassword)
                     AutofillRevealStore.put(item, "generate_alias")
-                    setResult(RESULT_OK)
+                    // THE RESULT-CARRIED FILL: the response rides the
+                    // auth result — the framework applies it directly at
+                    // the finish, whatever the save card took.
+                    val resultIntent = Intent()
+                    buildResultResponse(applicationContext, intent,
+                        if (item.identity.isNotBlank()) "✓ $origin — ${item.identity}" else "✓ $origin",
+                        item)?.let {
+                            resultIntent.putExtra(
+                                AutofillManager.EXTRA_AUTHENTICATION_RESULT, it)
+                        }
+                    setResult(RESULT_OK, resultIntent)
                     // THE IMMEDIATE SAVE CARD (the agreed design): the fill
                     // landed; the save question = OURS, immediately. The
                     // alias failure = VISIBLE (the reason line) — the
@@ -166,7 +185,17 @@ class AutofillAuthActivity : ComponentActivity() {
                         email = typedEmail,
                         password = PasswordGen.password())
                     AutofillRevealStore.put(item, "generate")
-                    setResult(RESULT_OK)
+                    // THE RESULT-CARRIED FILL (the same as the alias chip):
+                    // the identity is blank here — the username ids stay
+                    // unset (the no-clobber rule), the password fills.
+                    val resultIntent = Intent()
+                    buildResultResponse(applicationContext, intent,
+                        "✓ $origin — the generated password",
+                        item)?.let {
+                            resultIntent.putExtra(
+                                AutofillManager.EXTRA_AUTHENTICATION_RESULT, it)
+                        }
+                    setResult(RESULT_OK, resultIntent)
                     // THE IMMEDIATE SAVE CARD (replaces the silent tray
                     // trigger + its POST_NOTIFICATIONS dependency): the
                     // platform's save event = the user-typed-delta only —
@@ -568,6 +597,47 @@ class AutofillAuthActivity : ComponentActivity() {
         const val EXTRA_PASSWORD = "password"
         const val EXTRA_CONFIRMED = "confirmed"
         const val EXTRA_SL_UUID = "sl_uuid"
+        const val EXTRA_FILL_USERNAME_IDS = "fill_username_ids"
+        const val EXTRA_FILL_PASSWORD_IDS = "fill_password_ids"
+
+        /**
+         * THE RESULT-CARRIED FILL: the filled dataset returned with the
+         * auth result (EXTRA_AUTHENTICATION_RESULT) — the framework
+         * applies it DIRECTLY in onAuthenticationResult. This bypasses
+         * the re-invoke fallback whose session bookkeeping dies across
+         * the save card (the browser's log: our result arrived as an
+         * "empty intent" after onInvisibleForAutofill had EXPIRED the
+         * response — the generated item came back as a re-offered chip,
+         * never auto-filled). Mirrors datasetFor: the identity into the
+         * username ids ONLY when non-blank (the no-clobber rule — the
+         * ⚡ item has none), the password always. Null = the caller
+         * degrades to the bare RESULT_OK (the re-invoke path).
+         */
+        internal fun buildResultResponse(
+            context: Context, intent: Intent, label: String, item: ProtonItem
+        ): FillResponse? {
+            val usernameIds =
+                intent.getParcelableArrayListExtra<AutofillId>(EXTRA_FILL_USERNAME_IDS)
+            val passwordIds =
+                intent.getParcelableArrayListExtra<AutofillId>(EXTRA_FILL_PASSWORD_IDS)
+            if (passwordIds.isNullOrEmpty()) {
+                Log.i(TAG, "the result fill skipped — no password ids in the auth intent")
+                return null
+            }
+            val view = RemoteViews(context.packageName, R.layout.autofill_item).apply {
+                setTextViewText(R.id.autofill_text, label)
+            }
+            val ds = Dataset.Builder()
+            if (item.identity.isNotBlank()) {
+                usernameIds.orEmpty().forEach { id ->
+                    ds.setValue(id, AutofillValue.forText(item.identity), view)
+                }
+            }
+            passwordIds.forEach { id ->
+                ds.setValue(id, AutofillValue.forText(item.password), view)
+            }
+            return FillResponse.Builder().addDataset(ds.build()).build()
+        }
         const val MODE_REVEAL = "reveal"
         const val MODE_GENERATE = "generate"
         const val MODE_GENERATE_ALIAS = "generate_alias"

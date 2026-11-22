@@ -352,19 +352,32 @@ class OfflinepassAutofillService : AutofillService() {
      *  Null when no password field exists — a zero-value dataset makes
      *  the platform's build() THROW (the measured process-killer on the
      *  password-less Google sign-in page). */
+    /** THE GENERATE INTENT (shared by the chips): the mode, the origin,
+     *  and THE FILL TARGETS — the parcelable field ids the auth activity
+     *  needs to return the filled dataset via EXTRA_AUTHENTICATION_RESULT.
+     *  The direct apply matters: the browser's log shows the framework
+     *  EXPIRES the response when the auth activity covers the window
+     *  (onInvisibleForAutofill) and receives our result as an "empty
+     *  intent" — the re-invoke fallback then re-offers the generated item
+     *  as a chip instead of filling it. */
+    internal fun generateIntent(
+        mode: String, origin: String, fields: Fields
+    ): android.content.Intent =
+        android.content.Intent(appContext(), AutofillAuthActivity::class.java)
+            .putExtra(AutofillAuthActivity.EXTRA_MODE, mode)
+            .putExtra(AutofillAuthActivity.EXTRA_NAME, origin)
+            .putParcelableArrayListExtra(
+                AutofillAuthActivity.EXTRA_FILL_USERNAME_IDS, ArrayList(fields.username))
+            .putParcelableArrayListExtra(
+                AutofillAuthActivity.EXTRA_FILL_PASSWORD_IDS, ArrayList(fields.password))
+
     private fun generateDataset(fields: Fields, requestCode: Int = 30): Dataset? {
         if (fields.password.isEmpty()) {
             Log.i(TAG, "generate chip skipped — no password field detected")
             return null
         }
         val origin = fields.webDomain ?: fields.appPackage
-        val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
-            .putExtra(AutofillAuthActivity.EXTRA_MODE, AutofillAuthActivity.MODE_GENERATE)
-            .putExtra(AutofillAuthActivity.EXTRA_NAME, origin)
-            // THE TYPED EMAIL: the site's email field's current value
-            // (captured at the fill request) rides along — the save card
-            // and the upsert carry it (the user typed the email BEFORE
-            // tapping the generate chip — the common signup order).
+        val intent = generateIntent(AutofillAuthActivity.MODE_GENERATE, origin, fields)
             .putExtra(AutofillAuthActivity.EXTRA_USERNAME, fields.usernameValue ?: "")
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         val pi = android.app.PendingIntent.getActivity(
@@ -419,9 +432,7 @@ class OfflinepassAutofillService : AutofillService() {
             return null
         }
         val origin = fields.webDomain ?: fields.appPackage
-        val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
-            .putExtra(AutofillAuthActivity.EXTRA_MODE, AutofillAuthActivity.MODE_GENERATE_ALIAS)
-            .putExtra(AutofillAuthActivity.EXTRA_NAME, origin)
+        val intent = generateIntent(AutofillAuthActivity.MODE_GENERATE_ALIAS, origin, fields)
         slUuid?.let { intent.putExtra(AutofillAuthActivity.EXTRA_SL_UUID, it) }
         intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         val pi = android.app.PendingIntent.getActivity(
