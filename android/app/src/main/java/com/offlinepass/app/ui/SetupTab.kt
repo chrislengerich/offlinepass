@@ -80,6 +80,7 @@ fun SetupTabScreen(
     var confirmDialog by remember { mutableStateOf<String?>(null) }
     var deviceNameDialog by remember { mutableStateOf<String?>(null) }
     var showSlLink by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
     if (showSlLink) {
         // THE SL LINK DIALOG: the pasted api key (+ the optional email)
         // → the vault item (the onLinkSimpleLogin callback's save).
@@ -90,20 +91,25 @@ fun SetupTabScreen(
             title = { Text("Link SimpleLogin") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Create an API key in the SimpleLogin dashboard " +
-                        "(Settings → Advanced → API Keys) and paste it. " +
-                        "It stores as a card-encrypted vault item.",
+                    Text("Log in to SimpleLogin, then open the API-keys page " +
+                        "and create a key. Paste it here — it stores as a " +
+                        "card-encrypted vault item.",
                         style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = {
+                        runCatching {
+                            context.startActivity(android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://app.simplelogin.io/dashboard/api_key")))
+                        }
+                    }) { Text("Open SimpleLogin API keys") }
                     OutlinedTextField(value = slKey, onValueChange = { slKey = it },
                         label = { Text("SimpleLogin API key") }, singleLine = true)
-                    OutlinedTextField(value = slEmail, onValueChange = { slEmail = it },
-                        label = { Text("SimpleLogin email (optional)") }, singleLine = true)
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
                     showSlLink = false
-                    onLinkSimpleLogin(slKey.trim(), slEmail.trim())
+                    onLinkSimpleLogin(slKey.trim(), "")
                 }, enabled = slKey.isNotBlank()) { Text("Link") }
             },
             dismissButton = {
@@ -375,7 +381,8 @@ fun SetupTabScreen(
             Button(onClick = { showSlLink = true }, enabled = busy == null,
                 modifier = Modifier.fillMaxWidth()) { Text("Link SimpleLogin") }
         } else {
-            Text("SimpleLogin: linked (${slItem.username.ifBlank { "account" }}).",
+            Text("SimpleLogin: linked. The api key = the vault item " +
+                "(the name \"SimpleLogin API\", the URL = the SL host).",
                 style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = onUnlinkSimpleLogin, enabled = busy == null,
                 modifier = Modifier.fillMaxWidth()) { Text("Unlink SimpleLogin") }

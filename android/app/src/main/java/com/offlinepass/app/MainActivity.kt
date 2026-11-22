@@ -338,7 +338,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
     private fun linkSimpleLogin(apiKey: String, email: String): String {
         val slItem = ProtonItem(
             name = "SimpleLogin API",
-            username = email,
+            username = "",
             password = apiKey,
             urls = listOf("https://${VaultSession.SL_HOST}"))
         val existing = VaultSession.simpleLoginItem()
