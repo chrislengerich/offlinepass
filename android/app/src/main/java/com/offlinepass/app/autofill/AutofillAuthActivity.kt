@@ -69,22 +69,22 @@ class AutofillAuthActivity : ComponentActivity() {
         lifecycleScope.launch {
             when (mode) {
                 MODE_GENERATE_ALIAS -> {
-                    // THE ALIAS CHIP'S FLOW: the gate → the SL chain (the
-                    // options → the account's default-domain suffix → the
-                    // create, the hostname = the web origin) → the alias
-                    // + the local password → the item fills BOTH the
+                    // THE ALIAS CHIP'S FLOW: the SL chain (the options →
+                    // the account's default-domain suffix → the create,
+                    // the hostname = the web origin) → the alias + the
+                    // local password → the item fills BOTH the
                     // email/username and the password fields → the
-                    // immediate save card.
-                    val ok = ScreenlockGate.promptGate(
-                        this@AutofillAuthActivity,
-                        "Generate SimpleLogin alias, fill & save",
-                        "The device lock authorizes creating a SimpleLogin alias, filling the signup, and saving the login")
-                    if (!ok) {
-                        Log.i(TAG, "the alias generate's gate declined — RESULT_CANCELED")
-                        setResult(RESULT_CANCELED)
-                        finish()
-                        return@launch
-                    }
+                    // auto-save → the finish delivers the fill.
+                    //
+                    // NO GATE: the BiometricPrompt's own system UI
+                    // activity bubbles an EMPTY result into the
+                    // framework's auth tracking the moment it succeeds —
+                    // consuming the dataset's authentication before the
+                    // flow's filled response can deliver (the measured
+                    // onAuthenticationResult(): empty intent). The autofill
+                    // only runs on an UNLOCKED phone — the Keyguard
+                    // timestamp is already armed by the phone's own
+                    // unlock, so the vault operations run quietly.
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Generated login"
                     val generatedPassword = PasswordGen.password()
                     var alias: String? = null
@@ -151,16 +151,10 @@ class AutofillAuthActivity : ComponentActivity() {
                     Log.i(TAG, "the alias flow done: alias=$alias updating=$updating r=$r")
                 }
                 MODE_GENERATE -> {
-                    val ok = ScreenlockGate.promptGate(
-                        this@AutofillAuthActivity,
-                        "Generate password, fill & save",
-                        "The device lock authorizes generating a password, filling it, and saving the login")
-                    if (!ok) {
-                        Log.i(TAG, "the generate's gate declined — RESULT_CANCELED")
-                        setResult(RESULT_CANCELED)
-                        finish()
-                        return@launch
-                    }
+                    // NO GATE (the same as the alias chip): the prompt's
+                    // success bubbles an empty auth result that consumes
+                    // the dataset's authentication. The autofill only runs
+                    // on an unlocked phone.
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Generated password"
                     // THE PASSWORD ONLY: the generate chip creates NO alias
                     // — the alias = the EMAIL field's chip (✨). The typed
