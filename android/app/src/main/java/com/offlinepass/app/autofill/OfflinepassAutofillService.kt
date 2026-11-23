@@ -501,6 +501,15 @@ internal fun parseAutofillStructure(
     var passwordValue: String? = null
     var appPackage = structure.activityComponent.packageName
     var webDomain: String? = null
+    // THE TIERED USERNAME CAPTURE: the explicitly-marked email/username
+    // fields (tier 1) always beat the loose-substring matches (tier 2) —
+    // the login/SSO forms embed auxiliary fields (userToken,
+    // loginChallenge) that match the loose substrings and would win the
+    // first-non-blank race otherwise.
+    var strongUsernameValue: String? = null
+    var strongUsernameFrom: String? = null
+    var weakUsernameValue: String? = null
+    var weakUsernameFrom: String? = null
 
     fun walk(node: AssistStructure.ViewNode) {
         node.webDomain?.let { if (webDomain == null) webDomain = it }
@@ -518,10 +527,19 @@ internal fun parseAutofillStructure(
             resId.contains("password") || resId.contains("passwd") ||
             (node.inputType and (android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD)) ==
             (android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        // TIER 1: the explicit marks — the autofill hints, the email
+        // anywhere, the username in the id/hint.
+        val explicitEmail = node.autofillHints?.any {
+            it.contains("email", ignoreCase = true)
+        } == true || hints.contains("email") || hint.contains("email") ||
+            resId.contains("email")
+        val explicitUsername = node.autofillHints?.any {
+            it.contains("username", ignoreCase = true)
+        } == true || hints.contains("username") || resId.contains("username")
         val isUsername = !isPassword && !looksLikeUrlField && (
-            node.autofillHints?.contains(View.AUTOFILL_HINT_USERNAME) == true ||
-                hints.contains("username") || hints.contains("email") || hint.contains("email") ||
-                hint.contains("user") || resId.contains("user") || resId.contains("email") ||
+            explicitEmail || explicitUsername ||
+                node.autofillHints?.contains(View.AUTOFILL_HINT_USERNAME) == true ||
+                hint.contains("user") || resId.contains("user") ||
                 resId.contains("login") || resId.contains("account")
             )
         node.autofillId?.let { id ->
@@ -536,11 +554,20 @@ internal fun parseAutofillStructure(
                     }
                     isUsername -> {
                         username.add(id)
-                        if (usernameValue == null) {
-                            (node.autofillValue?.textValue as? CharSequence)
-                                ?.takeIf { it.isNotBlank() && !it.startsWith("http") && !it.startsWith("www.") }
-                                ?.let { usernameValue = it.toString() }
-                        }
+                        (node.autofillValue?.textValue as? CharSequence)
+                            ?.takeIf { it.isNotBlank() && !it.startsWith("http") && !it.startsWith("www.") }
+                            ?.let { v ->
+                                val value = v.toString()
+                                if (explicitEmail || explicitUsername) {
+                                    if (strongUsernameValue == null) {
+                                        strongUsernameValue = value
+                                        strongUsernameFrom = resId.ifBlank { hint }
+                                    }
+                                } else if (weakUsernameValue == null) {
+                                    weakUsernameValue = value
+                                    weakUsernameFrom = resId.ifBlank { hint }
+                                }
+                            }
                     }
                 }
             }
@@ -551,6 +578,11 @@ internal fun parseAutofillStructure(
     for (i in 0 until structure.windowNodeCount) {
         walk(structure.getWindowNodeAt(i).rootViewNode)
     }
+    usernameValue = strongUsernameValue ?: weakUsernameValue
+    Log.d("OfflinepassAutofill", "the username capture: tier=${if (strongUsernameValue != null) 1 else 2} " +
+        "value=${usernameValue?.length ?: 0} chars " +
+        "from=${strongUsernameFrom ?: weakUsernameFrom ?: "none"} " +
+        "(username fields: ${username.size})")
     return OfflinepassAutofillService.Fields(
         username, password, appPackage, webDomain, usernameValue, passwordValue)
 }
