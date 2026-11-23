@@ -60,6 +60,11 @@ fun EntryDetailScreen(
     var totp by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var showTotpEntry by remember { mutableStateOf(false) }
     var showReenrollConfirm by remember { mutableStateOf(false) }
+    // THE COUNTER'S SECRET SOURCE: the pane's own state — the enrollment
+    // Save updates it FIRST, so the counter re-renders with the new
+    // secret immediately (the item param's in-place updates may never
+    // reach the recomposition).
+    var activeTotpUri by remember(item.itemUuid) { mutableStateOf(item.totpUri) }
     // THE SCANNED URI: the raw-QR scan lands here and re-opens the entry —
     // the row consumes the URI into its own input (the scan never saves
     // alone; the user reviews before saving).
@@ -80,10 +85,10 @@ fun EntryDetailScreen(
     var slAliasId by remember(item.itemUuid) { mutableStateOf<Long?>(null) }
     val slScope = androidx.compose.runtime.rememberCoroutineScope()
 
-    if (item.totpUri.isNotBlank()) {
-        LaunchedEffect(item.totpUri) {
+    if (activeTotpUri.isNotBlank()) {
+        LaunchedEffect(activeTotpUri) {
             while (true) {
-                totp = runCatching { Totp.generate(item.totpUri) }.getOrNull()
+                totp = runCatching { Totp.generate(activeTotpUri) }.getOrNull()
                 kotlinx.coroutines.delay(1000)
             }
         }
@@ -184,7 +189,7 @@ fun EntryDetailScreen(
                 Text("Regenerate password", style = MaterialTheme.typography.bodySmall)
             }
         }
-        if (item.totpUri.isBlank()) {
+        if (activeTotpUri.isBlank()) {
             TextButton(onClick = { showTotpEntry = true }, enabled = busy == null) {
                 Text("Enroll TOTP", style = MaterialTheme.typography.bodySmall)
             }
@@ -210,7 +215,13 @@ fun EntryDetailScreen(
                 onTotpUriConsumed = onTotpUriConsumed,
                 onScan = onScanTotp,
                 busy = busy,
-                onEnroll = onEnrollTotp,
+                onEnroll = { newUri ->
+                    // THE COUNTER FIRST: the pane's secret source updates
+                    // before the save — the counter re-renders with the new
+                    // secret immediately.
+                    activeTotpUri = newUri
+                    onEnrollTotp(newUri)
+                },
                 onDismiss = { showTotpEntry = false }
             )
         }
