@@ -451,8 +451,12 @@ class OfflinepassAutofillService : AutofillService() {
             .setId("generate_alias")
         // THE PLACEHOLDERS = NULL (the docs' CVC pattern — the empty
         // strings mark the views CHANGED and pollute the session state).
+        // THE USERNAME IDS ONLY: the placeholders decide where the chip
+        // SURFACES — the password ids would offer the alias chip on
+        // password-focused fields too (the user's call: the ⚡ chip owns
+        // those). The FILL still covers both fields — the auth result's
+        // dataset carries the alias AND the password.
         for (id in fields.username) ds.setValue(id, null, view)
-        for (id in fields.password) ds.setValue(id, null, view)
         Log.i(TAG, "alias chip offered for $origin (id=generate_alias)")
         return ds.build()
     }
