@@ -189,7 +189,6 @@ fun EntryDetailScreen(
                 Text("Enroll TOTP", style = MaterialTheme.typography.bodySmall)
             }
         } else {
-            Text("TOTP enrolled", style = MaterialTheme.typography.bodySmall)
             if (totp != null) {
                 val (code, remaining) = totp!!
                 Text("TOTP: $code  (${remaining}s)", style = MaterialTheme.typography.titleMedium)
