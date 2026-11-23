@@ -3,7 +3,7 @@
 [![tests](https://github.com/chrislengerich/offlinepass/actions/workflows/tests.yml/badge.svg)](https://github.com/chrislengerich/offlinepass/actions/workflows/tests.yml)
 
 A low-dependency password manager in the spirit of [Proton Pass](https://proton.me/pass):
-one OpenPGP-encrypted vault file in a git repo, with three clients.
+one OpenPGP-encrypted vault file in a git repo, with three clients. Data is encrypted at rest and in memory to hardware secure elements.
 
 - **Linux (terminal UI)** — this repo's `linux/offlinepass.py`: search, display,
   and manage Proton Pass login entries; render any entry as a QR code.
