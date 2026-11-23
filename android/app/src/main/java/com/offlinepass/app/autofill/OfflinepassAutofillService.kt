@@ -480,58 +480,70 @@ class OfflinepassAutofillService : AutofillService() {
         return ds.build()
     }
 
-    private fun parse(structure: AssistStructure): Fields {
-        val username = mutableListOf<AutofillId>()
-        val password = mutableListOf<AutofillId>()
-        var usernameValue: String? = null
-        var passwordValue: String? = null
-        var appPackage = structure.activityComponent.packageName
-        var webDomain: String? = null
+    internal fun parse(structure: AssistStructure): Fields = parseAutofillStructure(structure)
 
-        fun walk(node: AssistStructure.ViewNode) {
-            node.webDomain?.let { if (webDomain == null) webDomain = it }
-            val hints = node.autofillHints?.joinToString(" ")?.lowercase() ?: ""
-            val hint = node.hint?.lowercase() ?: ""
-            val resId = (node.idEntry ?: "").lowercase()
-            val isPassword = node.autofillHints?.contains(View.AUTOFILL_HINT_PASSWORD) == true ||
-                hints.contains("password") || hint.contains("password") ||
-                resId.contains("password") || resId.contains("passwd") ||
-                (node.inputType and (android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD)) ==
-                (android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD)
-            val isUsername = !isPassword && (
-                node.autofillHints?.contains(View.AUTOFILL_HINT_USERNAME) == true ||
-                    hints.contains("username") || hints.contains("email") || hint.contains("email") ||
-                    hint.contains("user") || resId.contains("user") || resId.contains("email") ||
-                    resId.contains("login") || resId.contains("account")
-                )
-            node.autofillId?.let { id ->
-                if (node.visibility == View.VISIBLE) {
-                    when {
-                        isPassword -> {
-                            password.add(id)
-                            if (passwordValue == null) {
-                                (node.autofillValue?.textValue as? CharSequence)
-                                    ?.takeIf { it.isNotBlank() }?.let { passwordValue = it.toString() }
-                            }
+    private fun appContext() = applicationContext
+}
+
+/**
+ * THE FORM PARSER — shared between the autofill service (the fill
+ * requests) and the auth activity (the auth launch's fill-in intent
+ * carries the LATEST AssistStructure once the PendingIntent is mutable,
+ * and the activity re-parses it to read the fields' CURRENT values — the
+ * user may have typed since the fill request).
+ */
+internal fun parseAutofillStructure(
+    structure: AssistStructure
+): OfflinepassAutofillService.Fields {
+    val username = mutableListOf<AutofillId>()
+    val password = mutableListOf<AutofillId>()
+    var usernameValue: String? = null
+    var passwordValue: String? = null
+    var appPackage = structure.activityComponent.packageName
+    var webDomain: String? = null
+
+    fun walk(node: AssistStructure.ViewNode) {
+        node.webDomain?.let { if (webDomain == null) webDomain = it }
+        val hints = node.autofillHints?.joinToString(" ")?.lowercase() ?: ""
+        val hint = node.hint?.lowercase() ?: ""
+        val resId = (node.idEntry ?: "").lowercase()
+        val isPassword = node.autofillHints?.contains(View.AUTOFILL_HINT_PASSWORD) == true ||
+            hints.contains("password") || hint.contains("password") ||
+            resId.contains("password") || resId.contains("passwd") ||
+            (node.inputType and (android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD)) ==
+            (android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        val isUsername = !isPassword && (
+            node.autofillHints?.contains(View.AUTOFILL_HINT_USERNAME) == true ||
+                hints.contains("username") || hints.contains("email") || hint.contains("email") ||
+                hint.contains("user") || resId.contains("user") || resId.contains("email") ||
+                resId.contains("login") || resId.contains("account")
+            )
+        node.autofillId?.let { id ->
+            if (node.visibility == View.VISIBLE) {
+                when {
+                    isPassword -> {
+                        password.add(id)
+                        if (passwordValue == null) {
+                            (node.autofillValue?.textValue as? CharSequence)
+                                ?.takeIf { it.isNotBlank() }?.let { passwordValue = it.toString() }
                         }
-                        isUsername -> {
-                            username.add(id)
-                            if (usernameValue == null) {
-                                (node.autofillValue?.textValue as? CharSequence)
-                                    ?.takeIf { it.isNotBlank() }?.let { usernameValue = it.toString() }
-                            }
+                    }
+                    isUsername -> {
+                        username.add(id)
+                        if (usernameValue == null) {
+                            (node.autofillValue?.textValue as? CharSequence)
+                                ?.takeIf { it.isNotBlank() }?.let { usernameValue = it.toString() }
                         }
                     }
                 }
-                Unit
             }
-            for (i in 0 until node.childCount) walk(node.getChildAt(i))
+            Unit
         }
-        for (i in 0 until structure.windowNodeCount) {
-            walk(structure.getWindowNodeAt(i).rootViewNode)
-        }
-        return Fields(username, password, appPackage, webDomain, usernameValue, passwordValue)
+        for (i in 0 until node.childCount) walk(node.getChildAt(i))
     }
-
-    private fun appContext() = applicationContext
+    for (i in 0 until structure.windowNodeCount) {
+        walk(structure.getWindowNodeAt(i).rootViewNode)
+    }
+    return OfflinepassAutofillService.Fields(
+        username, password, appPackage, webDomain, usernameValue, passwordValue)
 }

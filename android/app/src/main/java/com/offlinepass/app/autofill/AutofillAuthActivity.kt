@@ -1,9 +1,11 @@
 package com.offlinepass.app.autofill
 
 import android.app.AlertDialog
+import android.app.assist.AssistStructure
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.service.autofill.AutofillService
 import android.service.autofill.Dataset
 import android.service.autofill.FillResponse
 import android.util.Log
@@ -53,6 +55,28 @@ class AutofillAuthActivity : ComponentActivity() {
 
     private var touchDialog: AlertDialog? = null
 
+    /** THE CURRENT FIELD VALUES: the auth launch's fill-in intent (merged
+     *  in by the mutable binding) carries the LATEST AssistStructure —
+     *  the fields' values as of the AUTH time, not the fill-request time
+     *  (the user may have typed since the sheet appeared). Null = the
+     *  structure absent — the caller falls back to the request-time
+     *  values. */
+    private fun currentStructureFields(): OfflinepassAutofillService.Fields? {
+        val structure = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            intent.getParcelableExtra(
+                AutofillManager.EXTRA_ASSIST_STRUCTURE, AssistStructure::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(AutofillManager.EXTRA_ASSIST_STRUCTURE)
+        } ?: return null
+        return try {
+            parseAutofillStructure(structure)
+        } catch (e: Exception) {
+            Log.w(TAG, "the current-structure parse failed: ${e.message}")
+            null
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         com.offlinepass.app.vault.VaultSession.init(applicationContext)
@@ -87,6 +111,11 @@ class AutofillAuthActivity : ComponentActivity() {
                     // unlock, so the vault operations run quietly.
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Generated login"
                     val generatedPassword = PasswordGen.password()
+                    // THE CURRENT FIELD VALUES: the user may have typed
+                    // their email since the sheet appeared — the fallback
+                    // identity (the alias creation failed) takes the
+                    // field's value as of NOW, not the request time.
+                    val currentEmail = currentStructureFields()?.usernameValue.orEmpty()
                     var alias: String? = null
                     var aliasError: String? = null
                     try {
@@ -108,8 +137,8 @@ class AutofillAuthActivity : ComponentActivity() {
                     }
                     val item = ProtonItem(
                         name = origin,
-                        email = alias ?: "",
-                        username = alias ?: "",
+                        email = alias ?: currentEmail,
+                        username = alias ?: currentEmail,
                         urls = listOf("https://$origin"),
                         password = generatedPassword)
                     AutofillRevealStore.put(item, "generate_alias")
@@ -158,19 +187,26 @@ class AutofillAuthActivity : ComponentActivity() {
                     // on an unlocked phone.
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Generated password"
                     // THE PASSWORD ONLY: the generate chip creates NO alias
-                    // — the alias = the EMAIL field's chip (✨). The typed
-                    // email (the site's field's value at the fill request)
+                    // — the alias = the EMAIL field's chip (✨). The email
                     // rides the intent — the item and the upsert carry it.
                     val typedEmail = intent.getStringExtra(EXTRA_USERNAME)?.trim().orEmpty()
+                    // THE CURRENT VALUE WINS: the auth launch's fill-in
+                    // intent carries the latest AssistStructure — the user
+                    // may have typed a different email since the sheet
+                    // appeared, and the save must take the field's value
+                    // as of NOW.
+                    val email = currentStructureFields()?.usernameValue
+                        ?: typedEmail
                     val item = ProtonItem(
                         name = origin,
                         urls = if (origin.contains('.') && !origin.contains(' '))
                             listOf("https://$origin") else emptyList(),
-                        email = typedEmail,
+                        email = email,
                         password = PasswordGen.password())
                     AutofillRevealStore.put(item, "generate")
                     // THE RESULT-CARRIED FILL (the same as the alias chip):
-                    // the identity is blank here — the username ids stay
+                    // the identity = the CURRENT email (when the user typed
+                    // one) — it fills the username ids; blank = the ids stay
                     // unset (the no-clobber rule), the password fills.
                     val resultIntent = Intent()
                     buildResultDataset(applicationContext, intent,
