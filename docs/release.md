@@ -20,6 +20,11 @@ The profileable build installs alongside the debug build (application id
 
 ### 1. Build + stage
 
+The release notes are drafted in [`docs/update-notes.md`](update-notes.md)
+(the running log — the unreleased section becomes this release's notes);
+fold it into the `RELEASE_NOTES.md` heredoc in `scripts/release.sh` (or
+override the staged file after `build`) before publishing.
+
 ```bash
 scripts/release.sh build 0.10.2
 # → dist/v0.10.2/: unsigned profileable APK, debug APK, release notes, checksums

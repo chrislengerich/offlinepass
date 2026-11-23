@@ -34,11 +34,14 @@ import com.offlinepass.app.vault.PasswordGen
 import com.offlinepass.app.vault.ProtonItem
 import com.offlinepass.app.vault.SealedVault
 import com.offlinepass.app.vault.VaultMerge
+import com.offlinepass.app.simplelogin.SimpleLoginHttp
+import com.offlinepass.app.simplelogin.SimpleLoginException
 import com.offlinepass.app.vault.VaultSession
 import com.offlinepass.app.ui.ExportTargetPickScreen
 import com.offlinepass.app.ui.PairScanScreen
 import com.offlinepass.app.vault.DeviceRecord
 import com.offlinepass.app.vault.DeviceWrap
+import com.offlinepass.app.vault.GooglePasswordsCsv
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -191,6 +194,16 @@ class MainActivity : androidx.activity.ComponentActivity() {
             else status = "Camera permission denied — cannot pair a paste device."
         }
 
+    /** TOTP QR scan: same camera permission, the scanner's raw mode — the
+     *  decoded otpauth:// URI lands in the pending state and the detail
+     *  panes pre-fill the enrollment entry with it (the scan never saves
+     *  alone). */
+    private val totpCameraLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) screen = Screen.TotpScan
+            else status = "Camera permission denied — cannot scan a TOTP QR."
+        }
+
     private fun launchInteraction(pi: PendingIntent) {
         interactionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
     }
@@ -328,6 +341,56 @@ class MainActivity : androidx.activity.ComponentActivity() {
             action()
         }
     }
+
+    /** THE SIMPLELOGIN LINK/UNLINK: the api key = a vault item (the name
+     *  "SimpleLogin API", the URL = the SL host) — the card-encrypted,
+     *  synced storage; the item-page alias toggle + the autofill's alias
+     *  generation arm on its presence. The replace-semantics: an existing
+     *  SL item = updated in place (the re-link). */
+    /** THE SIMPLELOGIN LINK: the pasted api key → the GET /api/user_info
+     *  VALIDATION (401 = the wrong key, refused by name) → the account's
+     *  email → the api key stores as a vault item with the email field =
+     *  the linked account (the cache the alias features read). */
+    private fun linkSimpleLogin(apiKey: String) {
+        status = "Verifying the SimpleLogin key…"
+        lifecycleScope.launch {
+            try {
+                val info = SimpleLoginHttp().userInfo(apiKey)
+                // THE DOMAINS: the v5/options at link time — the account's
+                // creatable alias domains, carried in the item's note.
+                val opts = SimpleLoginHttp().aliasOptions(apiKey, null)
+                val domains = opts.suffixes
+                    .map { it.suffix.substringAfter('@').removePrefix(".") }
+                    .filter { it.isNotBlank() }.distinct()
+                val domainsNote = if (domains.isEmpty()) ""
+                    else "\nSimpleLogin alias domains: " + domains.joinToString(", ")
+                val slItem = ProtonItem(
+                    name = "SimpleLogin API",
+                    email = info.email,
+                    password = apiKey,
+                    urls = listOf("https://${VaultSession.SL_HOST}"),
+                    note = "Created via offlinepass (SimpleLogin)" + domainsNote)
+                // THE UUID REUSE: a relink UPDATES the existing item in
+                // place (the same itemUuid) - the merge propagates it as
+                // an update; a removal-without-tombstone would let the
+                // peer's copy resurrect the old key on the next sync.
+                val existing = VaultSession.simpleLoginItem()
+                val items = ((VaultSession.state as? VaultSession.State.Unlocked)?.items
+                    ?: emptyList()).toMutableList()
+                if (existing != null) slItem.itemUuid = existing.itemUuid
+                items.removeAll { it.itemUuid == slItem.itemUuid }
+                items.add(slItem)
+                val r = saveLoop(items)
+                status = if (r is VaultSession.Result.Success)
+                    "SimpleLogin linked (${info.email}) — the api key stores " +
+                        "as a vault item."
+                else "SimpleLogin link failed: $r"
+            } catch (e: SimpleLoginException) {
+                status = "SimpleLogin link failed: ${e.message}"
+            }
+        }
+    }
+
 
     private suspend fun saveLoop(
         items: List<ProtonItem>,
@@ -476,6 +539,28 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray()) }
                         status = "Exported to Proton JSON (PLAINTEXT — delete the file " +
                             "once imported)."
+                        sealedToast(status)
+                    }
+                } catch (e: Exception) {
+                    status = "Export failed: ${e.message}"
+                }
+            }
+        }
+
+    private val googleExportLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+            if (uri == null) return@registerForActivityResult
+            lifecycleScope.launch {
+                try {
+                    val csv = VaultSession.exportGoogleCsv()
+                    if (csv == null) {
+                        status = "Nothing to export — unlock the vault (the plaintext " +
+                            "export needs the secrets in memory)."
+                    } else {
+                        contentResolver.openOutputStream(uri)?.use { it.write(csv.toByteArray()) }
+                        status = "Exported to Google Passwords CSV (PLAINTEXT — the notes, " +
+                            "the TOTP and the extra URLs are NOT in the Google format; " +
+                            "delete the file once imported)."
                         sealedToast(status)
                     }
                 } catch (e: Exception) {
@@ -751,6 +836,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     .setTitle("Sign vault change")
                     .setSubtitle(VaultSession.authDescription
                         ?: "Screen-lock signature for this revision")
+                // THE TRANSACTION: the item save's summary in the ONE
+                // prompt (consumed once — null = no description).
+                VaultSession.consumeSignerDescription()?.let { builder.setDescription(it) }
                 if (android.os.Build.VERSION.SDK_INT >= 30) {
                     builder.setAllowedAuthenticators(
                         android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG
@@ -1137,6 +1225,21 @@ class MainActivity : androidx.activity.ComponentActivity() {
             QrftScreen(
                 payload = (screen as Screen.QrftPayload).payload,
                 onBack = { screen = sshKeyBackScreen }
+            )
+            return
+        }
+        // The TOTP QR scanner: the raw mode — the decoded otpauth:// URI
+        // lands in the pending state; the detail panes consume it into the
+        // enrollment entry (the scan never saves alone). Routed in every
+        // state, like the QRFT scanner.
+        if (screen is Screen.TotpScan) {
+            QrftScanScreen(
+                rawMode = true,
+                onPayload = { _, payload ->
+                    MainActivity.pendingTotpUri = payload
+                    screen = Screen.Search
+                },
+                onBack = { screen = Screen.Search }
             )
             return
         }
@@ -1532,6 +1635,52 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         }
                     }
                 },
+                onImportGoogle = { remote, pat, uri ->
+                    VaultSession.configure(remote, emptyList())
+                    if (pat.isNotBlank()) VaultSession.savePat(pat)
+                    status = ""
+                    lifecycleScope.launch {
+                        val staged = File(cacheDir, "import-google")
+                        try {
+                            contentResolver.openInputStream(uri)?.use { ins ->
+                                staged.outputStream().use { ins.copyTo(it) }
+                            }
+                            // THE GOOGLE CSV: parsed straight to items — no
+                            // JSON sniff, no encrypted-restore branch (a CSV
+                            // is never PGP armor). The lossy rule: the
+                            // Google format has no note/TOTP/multi-URL.
+                            val items = GooglePasswordsCsv.parse(staged.readText())
+                            if (items.isEmpty()) {
+                                status = "No entries found — is that a Google " +
+                                    "Passwords CSV export?"
+                                return@launch
+                            }
+                            val open = VaultSession.gitOpenOnly()
+                            if (open is VaultSession.Result.Error) {
+                                android.widget.Toast.makeText(this@MainActivity,
+                                    "Offline — will sync later", android.widget.Toast.LENGTH_LONG).show()
+                                status = "Offline: repo not fetched. Use Sync now when back online."
+                            }
+                            val env = Envelope(items = items.toMutableList())
+                            VaultSession.adopt(env)
+                            status = "Imported ${env.items.size} entries."
+                            status = when (val r = saveLoop(env.items)) {
+                                VaultSession.Result.Success -> {
+                                    android.widget.Toast.makeText(
+                                        this@MainActivity, "Import complete",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                    "Import complete (rev ${VaultSession.currentRev()})."
+                                }
+                                else -> "Imported locally; save: $r"
+                            }
+                            screen = Screen.GetStarted
+                        } finally {
+                            // The Google CSV staging — wiped.
+                            com.offlinepass.app.vault.SecureWipe.file(staged)
+                        }
+                    }
+                },
                 onLoadGitHub = { remote, emails, pat ->
                     VaultSession.configure(remote, emails)
                     if (pat.isNotBlank()) VaultSession.savePat(pat)
@@ -1694,7 +1843,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             }
                         }
                     },
-                    onEnrollTotp = { secret ->
+                    onScanTotp = { totpCameraLauncher.launch(android.Manifest.permission.CAMERA) },
+                    pendingTotpUri = MainActivity.pendingTotpUri,
+                    onTotpUriConsumed = { MainActivity.pendingTotpUri = "" },
+                    onEnrollTotp = { secret, onDone ->
                         lifecycleScope.launch {
                             val base = sealedReveal ?: return@launch
                             when (val r = VaultSession.saveSealed(
@@ -1703,14 +1855,19 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                     sealedReveal = base
                                     saveToast("TOTP enrolled")
                                     status = "TOTP enrolled (rev ${VaultSession.currentRev()})."
+                                    onDone(true)
                                 }
                                 is VaultSession.Result.NeedsKeyDecrypt -> {
                                     pendingSealedEdit =
                                         base.copy(totpUri = secret, modifyTime = nowSeconds())
                                     unlockLoop()
+                                    onDone(false)
                                 }
-                                is VaultSession.Result.Error -> sealedToast(r.message)
-                                else -> {}
+                                is VaultSession.Result.Error -> {
+                                    sealedToast(r.message)
+                                    onDone(false)
+                                }
+                                else -> onDone(false)
                             }
                         }
                     },
@@ -1793,6 +1950,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 // (every state) and never reach this branch; the explicit
                 // branch keeps the when exhaustive.
                 is Screen.QrftPayload -> {}
+                is Screen.TotpScan -> {}
                 is Screen.QrftScan -> {}
                 Screen.SetupChoice, Screen.Search -> SearchScreen(
                     items = unlockedItems(),
@@ -1875,7 +2033,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                     }
                                 }
                             },
-                            onEnrollTotp = { uri ->
+                            onScanTotp = { totpCameraLauncher.launch(android.Manifest.permission.CAMERA) },
+                            pendingTotpUri = MainActivity.pendingTotpUri,
+                            onTotpUriConsumed = { MainActivity.pendingTotpUri = "" },
+                            onEnrollTotp = { uri, onDone ->
                                 lifecycleScope.launch {
                                     val mutated = sealedReveal!!
                                     mutated.totpUri = uri
@@ -1886,9 +2047,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                     status = when (val r = saveLoop(items, mutated.itemUuid)) {
                                         VaultSession.Result.Success -> {
                                             sealedReveal = mutated
+                                            onDone(true)
                                             "TOTP enrolled."
                                         }
-                                        else -> "Save: $r"
+                                        else -> {
+                                            onDone(false)
+                                            "Save: $r"
+                                        }
                                     }
                                 }
                             },
@@ -1949,7 +2114,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                     }
                                 }
                             },
-                            onEnrollTotp = { uri ->
+                            onScanTotp = { totpCameraLauncher.launch(android.Manifest.permission.CAMERA) },
+                            pendingTotpUri = MainActivity.pendingTotpUri,
+                            onTotpUriConsumed = { MainActivity.pendingTotpUri = "" },
+                            onEnrollTotp = { uri, onDone ->
                                 lifecycleScope.launch {
                                     val mutated = revealedItem!!
                                     mutated.totpUri = uri
@@ -1958,8 +2126,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                         if (it.itemUuid == mutated.itemUuid) mutated else it
                                     }
                                     status = when (val r = saveLoop(items, mutated.itemUuid)) {
-                                        VaultSession.Result.Success -> "TOTP enrolled."
-                                        else -> "Save: $r"
+                                        VaultSession.Result.Success -> {
+                                            onDone(true)
+                                            "TOTP enrolled."
+                                        }
+                                        else -> {
+                                            onDone(false)
+                                            "Save: $r"
+                                        }
                                     }
                                 }
                             },
@@ -1991,7 +2165,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                 }
                             }
                         },
-                        onEnrollTotp = { uri ->
+                        onScanTotp = { totpCameraLauncher.launch(android.Manifest.permission.CAMERA) },
+                        pendingTotpUri = MainActivity.pendingTotpUri,
+                        onTotpUriConsumed = { MainActivity.pendingTotpUri = "" },
+                        onEnrollTotp = { uri, onDone ->
                             lifecycleScope.launch {
                                 item.totpUri = uri
                                 item.modifyTime = nowSeconds()
@@ -2004,8 +2181,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                     if (it.itemUuid == item.itemUuid) item else it
                                 }
                                 status = when (val r = saveLoop(items, item.itemUuid)) {
-                                    VaultSession.Result.Success -> "TOTP enrolled."
-                                    else -> "Save: $r"
+                                    VaultSession.Result.Success -> {
+                                        onDone(true)
+                                        "TOTP enrolled."
+                                    }
+                                    else -> {
+                                        onDone(false)
+                                        "Save: $r"
+                                    }
                                 }
                             }
                         },
@@ -2193,6 +2376,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onLock = { lockNow("") },
                     onExportProton = {
                         protonExportLauncher.launch("offlinepass-proton-export.json")
+                    },
+                    onExportGoogle = {
+                        googleExportLauncher.launch("offlinepass-google-export.csv")
                     },
                     onExportBackupZip = {
                         backupExportLauncher.launch("offlinepass-backup.zip")
@@ -2419,6 +2605,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             status = "Commit signer: the YubiKey (SIG slot, touch to sign each commit)."
                         }
                     },
+                    onLinkSimpleLogin = { apiKey ->
+                        linkSimpleLogin(apiKey)
+                    },
                     deviceCredentialReady = VaultSession.isDeviceCredentialReady() == 0,
                     onEnrollScreenlock = {
                         lifecycleScope.launch { status = VaultSession.enrollScreenlockSigning(this@MainActivity) }
@@ -2638,6 +2827,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // Compose tree a fresh recomposer without losing the navigation
         // state (the instance-level reset to SetupChoice was the bug).
         var screen by mutableStateOf<Screen>(Screen.SetupChoice)
+        // The scanned TOTP URI (the raw-QR scan): the detail panes consume
+        // it into the enrollment entry. The class-level: it survives the
+        // scanner's navigation both ways.
+        var pendingTotpUri by mutableStateOf("")
         private const val TAG = "S1"
     }
 }

@@ -1,20 +1,33 @@
 package com.offlinepass.app.autofill
 
 import android.app.AlertDialog
+import android.app.assist.AssistStructure
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
+import android.service.autofill.AutofillService
+import android.service.autofill.Dataset
+import android.service.autofill.FillResponse
 import android.util.Log
 import android.view.View
+import android.view.autofill.AutofillId
+import android.view.autofill.AutofillManager
+import android.view.autofill.AutofillValue
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.RemoteViews
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
+import com.offlinepass.app.R
 import com.offlinepass.app.crypto.ScreenlockGate
 import com.offlinepass.app.vault.PasswordGen
 import com.offlinepass.app.vault.ProtonItem
 import com.offlinepass.app.vault.SealedVault
+import com.offlinepass.app.simplelogin.SimpleLoginChain
+import com.offlinepass.app.simplelogin.SimpleLoginHttp
 import com.offlinepass.app.vault.VaultSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -42,6 +55,28 @@ class AutofillAuthActivity : ComponentActivity() {
 
     private var touchDialog: AlertDialog? = null
 
+    /** THE CURRENT FIELD VALUES: the auth launch's fill-in intent (merged
+     *  in by the mutable binding) carries the LATEST AssistStructure —
+     *  the fields' values as of the AUTH time, not the fill-request time
+     *  (the user may have typed since the sheet appeared). Null = the
+     *  structure absent — the caller falls back to the request-time
+     *  values. */
+    private fun currentStructureFields(): OfflinepassAutofillService.Fields? {
+        val structure = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            intent.getParcelableExtra(
+                AutofillManager.EXTRA_ASSIST_STRUCTURE, AssistStructure::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(AutofillManager.EXTRA_ASSIST_STRUCTURE)
+        } ?: return null
+        return try {
+            parseAutofillStructure(structure)
+        } catch (e: Exception) {
+            Log.w(TAG, "the current-structure parse failed: ${e.message}")
+            null
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         com.offlinepass.app.vault.VaultSession.init(applicationContext)
@@ -57,37 +92,147 @@ class AutofillAuthActivity : ComponentActivity() {
         }
         lifecycleScope.launch {
             when (mode) {
-                MODE_GENERATE -> {
-                    val ok = ScreenlockGate.promptGate(
-                        this@AutofillAuthActivity,
-                        "Generate & fill",
-                        "The device lock authorizes filling a generated password")
-                    if (!ok) {
-                        Log.i(TAG, "the generate's gate declined — RESULT_CANCELED")
-                        setResult(RESULT_CANCELED)
-                        finish()
-                        return@launch
+                MODE_GENERATE_ALIAS -> {
+                    // THE ALIAS CHIP'S FLOW: the SL chain (the options →
+                    // the account's default-domain suffix → the create,
+                    // the hostname = the web origin) → the alias + the
+                    // local password → the item fills BOTH the
+                    // email/username and the password fields → the
+                    // auto-save → the finish delivers the fill.
+                    //
+                    // NO GATE: the BiometricPrompt's own system UI
+                    // activity bubbles an EMPTY result into the
+                    // framework's auth tracking the moment it succeeds —
+                    // consuming the dataset's authentication before the
+                    // flow's filled response can deliver (the measured
+                    // onAuthenticationResult(): empty intent). The autofill
+                    // only runs on an UNLOCKED phone — the Keyguard
+                    // timestamp is already armed by the phone's own
+                    // unlock, so the vault operations run quietly.
+                    val origin = name?.takeIf { it.isNotBlank() } ?: "Generated login"
+                    val generatedPassword = PasswordGen.password()
+                    // THE CURRENT FIELD VALUES: the user may have typed
+                    // their email since the sheet appeared — the fallback
+                    // identity (the alias creation failed) takes the
+                    // field's value as of NOW, not the request time.
+                    val currentEmail = currentStructureFields()?.usernameValue.orEmpty()
+                    var alias: String? = null
+                    var aliasError: String? = null
+                    try {
+                        // THE EXTRACTED CHAIN (SimpleLoginChainTest pins the
+                        // order): the options → the account's DEFAULT-domain
+                        // signed suffix → the v3-custom-create with the
+                        // default mailbox → the alias. The api key comes
+                        // from EITHER state: the unlocked session, or — the
+                        // common case, the vault auto-locks — the sealed
+                        // cache (the gate ABOVE opened the keystore auth
+                        // window, so the reveal is authorized now).
+                        val apiKey = resolveSimpleLoginApiKey()
+                        alias = SimpleLoginChain.createAlias(
+                            SimpleLoginHttp(), apiKey, origin)
+                        Log.i(TAG, "the alias created: $alias — the reveal store armed (generate_alias)")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "the SL alias failed in the alias chip: ${e.message}")
+                        aliasError = e.message
                     }
+                    val item = ProtonItem(
+                        name = origin,
+                        email = alias ?: currentEmail,
+                        username = alias ?: currentEmail,
+                        urls = listOf("https://$origin"),
+                        password = generatedPassword)
+                    AutofillRevealStore.put(item, "generate_alias")
+                    // THE RESULT-CARRIED FILL: the response rides the
+                    // auth result — the framework applies it directly at
+                    // the finish, whatever the save card took.
+                    val resultIntent = Intent()
+                    buildResultDataset(applicationContext, intent,
+                        if (item.identity.isNotBlank()) "✓ $origin — ${item.identity}" else "✓ $origin",
+                        item)?.let {
+                            resultIntent.putExtra(
+                                AutofillManager.EXTRA_AUTHENTICATION_RESULT, it)
+                        }
+                    setResult(RESULT_OK, resultIntent)
+                    // THE AUTO-SAVE (the A design): the first gate
+                    // authorizes the generation, the fill, AND the save —
+                    // the save card + the second gate = the 10-13s delay
+                    // that let the framework's autofill session expire
+                    // (the measured re-offered chip instead of the fill).
+                    // The insert runs IN-FLOW and the finish fires fast —
+                    // the 🔒 reveal's proven shape — so the fill applies
+                    // directly. The alias is already created remotely:
+                    // saving it = the only sane outcome.
+                    val updating = VaultSession.upsertTarget(item) != null
+                    val r = insertAutofill(origin, item.username, item.password)
+                    when (r) {
+                        VaultSession.Result.Success ->
+                            Toast.makeText(this@AutofillAuthActivity,
+                                (if (updating) "Saved ✓ (updated)" else "Saved ✓ (new)") +
+                                    " — tap the field again, pick the ✓ item to fill" +
+                                    (if (aliasError != null) " — the alias failed: $aliasError" else ""),
+                                Toast.LENGTH_LONG).show()
+                        else ->
+                            Toast.makeText(this@AutofillAuthActivity,
+                                "The save failed — $r" +
+                                    (if (aliasError != null) " — the alias failed: $aliasError" else ""),
+                                Toast.LENGTH_LONG).show()
+                    }
+                    finish()
+                    Log.i(TAG, "the alias flow done: alias=$alias updating=$updating r=$r")
+                }
+                MODE_GENERATE -> {
+                    // NO GATE (the same as the alias chip): the prompt's
+                    // success bubbles an empty auth result that consumes
+                    // the dataset's authentication. The autofill only runs
+                    // on an unlocked phone.
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Generated password"
+                    // THE PASSWORD ONLY: the generate chip creates NO alias
+                    // — the alias = the EMAIL field's chip (✨). The email
+                    // rides the intent — the item and the upsert carry it.
+                    val typedEmail = intent.getStringExtra(EXTRA_USERNAME)?.trim().orEmpty()
+                    // THE CURRENT VALUE WINS: the auth launch's fill-in
+                    // intent carries the latest AssistStructure — the user
+                    // may have typed a different email since the sheet
+                    // appeared, and the save must take the field's value
+                    // as of NOW.
+                    val email = currentStructureFields()?.usernameValue
+                        ?: typedEmail
                     val item = ProtonItem(
                         name = origin,
                         urls = if (origin.contains('.') && !origin.contains(' '))
                             listOf("https://$origin") else emptyList(),
+                        email = email,
                         password = PasswordGen.password())
                     AutofillRevealStore.put(item, "generate")
-                    // THE SILENT TRAY TRIGGER (not the UI — the UI = the
-                    // bottom card): the platform's save event = the
-                    // user-typed-delta only — an all-autofilled submission
-                    // fires NOTHING — so the save question must be OURS
-                    // for generated passwords. The tray item = SILENT
-                    // (the LOW importance: no banner, no vibration — the
-                    // user's "too noisy"); its TAP = the bottom card
-                    // (yes/no) → the screenlock → the insert.
-                    AutofillSaveOffer.postSilentTrigger(
-                        this@AutofillAuthActivity, origin, null, item.password)
-                    Log.i(TAG, "generated a password for $origin — RESULT_OK (the fill) + the silent trigger")
-                    setResult(RESULT_OK)
+                    // THE RESULT-CARRIED FILL (the same as the alias chip):
+                    // the identity = the CURRENT email (when the user typed
+                    // one) — it fills the username ids; blank = the ids stay
+                    // unset (the no-clobber rule), the password fills.
+                    val resultIntent = Intent()
+                    buildResultDataset(applicationContext, intent,
+                        "✓ $origin — the generated password",
+                        item)?.let {
+                            resultIntent.putExtra(
+                                AutofillManager.EXTRA_AUTHENTICATION_RESULT, it)
+                        }
+                    setResult(RESULT_OK, resultIntent)
+                    // THE AUTO-SAVE (the A design — the same as the alias
+                    // chip): the insert in-flow, the finish fast, the fill
+                    // applies directly. The typed email rides the item.
+                    val updating = VaultSession.upsertTarget(item) != null
+                    val r = insertAutofill(origin, item.email, item.password)
+                    when (r) {
+                        VaultSession.Result.Success ->
+                            Toast.makeText(this@AutofillAuthActivity,
+                                (if (updating) "Saved ✓ (updated)" else "Saved ✓ (new)") +
+                                    " — tap the field again, pick the ✓ item to fill",
+                                Toast.LENGTH_LONG).show()
+                        else ->
+                            Toast.makeText(this@AutofillAuthActivity,
+                                "The save failed — $r", Toast.LENGTH_LONG).show()
+                    }
                     finish()
+                    Log.i(TAG, "the generate flow done: updating=$updating r=$r")
                 }
                 MODE_SAVE -> {
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Login"
@@ -98,10 +243,20 @@ class AutofillAuthActivity : ComponentActivity() {
                         // THE SCREENLOCK ONLY: the gate → the insert →
                         // the toast. No card — the card would be the
                         // SECOND question.
+                        val saveUsername = intent.getStringExtra(EXTRA_USERNAME) ?: ""
+                        val savePassword = intent.getStringExtra(EXTRA_PASSWORD) ?: ""
+                        // THE UPDATE-VS-NEW WORDING: the same site +
+                        // identity lookup the upsert performs.
+                        val saveItem = ProtonItem(
+                            name = origin, username = saveUsername,
+                            urls = if (origin.contains('.') && !origin.contains(' '))
+                                listOf("https://$origin") else emptyList(),
+                            password = savePassword)
                         val gate = ScreenlockGate.promptGate(
                             this@AutofillAuthActivity,
                             "Unlock offlinepass",
-                            "The device lock authorizes saving the login")
+                            "The device lock authorizes saving the login",
+                            description = VaultSession.saveTransactionText(saveItem))
                         if (!gate) {
                             Log.i(TAG, "the confirmed save's gate declined")
                             Toast.makeText(this@AutofillAuthActivity,
@@ -111,16 +266,15 @@ class AutofillAuthActivity : ComponentActivity() {
                             finish()
                             return@launch
                         }
-                        val r = insertAutofill(
-                            origin,
-                            intent.getStringExtra(EXTRA_USERNAME) ?: "",
-                            intent.getStringExtra(EXTRA_PASSWORD) ?: "")
+                        val updating = VaultSession.upsertTarget(saveItem) != null
+                        val r = insertAutofill(origin, saveUsername, savePassword)
                         when (r) {
                             VaultSession.Result.Success -> {
                                 Log.i(TAG, "the confirmed save: Saved ✓ " +
                                     "(rev ${VaultSession.currentRev()})")
                                 Toast.makeText(this@AutofillAuthActivity,
-                                    "Saved ✓", Toast.LENGTH_LONG).show()
+                                    if (updating) "Updated ✓" else "Saved ✓",
+                                    Toast.LENGTH_LONG).show()
                             }
                             else -> {
                                 Log.w(TAG, "the confirmed save FAILED: $r")
@@ -144,6 +298,12 @@ class AutofillAuthActivity : ComponentActivity() {
                     window.setLayout(
                         android.view.WindowManager.LayoutParams.MATCH_PARENT,
                         android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+                    // THE UPDATE-VS-NEW WORDING (the same lookup).
+                    val cardItem = ProtonItem(
+                        name = origin, username = intent.getStringExtra(EXTRA_USERNAME) ?: "",
+                        urls = if (origin.contains('.') && !origin.contains(' '))
+                            listOf("https://$origin") else emptyList())
+                    val updating = VaultSession.upsertTarget(cardItem) != null
                     val card = LinearLayout(this@AutofillAuthActivity).apply {
                         orientation = LinearLayout.VERTICAL
                         setPadding(56, 44, 56, 44)
@@ -153,7 +313,8 @@ class AutofillAuthActivity : ComponentActivity() {
                         }
                     }
                     card.addView(TextView(this@AutofillAuthActivity).apply {
-                        text = "Save this login to offlinepass?"
+                        text = if (updating) "Update this login in offlinepass?"
+                            else "Save this login to offlinepass?"
                         textSize = 17f
                         setTextColor(0xFFFFFFFF.toInt())
                     })
@@ -187,7 +348,13 @@ class AutofillAuthActivity : ComponentActivity() {
                                 val gate = ScreenlockGate.promptGate(
                                     this@AutofillAuthActivity,
                                     "Unlock offlinepass",
-                                    "The device lock authorizes saving the login")
+                                    "The device lock authorizes saving the login",
+                                    description = VaultSession.saveTransactionText(ProtonItem(
+                                        name = origin,
+                                        username = intent.getStringExtra(EXTRA_USERNAME) ?: "",
+                                        urls = if (origin.contains('.') && !origin.contains(' '))
+                                            listOf("https://$origin") else emptyList(),
+                                        password = intent.getStringExtra(EXTRA_PASSWORD) ?: "")))
                                 if (!gate) {
                                     Log.i(TAG, "the card save's gate declined")
                                     Toast.makeText(this@AutofillAuthActivity,
@@ -206,7 +373,8 @@ class AutofillAuthActivity : ComponentActivity() {
                                         Log.i(TAG, "the card save: Saved ✓ " +
                                             "(rev ${VaultSession.currentRev()})")
                                         Toast.makeText(this@AutofillAuthActivity,
-                                            "Saved ✓", Toast.LENGTH_LONG).show()
+                                            if (updating) "Updated ✓" else "Saved ✓",
+                                            Toast.LENGTH_LONG).show()
                                         setResult(RESULT_OK)
                                         finish()
                                     }
@@ -275,8 +443,22 @@ class AutofillAuthActivity : ComponentActivity() {
                         return@launch
                     }
                     AutofillRevealStore.put(item, uuid)
-                    Log.i(TAG, "revealed ${item.displayName} — RESULT_OK (the framework re-invokes)")
-                    setResult(RESULT_OK)
+                    // THE RESULT-CARRIED FILL (the docs' CVC pattern — the
+                    // same shape the generate chips use): the revealed
+                    // item's filled DATASET rides the auth result — the
+                    // docs' "the views are filled out IMMEDIATELY". On the
+                    // platforms that drop the result (the measured
+                    // Vanadium data=null) the bare RESULT_OK's re-focus
+                    // path still serves the item first (the revealed
+                    // dataset prepends the sheet).
+                    val resultIntent = Intent()
+                    buildResultDataset(applicationContext, intent,
+                        "✓ ${item.displayName} — ${item.identity}", item)?.let {
+                            resultIntent.putExtra(
+                                AutofillManager.EXTRA_AUTHENTICATION_RESULT, it)
+                        }
+                    Log.i(TAG, "revealed ${item.displayName} — RESULT_OK (the fill rides the result)")
+                    setResult(RESULT_OK, resultIntent)
                     finish()
                 }
             }
@@ -294,6 +476,9 @@ class AutofillAuthActivity : ComponentActivity() {
                 val builder = android.hardware.biometrics.BiometricPrompt.Builder(this)
                     .setTitle("Sign vault change")
                     .setSubtitle("Screen-lock signature for this revision")
+                // THE TRANSACTION: the item save's summary in the ONE
+                // prompt (consumed once — null = no description).
+                VaultSession.consumeSignerDescription()?.let { builder.setDescription(it) }
                 if (android.os.Build.VERSION.SDK_INT >= 30) {
                     builder.setAllowedAuthenticators(
                         android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG
@@ -386,6 +571,30 @@ class AutofillAuthActivity : ComponentActivity() {
     }
 
     /**
+     * THE SIMPLELOGIN API KEY for the alias chip, from EITHER vault
+     * state: the unlocked session's item first; otherwise the sealed
+     * cache — the uuid the sheet passed (or a manifest scan) → the
+     * keystore-gated reveal. MUST run after the screenlock gate (the
+     * keystore auth window). Throws when no reachable SL entry — the
+     * caller degrades to the password-only fill.
+     */
+    private suspend fun resolveSimpleLoginApiKey(): String {
+        VaultSession.simpleLoginItem()?.password?.takeIf { it.isNotBlank() }
+            ?.let { return it }
+        val uuid = intent.getStringExtra(EXTRA_SL_UUID)
+            ?: SealedVault.manifestItems().firstOrNull { item ->
+                item.urls.any { url ->
+                    runCatching {
+                        java.net.URI(url.trim()).host?.removePrefix("www.") == VaultSession.SL_HOST
+                    }.getOrDefault(false)
+                }
+            }?.itemUuid
+            ?: throw IllegalStateException("SimpleLogin not linked")
+        return SealedVault.reveal(uuid)?.password?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("the SimpleLogin key unsealed empty")
+    }
+
+    /**
      * THE INSERT for the autofill's save paths: the registry dedup first
      * (the platform's confirmed save and the card's Save can both arrive
      * for one generated password — only one insert), then addSealed, then
@@ -394,10 +603,10 @@ class AutofillAuthActivity : ComponentActivity() {
     private suspend fun insertAutofill(
         origin: String, username: String, password: String
     ): VaultSession.Result {
-        if (AutofillSaveOffer.isSaved(password)) {
-            Log.i(TAG, "insertAutofill: already saved this session — the ack")
-            return VaultSession.Result.Success
-        }
+        // NO password-value dedup here: upsertSealed IS the dedup — the
+        // site + identity match updates the same login in place (a
+        // changed password, a re-save) and appends a new record only for
+        // a genuinely different identity (if in doubt, one extra record).
         val item = ProtonItem(
             name = origin,
             username = username,
@@ -410,7 +619,6 @@ class AutofillAuthActivity : ComponentActivity() {
             VaultSession.Result.Error("${e.javaClass.simpleName}: ${e.message}")
         }
         if (r == VaultSession.Result.Success) {
-            AutofillSaveOffer.markSaved(password)
             AutofillSaveOffer.cancelTrigger(this)
         }
         return r
@@ -424,8 +632,54 @@ class AutofillAuthActivity : ComponentActivity() {
         const val EXTRA_USERNAME = "username"
         const val EXTRA_PASSWORD = "password"
         const val EXTRA_CONFIRMED = "confirmed"
+        const val EXTRA_SL_UUID = "sl_uuid"
+        const val EXTRA_FILL_USERNAME_IDS = "fill_username_ids"
+        const val EXTRA_FILL_PASSWORD_IDS = "fill_password_ids"
+
+        /**
+         * THE RESULT-CARRIED FILL (the docs' CVC pattern): the filled
+         * DATASET returned with the auth result
+         * (EXTRA_AUTHENTICATION_RESULT) — the docs' guarantee: "the new
+         * dataset replaces the dataset that requires authentication, and
+         * the views are filled out IMMEDIATELY". The earlier
+         * FillResponse-wrapper took the replace-response route whose
+         * session bookkeeping dies across the save card (the browser's
+         * log: our result arrived as an "empty intent" after
+         * onInvisibleForAutofill had EXPIRED the response — the generated
+         * item came back as a re-offered chip, never auto-filled).
+         * Mirrors datasetFor: the identity into the username ids ONLY
+         * when non-blank (the no-clobber rule — the ⚡ item has none),
+         * the password always. Null = the caller degrades to the bare
+         * RESULT_OK (the re-invoke path).
+         */
+        internal fun buildResultDataset(
+            context: Context, intent: Intent, label: String, item: ProtonItem
+        ): Dataset? {
+            val usernameIds =
+                intent.getParcelableArrayListExtra<AutofillId>(EXTRA_FILL_USERNAME_IDS)
+            val passwordIds =
+                intent.getParcelableArrayListExtra<AutofillId>(EXTRA_FILL_PASSWORD_IDS)
+            if (passwordIds.isNullOrEmpty()) {
+                Log.i(TAG, "the result fill skipped — no password ids in the auth intent")
+                return null
+            }
+            val view = RemoteViews(context.packageName, R.layout.autofill_item).apply {
+                setTextViewText(R.id.autofill_text, label)
+            }
+            val ds = Dataset.Builder()
+            if (item.identity.isNotBlank()) {
+                usernameIds.orEmpty().forEach { id ->
+                    ds.setValue(id, AutofillValue.forText(item.identity), view)
+                }
+            }
+            passwordIds.forEach { id ->
+                ds.setValue(id, AutofillValue.forText(item.password), view)
+            }
+            return ds.build()
+        }
         const val MODE_REVEAL = "reveal"
         const val MODE_GENERATE = "generate"
+        const val MODE_GENERATE_ALIAS = "generate_alias"
         const val MODE_SAVE = "save"
     }
 }

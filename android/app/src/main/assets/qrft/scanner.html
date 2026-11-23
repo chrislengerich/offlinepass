@@ -36,6 +36,7 @@
         var size;                 // declared payload size (may be absent)
         var rawBytes = 0;
         var done = false;
+        var rawMode = location.search.indexOf("mode=raw") >= 0;
 
         // Resource caps, ported verbatim from ~/3p/airgap-qr-offline's
         // scanner: a hostile QR must not exhaust memory (decompression
@@ -130,6 +131,19 @@
 
         var handle = function (data) {
           if (done) return;
+          if (rawMode) {
+            // THE RAW MODE (the TOTP enrollment): any decoded QR is handed
+            // to the app as-is — the otpauth:// URI needs no reassembly.
+            done = true;
+            stopCamera();
+            msg.textContent = "Scanned — handing to the app…";
+            setTimeout(function () {
+              if (window.OfflinepassBridge && window.OfflinepassBridge.onPayload) {
+                window.OfflinepassBridge.onPayload("totp", data);
+              }
+            }, 300);
+            return;
+          }
           if (data.charAt(0) === "{") {
             try {
               var m = JSON.parse(data);

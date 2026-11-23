@@ -76,13 +76,16 @@ object Totp {
     }
 }
 
-/** Password/alias generation, ported from the desktop `passlib`. */
+/** Password/alias generation, ported from the desktop `passlib`.
+ *  The default = ALPHANUMERIC 10-char (the user's preference: the
+ *  shorter, the symbols-free — the digits and the cases carry the
+ *  strength; the symbols' shell/quoting friction avoided). */
 object PasswordGen {
-    private const val ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+"
+    private const val ALPHANUMERIC = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-    fun password(length: Int = 24): String {
+    fun password(length: Int = 16): String {
         val rnd = java.security.SecureRandom()
-        return buildString { repeat(length) { append(ALPHABET[rnd.nextInt(ALPHABET.length)]) } }
+        return buildString { repeat(length) { append(ALPHANUMERIC[rnd.nextInt(ALPHANUMERIC.length)]) } }
     }
 
     /** SimpleLogin-style alias stub (not registered anywhere). */

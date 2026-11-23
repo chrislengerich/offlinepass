@@ -352,6 +352,133 @@ class VaultSaveTransactionTest {
     }
 
     @Test
+    fun upsertSealedMatchesIdentityAcrossBucketsAndAppendsOnIdentityChange() = runBlocking {
+        // THE SITE + IDENTITY KEY (username.ifBlank { email }): the same
+        // login whose address sits in the OTHER bucket updates in place
+        // (no spurious duplicates from the bucket shuffle); a genuinely
+        // different identity appends (if in doubt, one extra record).
+        // The password NEVER gates the match — a changed password on the
+        // same login = the update.
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        // The Add-entry shape: the username blank, the address in the
+        // email field.
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf(ProtonItem(
+                name = "github.com", username = "",
+                email = "alias@aleeas.com", password = "pw-old",
+                urls = listOf("https://github.com"))
+                .apply { modifyTime = 100 })
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        // The autofill's save: the address in the USERNAME bucket, the
+        // email bucket empty — the SAME identity, the other bucket.
+        val fromUsernameBucket = ProtonItem(
+            name = "github.com", username = "alias@aleeas.com",
+            password = "pw-new", urls = listOf("https://github.com"))
+        val r1 = VaultSession.upsertSealed(fromUsernameBucket
+            .copy(modifyTime = 0))
+        assertTrue("the bucket-shuffle save = the update: $r1",
+            r1 is VaultSession.Result.Success)
+        var plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertTrue("the new password landed", plain.contains("pw-new"))
+        assertFalse("the old password replaced", plain.contains("pw-old"))
+        assertEquals("exactly ONE record — the bucket shuffle is not a new login",
+            1, plain.split("\"itemUuid\"").size - 1)
+
+        // A genuinely different identity = the append (one extra record).
+        val other = ProtonItem(
+            name = "github.com", username = "second@aleeas.com",
+            password = "pw-second", urls = listOf("https://github.com"))
+        val r2 = VaultSession.upsertSealed(other.copy(modifyTime = 0))
+        assertTrue("the different identity appends: $r2",
+            r2 is VaultSession.Result.Success)
+        plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertEquals("two records after the identity change",
+            2, plain.split("\"itemUuid\"").size - 1)
+
+        // The password change on the SAME identity = the update again.
+        val pwChange = ProtonItem(
+            name = "github.com", username = "second@aleeas.com",
+            password = "pw-rotated", urls = listOf("https://github.com"))
+        assertTrue(VaultSession.upsertSealed(pwChange.copy(modifyTime = 0))
+            is VaultSession.Result.Success)
+        plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertTrue("the rotated password landed", plain.contains("pw-rotated"))
+        assertFalse(plain.contains("pw-second"))
+        assertEquals("still two records", 2, plain.split("\"itemUuid\"").size - 1)
+    }
+
+    @Test
+    fun upsertSealedDoubleSaveYieldsOneRecord() = runBlocking {
+        // THE DOUBLE-SAVE (the card's Save + the platform's confirmed
+        // save both arriving): the same site + identity = the update —
+        // exactly one record, no duplicate.
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf()
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        val gen = ProtonItem(
+            name = "github.com", username = "alias@aleeas.com",
+            password = "pw-gen", urls = listOf("https://github.com"))
+        assertTrue(VaultSession.upsertSealed(gen.copy(modifyTime = 0))
+            is VaultSession.Result.Success)
+        assertTrue(VaultSession.upsertSealed(gen.copy(modifyTime = 0))
+            is VaultSession.Result.Success)
+        val plain = String(java.util.Base64.getDecoder().decode(vaultFile().readBytes()))
+        assertEquals("the double-save = one record",
+            1, plain.split("\"itemUuid\"").size - 1)
+    }
+
+    @Test
+    fun upsertTargetMatchesIdentityAcrossBucketsAndStates() = runBlocking {
+        // THE UI's WORDING SOURCE: upsertTarget = the SAME match the
+        // upsert performs, in EITHER state (the sealed manifest's
+        // clear-text identities or the unlocked session's items) — the
+        // card's update-vs-new wording can't drift from the save.
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf(ProtonItem(
+                name = "github.com", username = "",
+                email = "alias@aleeas.com", password = "pw-old",
+                urls = listOf("https://github.com"))
+                .apply { modifyTime = 100 })
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        // THE SEALED STATE: the manifest's clear-text identities drive
+        // the lookup — the address in the username bucket matches the
+        // seeded item (the email bucket).
+        val aliasLogin = ProtonItem(
+            name = "github.com", username = "alias@aleeas.com",
+            password = "pw", urls = listOf("https://github.com"))
+        val sealed = VaultSession.upsertTarget(aliasLogin)
+        assertEquals("the sealed-manifest lookup: the same login",
+            "alias@aleeas.com", sealed?.identity?.trim())
+        assertNull("a different identity = the append (null target)",
+            VaultSession.upsertTarget(ProtonItem(
+                name = "github.com", username = "second@aleeas.com",
+                password = "pw", urls = listOf("https://github.com"))))
+        // THE UNLOCKED STATE: after the promote the lookup reads the
+        // session's items — the same answer.
+        assertTrue(VaultSession.upsertSealed(aliasLogin.copy(modifyTime = 0))
+            is VaultSession.Result.Success)
+        assertEquals("the unlocked-session lookup",
+            "alias@aleeas.com", VaultSession.upsertTarget(aliasLogin)?.identity?.trim())
+    }
+
+    @Test
     fun addSealedAppendsBrandNewEntry() = runBlocking {
         // THE MEASURED NO-OP: the generated entry went through the EDIT
         // path (the swap-by-uuid never matched) — "Saved ✓" with the
@@ -1147,5 +1274,63 @@ class VaultSaveTransactionTest {
         assertEquals("pending", VaultSession.lastSaveRemoteState)
         val state = VaultSession.state as VaultSession.State.Unlocked
         assertEquals(listOf("New"), state.items.map { it.name })
+    }
+
+    @Test
+    fun relinkKeepsExactlyOneSimpleLoginItemAfterSync() = runBlocking {
+        // THE RESURRECTION PIN (the linkSimpleLogin's uuid reuse): the
+        // relink UPDATES the SL api-key item IN PLACE (the same uuid) —
+        // a removal-without-tombstone would let the peer's copy
+        // resurrect the OLD key on the next divergence merge.
+        VaultSession.patOverride = "fake-pat" // ignored by the file:// transport
+        val remoteDir = File(app.cacheDir, "op-sl-relink-remote.git")
+        remoteDir.deleteRecursively()
+        org.eclipse.jgit.api.Git.init().setBare(true).setDirectory(remoteDir).call().close()
+        val remoteUrl = "file://" + remoteDir.absolutePath
+        VaultSession.configure(remoteUrl, listOf("user@example.com"))
+        seedRepo("PREVIOUS".toByteArray())
+
+        // 1. The local: the SL api-key item with the OLD key → the save+push.
+        val slItemOld = ProtonItem(
+            name = "SimpleLogin API",
+            email = "me@passmail.net",
+            password = "OLD-KEY",
+            urls = listOf("https://app.simplelogin.io"))
+        assertTrue(VaultSession.save(listOf(item("Local Item"), slItemOld))
+            is VaultSession.Result.Success)
+        VaultGitClient().pushBranch(remoteUrl, "fake-pat", gitRoot())
+
+        // 2. The peer: the clone, the relink = the NEW key REUSING the old
+        //    item's uuid (the linkSimpleLogin's behavior) → the commit+push.
+        val second = File(app.cacheDir, "op-sl-relink-second")
+        second.deleteRecursively()
+        Git.cloneRepository().setURI(remoteUrl).setDirectory(second).call().use { g ->
+            val env = Envelope.fromJson(String(
+                java.util.Base64.getDecoder().decode(
+                    File(second, "state/10.gpg").readBytes())))
+            val peerItems = env.items.map { item ->
+                if (item.name == "SimpleLogin API") item.copy(
+                    password = "NEW-KEY",
+                    modifyTime = (System.currentTimeMillis() / 1000) + 60)
+                else item
+            }.toMutableList()
+            env.items = peerItems
+            File(second, "state/10.gpg").writeBytes(
+                java.util.Base64.getEncoder().encode(env.toJsonObject().toString().toByteArray()))
+            g.add().addFilepattern(".").call()
+            g.commit().setAuthor(PersonIdent("peer", "peer@test"))
+                .setCommitter(PersonIdent("peer", "peer@test"))
+                .setMessage("the peer's relink: the new key").call()
+            g.push().setRemote("origin").call()
+        }
+
+        // 3. The local syncNow: the divergence → the merge → the SL item =
+        //    the NEW key, EXACTLY ONE (the old key must not resurrect).
+        val r = VaultSession.syncNow()
+        assertTrue("sync must succeed, got $r", r is VaultSession.Result.Success)
+        val slItems = (VaultSession.state as VaultSession.State.Unlocked)
+            .items.filter { it.name == "SimpleLogin API" }
+        assertEquals("exactly one SimpleLogin item", 1, slItems.size)
+        assertEquals("NEW-KEY", slItems.first().password)
     }
 }

@@ -32,6 +32,8 @@ sealed class Screen {
     data class ExportTarget(val items: List<ProtonItem>) : Screen()
     /** Camera scanner for the import-from-QRFT flow. */
     object QrftScan : Screen()
+    /** Raw-QR scanner for the TOTP enrollment (an otpauth:// URI). */
+    object TotpScan : Screen()
     /** Single-QR scanner for pairing a paste device (extension). */
     object PairScan : Screen()
     object Setup : Screen()
@@ -58,6 +60,7 @@ fun SetupChoiceScreen(
     onRemoveRecipient: (Long) -> Unit,
     onNewVault: () -> Unit,
     onImportProton: (remote: String?, pat: String, uri: android.net.Uri) -> Unit,
+    onImportGoogle: (remote: String?, pat: String, uri: android.net.Uri) -> Unit = { _, _, _ -> },
     onLoadGitHub: (remote: String, emails: List<String>, pat: String) -> Unit,
     onLoadQrft: () -> Unit,
     onLoadBackupZip: () -> Unit = {},
@@ -96,6 +99,10 @@ fun SetupChoiceScreen(
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let { onImportProton(null, "", it) } }
 
+    val importGooglePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let { onImportGoogle(null, "", it) } }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -122,14 +129,22 @@ fun SetupChoiceScreen(
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Create local-only vault") }
         } else if (mode == "import") {
-            // Import = a FOREIGN format (a Proton export); the vault material
-            // from this app's own format travels via Load existing.
+            // Import = a FOREIGN format (a Proton export or a Google
+            // Passwords CSV); the vault material from this app's own format
+            // travels via Load existing.
             RecipientsEditor(recipientIds, onAddCardRecipient, null, onRemoveRecipient)
-            Button(
-                onClick = { importPicker.launch(arrayOf("*/*")) },
-                enabled = recipientIds.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("From Proton export") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { importPicker.launch(arrayOf("*/*")) },
+                    enabled = recipientIds.isNotEmpty(),
+                    modifier = Modifier.weight(1f)
+                ) { Text("From Proton export") }
+                OutlinedButton(
+                    onClick = { importGooglePicker.launch(arrayOf("*/*")) },
+                    enabled = recipientIds.isNotEmpty(),
+                    modifier = Modifier.weight(1f)
+                ) { Text("From Google CSV") }
+            }
         } else {
             // 1. Load sources first.
             Text("Load vault backup from", style = MaterialTheme.typography.titleSmall)

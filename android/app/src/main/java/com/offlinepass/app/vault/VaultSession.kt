@@ -167,6 +167,35 @@ object VaultSession {
      *  (or null on decline). Set by MainActivity; hops to Main itself. */
     var keystoreSignerHook: (suspend (ByteArray) -> ByteArray?)? = null
 
+    /** THE SIGNER PROMPT'S TRANSACTION: the item saves set the summary
+     *  (the site, the identity, the URL, the masked password) so the ONE
+     *  screenlock prompt shows WHAT is being saved; the UI signer hook
+     *  reads it into the prompt's description and consumes it. Null = the
+     *  non-item saves (the sync merges, the imports) keep the default
+     *  wording. */
+    var pendingSignerDescription: String? = null
+        private set
+
+    /** THE SAVE TRANSACTION TEXT for the one screenlock prompt: the site,
+     *  the identity, the URL, the password's SHAPE — masked, because the
+     *  prompt is a system surface any onlooker can read. */
+    fun saveTransactionText(item: ProtonItem): String = buildString {
+        append(item.name)
+        item.identity.takeIf { it.isNotBlank() }?.let { append(" — $it") }
+        item.urls.firstOrNull()?.let { append("\n$it") }
+        if (item.password.isNotBlank())
+            append("\npassword •••••••• (${item.password.length} chars)")
+    }
+
+    /** THE CONSUME for the signer hooks: the prompt reads the transaction
+     *  ONCE (null = the default wording) — nothing lingers for a later
+     *  unrelated prompt. */
+    fun consumeSignerDescription(): String? {
+        val d = pendingSignerDescription
+        pendingSignerDescription = null
+        return d
+    }
+
     /** SSH sync identities: the SCREENLOCK keystore key or the YUBIKEY's
      *  OpenPGP auth subkey (via OpenKeyChain — the key already enrolled in
      *  GitHub). Whichever was enrolled last wins; both are exclusive of
@@ -391,6 +420,20 @@ object VaultSession {
         val arr = org.json.JSONArray()
         env.items.forEach { arr.put(it.toProtonJson()) }
         return arr.toString(2)
+    }
+
+    /** THE GOOGLE EXPORT: the password material in PLAINTEXT, in the Google
+     *  Passwords CSV shape (the same the importer reads) — the four columns
+     *  `name,url,username,password`. THE LOSSY RULE: the note, the TOTP
+     *  uri, the extra URLs and the passkeys DO NOT FIT the Google format —
+     *  the caller warns before/after handing the file over. Requires a
+     *  full (promoted) session: the secrets leave the app in the clear by
+     *  explicit request. */
+    suspend fun exportGoogleCsv(): String? {
+        if (state !is State.Unlocked) return null
+        if (stubSession && !promoteIfStub()) return null
+        val env = loadedEnvelope ?: return null
+        return GooglePasswordsCsv.serialize(env.items)
     }
 
     /** The plugged key's current name (the registry entry for the last
@@ -1659,6 +1702,13 @@ object VaultSession {
         authDescription = what ?: (editedUuid?.let { uuid ->
             items.firstOrNull { it.itemUuid == uuid }?.let { "Saving '${it.displayName}'" }
         } ?: "Saving the vault")
+        // THE SIGNER PROMPT'S TRANSACTION: the item save derives the
+        // summary from the edited entry (the same lookup the description
+        // uses); the non-item saves CLEAR it — no stale site lingers into
+        // a sync merge's prompt.
+        pendingSignerDescription = editedUuid?.let { uuid ->
+            items.firstOrNull { it.itemUuid == uuid }?.let { saveTransactionText(it) }
+        }
         try {
             return withContext(Dispatchers.IO) {
                 // THE STUB-INVARIANT: the in-memory list = the stubs (the
@@ -2418,6 +2468,37 @@ object VaultSession {
      *  The empty-username generate re-run at the same site = the update
      *  (no duplicate pile-up). The measured drop: the SAVE mode's
      *  edit-path save no-opped the brand-new item (4→3). */
+    /** THE UPSERT TARGET for [item]: the existing login the upsert would
+     *  update — the site + identity match (username.ifBlank { email }).
+     *  Works in EITHER state: the unlocked session's items or the sealed
+     *  manifest's clear-text identities. Null = the upsert would append
+     *  (a new record). The UI's update-vs-new wording reads THIS — the
+     *  single match implementation shared with [upsertSealed]. */
+    fun upsertTarget(item: ProtonItem): ProtonItem? {
+        val items = (state as? State.Unlocked)?.items
+            ?: SealedVault.manifestItems()
+        return upsertMatch(items, item)
+    }
+
+    private fun upsertMatch(items: List<ProtonItem>, item: ProtonItem): ProtonItem? {
+        val siteMatch: (ProtonItem) -> Boolean = if (item.urls.isNotEmpty()) { existing ->
+            existing.urls.any { u -> item.urls.contains(u) }
+        } else { existing ->
+            existing.name.equals(item.name, ignoreCase = true)
+        }
+        // THE IDENTITY = THE DEDUP KEY's second half (site + identity):
+        // username.ifBlank { email } — the same login whose address sits
+        // in EITHER bucket updates in place; a genuinely different
+        // identity (a second account, a different address) = the append
+        // (if in doubt, one extra record — never a silent drop). The
+        // password NEVER gates the match: a changed password on the same
+        // login = the update.
+        return items.firstOrNull { existing ->
+            siteMatch(existing) &&
+                existing.identity.trim() == item.identity.trim()
+        }
+    }
+
     suspend fun upsertSealed(item: ProtonItem): Result {
         when (val p = promoteSealedSession()) {
             is Result.Success -> {}
@@ -2425,15 +2506,7 @@ object VaultSession {
         }
         val items = (state as? State.Unlocked)?.items
             ?: return Result.Error("Session unavailable")
-        val siteMatch: (ProtonItem) -> Boolean = if (item.urls.isNotEmpty()) { existing ->
-            existing.urls.any { u -> item.urls.contains(u) }
-        } else { existing ->
-            existing.name.equals(item.name, ignoreCase = true)
-        }
-        val existing = items.firstOrNull { existing ->
-            siteMatch(existing) &&
-                existing.username.trim() == item.username.trim()
-        }
+        val existing = upsertMatch(items, item)
         return if (existing != null) {
             Log.i(TAG, "upsertSealed: the existing entry ${existing.name.take(20)} " +
                 "(site+username) — the update")
@@ -2542,6 +2615,46 @@ object VaultSession {
     // -- paired paste devices (Chrome extension; Plan 2) ---------------------
 
     fun pairedDevices(): List<DeviceRecord> = loadedEnvelope?.devices ?: emptyList()
+
+    // -- THE SIMPLELOGIN LINK (the api key = a vault item) -------------------
+
+    /** THE SL LINK'S DEFAULT DOMAIN: the aliases' mail domain — the
+     *  fallback when the item carries no domain list (the pre-existing
+     *  linked vaults). */
+    const val SL_HOST = "app.simplelogin.io"
+
+    /** THE SL LINK = the vault item holding the api key: the URL = the
+     *  SL host, a password present. The item = card-encrypted, synced,
+     *  user-visible/editable — the strongest storage this architecture
+     *  has. Null = not linked. */
+    fun simpleLoginItem(): ProtonItem? = loadedEnvelope?.items?.firstOrNull { item ->
+        item.password.isNotBlank() && item.urls.any { url ->
+            runCatching {
+                java.net.URI(url.trim()).host?.removePrefix("www.") == SL_HOST
+            }.getOrDefault(false)
+        }
+    }
+
+    /** THE LINKED ALIAS DOMAINS: parsed from the SL item's note (the
+     *  marker line the link flow writes: "SimpleLogin alias domains: "
+     *  + the comma list) — the v5/alias/options' domains at the link
+     *  time. Display-only: the CREATION always uses the account's
+     *  default domain (SimpleLoginChain). Empty when the item carries
+     *  no list. */
+    fun simpleLoginDomains(): Set<String> {
+        val note = simpleLoginItem()?.note ?: return emptySet()
+        val marker = "SimpleLogin alias domains: "
+        val line = note.lineSequence().firstOrNull { it.startsWith(marker) }
+            ?: return emptySet()
+        return line.removePrefix(marker).split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
+    }
+
+    /** The item's email = an SL alias on ANY of the account's alias
+     *  domains (the item-page toggle's gate). */
+    fun isSimpleLoginAlias(email: String): Boolean {
+        val domain = email.substringAfter('@', "").lowercase()
+        return domain in simpleLoginDomains()
+    }
 
     /** Adds or updates a pairing record scanned from the extension's QR
      *  (R2: re-wrapped seeds / restored pairings update in place — newer
