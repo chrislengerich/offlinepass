@@ -1846,7 +1846,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onScanTotp = { totpCameraLauncher.launch(android.Manifest.permission.CAMERA) },
                     pendingTotpUri = MainActivity.pendingTotpUri,
                     onTotpUriConsumed = { MainActivity.pendingTotpUri = "" },
-                    onEnrollTotp = { secret ->
+                    onEnrollTotp = { secret, onDone ->
                         lifecycleScope.launch {
                             val base = sealedReveal ?: return@launch
                             when (val r = VaultSession.saveSealed(
@@ -1855,14 +1855,19 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                     sealedReveal = base
                                     saveToast("TOTP enrolled")
                                     status = "TOTP enrolled (rev ${VaultSession.currentRev()})."
+                                    onDone(true)
                                 }
                                 is VaultSession.Result.NeedsKeyDecrypt -> {
                                     pendingSealedEdit =
                                         base.copy(totpUri = secret, modifyTime = nowSeconds())
                                     unlockLoop()
+                                    onDone(false)
                                 }
-                                is VaultSession.Result.Error -> sealedToast(r.message)
-                                else -> {}
+                                is VaultSession.Result.Error -> {
+                                    sealedToast(r.message)
+                                    onDone(false)
+                                }
+                                else -> onDone(false)
                             }
                         }
                     },
@@ -2031,7 +2036,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             onScanTotp = { totpCameraLauncher.launch(android.Manifest.permission.CAMERA) },
                             pendingTotpUri = MainActivity.pendingTotpUri,
                             onTotpUriConsumed = { MainActivity.pendingTotpUri = "" },
-                            onEnrollTotp = { uri ->
+                            onEnrollTotp = { uri, onDone ->
                                 lifecycleScope.launch {
                                     val mutated = sealedReveal!!
                                     mutated.totpUri = uri
@@ -2042,9 +2047,13 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                     status = when (val r = saveLoop(items, mutated.itemUuid)) {
                                         VaultSession.Result.Success -> {
                                             sealedReveal = mutated
+                                            onDone(true)
                                             "TOTP enrolled."
                                         }
-                                        else -> "Save: $r"
+                                        else -> {
+                                            onDone(false)
+                                            "Save: $r"
+                                        }
                                     }
                                 }
                             },
@@ -2108,7 +2117,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             onScanTotp = { totpCameraLauncher.launch(android.Manifest.permission.CAMERA) },
                             pendingTotpUri = MainActivity.pendingTotpUri,
                             onTotpUriConsumed = { MainActivity.pendingTotpUri = "" },
-                            onEnrollTotp = { uri ->
+                            onEnrollTotp = { uri, onDone ->
                                 lifecycleScope.launch {
                                     val mutated = revealedItem!!
                                     mutated.totpUri = uri
@@ -2117,8 +2126,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                         if (it.itemUuid == mutated.itemUuid) mutated else it
                                     }
                                     status = when (val r = saveLoop(items, mutated.itemUuid)) {
-                                        VaultSession.Result.Success -> "TOTP enrolled."
-                                        else -> "Save: $r"
+                                        VaultSession.Result.Success -> {
+                                            onDone(true)
+                                            "TOTP enrolled."
+                                        }
+                                        else -> {
+                                            onDone(false)
+                                            "Save: $r"
+                                        }
                                     }
                                 }
                             },
@@ -2153,7 +2168,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         onScanTotp = { totpCameraLauncher.launch(android.Manifest.permission.CAMERA) },
                         pendingTotpUri = MainActivity.pendingTotpUri,
                         onTotpUriConsumed = { MainActivity.pendingTotpUri = "" },
-                        onEnrollTotp = { uri ->
+                        onEnrollTotp = { uri, onDone ->
                             lifecycleScope.launch {
                                 item.totpUri = uri
                                 item.modifyTime = nowSeconds()
@@ -2166,8 +2181,14 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                     if (it.itemUuid == item.itemUuid) item else it
                                 }
                                 status = when (val r = saveLoop(items, item.itemUuid)) {
-                                    VaultSession.Result.Success -> "TOTP enrolled."
-                                    else -> "Save: $r"
+                                    VaultSession.Result.Success -> {
+                                        onDone(true)
+                                        "TOTP enrolled."
+                                    }
+                                    else -> {
+                                        onDone(false)
+                                        "Save: $r"
+                                    }
                                 }
                             }
                         },

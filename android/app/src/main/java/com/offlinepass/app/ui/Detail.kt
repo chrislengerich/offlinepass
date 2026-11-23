@@ -35,7 +35,7 @@ fun EntryDetailScreen(
     onExportQr: (Boolean) -> Unit,
     pairedDevices: List<com.offlinepass.app.vault.DeviceRecord> = emptyList(),
     onSaveChanges: (ProtonItem) -> Unit,
-    onEnrollTotp: (String) -> Unit,
+    onEnrollTotp: (uri: String, onDone: (Boolean) -> Unit) -> Unit,
     onDelete: () -> Unit,
     /** The raw-QR scan's pending otpauth:// URI (the scan never saves
      *  alone — it pre-fills the entry for review). */
@@ -216,11 +216,12 @@ fun EntryDetailScreen(
                 onScan = onScanTotp,
                 busy = busy,
                 onEnroll = { newUri ->
-                    // THE COUNTER FIRST: the pane's secret source updates
-                    // before the save — the counter re-renders with the new
-                    // secret immediately.
-                    activeTotpUri = newUri
-                    onEnrollTotp(newUri)
+                    // THE COUNTER AFTER THE SUCCESSFUL SAVE: the pane's
+                    // secret source updates only when the save confirms —
+                    // a failed/declined save leaves the old secret ticking.
+                    onEnrollTotp(newUri) { success ->
+                        if (success) activeTotpUri = newUri
+                    }
                 },
                 onDismiss = { showTotpEntry = false }
             )
