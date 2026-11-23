@@ -167,6 +167,35 @@ object VaultSession {
      *  (or null on decline). Set by MainActivity; hops to Main itself. */
     var keystoreSignerHook: (suspend (ByteArray) -> ByteArray?)? = null
 
+    /** THE SIGNER PROMPT'S TRANSACTION: the item saves set the summary
+     *  (the site, the identity, the URL, the masked password) so the ONE
+     *  screenlock prompt shows WHAT is being saved; the UI signer hook
+     *  reads it into the prompt's description and consumes it. Null = the
+     *  non-item saves (the sync merges, the imports) keep the default
+     *  wording. */
+    var pendingSignerDescription: String? = null
+        private set
+
+    /** THE SAVE TRANSACTION TEXT for the one screenlock prompt: the site,
+     *  the identity, the URL, the password's SHAPE — masked, because the
+     *  prompt is a system surface any onlooker can read. */
+    fun saveTransactionText(item: ProtonItem): String = buildString {
+        append(item.name)
+        item.identity.takeIf { it.isNotBlank() }?.let { append(" — $it") }
+        item.urls.firstOrNull()?.let { append("\n$it") }
+        if (item.password.isNotBlank())
+            append("\npassword •••••••• (${item.password.length} chars)")
+    }
+
+    /** THE CONSUME for the signer hooks: the prompt reads the transaction
+     *  ONCE (null = the default wording) — nothing lingers for a later
+     *  unrelated prompt. */
+    fun consumeSignerDescription(): String? {
+        val d = pendingSignerDescription
+        pendingSignerDescription = null
+        return d
+    }
+
     /** SSH sync identities: the SCREENLOCK keystore key or the YUBIKEY's
      *  OpenPGP auth subkey (via OpenKeyChain — the key already enrolled in
      *  GitHub). Whichever was enrolled last wins; both are exclusive of
@@ -1673,6 +1702,13 @@ object VaultSession {
         authDescription = what ?: (editedUuid?.let { uuid ->
             items.firstOrNull { it.itemUuid == uuid }?.let { "Saving '${it.displayName}'" }
         } ?: "Saving the vault")
+        // THE SIGNER PROMPT'S TRANSACTION: the item save derives the
+        // summary from the edited entry (the same lookup the description
+        // uses); the non-item saves CLEAR it — no stale site lingers into
+        // a sync merge's prompt.
+        pendingSignerDescription = editedUuid?.let { uuid ->
+            items.firstOrNull { it.itemUuid == uuid }?.let { saveTransactionText(it) }
+        }
         try {
             return withContext(Dispatchers.IO) {
                 // THE STUB-INVARIANT: the in-memory list = the stubs (the

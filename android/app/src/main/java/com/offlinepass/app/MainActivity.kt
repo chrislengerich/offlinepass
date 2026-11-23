@@ -826,6 +826,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     .setTitle("Sign vault change")
                     .setSubtitle(VaultSession.authDescription
                         ?: "Screen-lock signature for this revision")
+                // THE TRANSACTION: the item save's summary in the ONE
+                // prompt (consumed once — null = no description).
+                VaultSession.consumeSignerDescription()?.let { builder.setDescription(it) }
                 if (android.os.Build.VERSION.SDK_INT >= 30) {
                     builder.setAllowedAuthenticators(
                         android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG

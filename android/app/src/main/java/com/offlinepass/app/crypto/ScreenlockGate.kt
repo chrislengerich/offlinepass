@@ -19,7 +19,8 @@ object ScreenlockGate {
         activity: Activity,
         title: String,
         subtitle: String,
-        strongOrCredential: Boolean = false
+        strongOrCredential: Boolean = false,
+        description: String? = null
     ): Boolean {
         testGate?.let { return it(activity, title, subtitle) }
         return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
@@ -27,6 +28,9 @@ object ScreenlockGate {
             val builder = android.hardware.biometrics.BiometricPrompt.Builder(activity)
                 .setTitle(title)
                 .setSubtitle(subtitle)
+            // THE TRANSACTION: the save gates pass the item's summary —
+            // the one prompt shows WHAT is being saved.
+            description?.let { builder.setDescription(it) }
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 // THE MODERN AUTHENTICATORS (the API 30+): the credential
                 // renders INSIDE the prompt dialog — NO activity switch.

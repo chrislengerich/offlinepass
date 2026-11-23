@@ -139,6 +139,7 @@ class AutofillAuthActivity : ComponentActivity() {
                         VaultSession.Result.Success ->
                             Toast.makeText(this@AutofillAuthActivity,
                                 (if (updating) "Saved ✓ (updated)" else "Saved ✓ (new)") +
+                                    " — tap the field again to fill" +
                                     (if (aliasError != null) " — the alias failed: $aliasError" else ""),
                                 Toast.LENGTH_LONG).show()
                         else ->
@@ -187,7 +188,8 @@ class AutofillAuthActivity : ComponentActivity() {
                     when (r) {
                         VaultSession.Result.Success ->
                             Toast.makeText(this@AutofillAuthActivity,
-                                if (updating) "Saved ✓ (updated)" else "Saved ✓ (new)",
+                                (if (updating) "Saved ✓ (updated)" else "Saved ✓ (new)") +
+                                    " — tap the field again to fill",
                                 Toast.LENGTH_LONG).show()
                         else ->
                             Toast.makeText(this@AutofillAuthActivity,
@@ -205,10 +207,20 @@ class AutofillAuthActivity : ComponentActivity() {
                         // THE SCREENLOCK ONLY: the gate → the insert →
                         // the toast. No card — the card would be the
                         // SECOND question.
+                        val saveUsername = intent.getStringExtra(EXTRA_USERNAME) ?: ""
+                        val savePassword = intent.getStringExtra(EXTRA_PASSWORD) ?: ""
+                        // THE UPDATE-VS-NEW WORDING: the same site +
+                        // identity lookup the upsert performs.
+                        val saveItem = ProtonItem(
+                            name = origin, username = saveUsername,
+                            urls = if (origin.contains('.') && !origin.contains(' '))
+                                listOf("https://$origin") else emptyList(),
+                            password = savePassword)
                         val gate = ScreenlockGate.promptGate(
                             this@AutofillAuthActivity,
                             "Unlock offlinepass",
-                            "The device lock authorizes saving the login")
+                            "The device lock authorizes saving the login",
+                            description = VaultSession.saveTransactionText(saveItem))
                         if (!gate) {
                             Log.i(TAG, "the confirmed save's gate declined")
                             Toast.makeText(this@AutofillAuthActivity,
@@ -218,14 +230,6 @@ class AutofillAuthActivity : ComponentActivity() {
                             finish()
                             return@launch
                         }
-                        val saveUsername = intent.getStringExtra(EXTRA_USERNAME) ?: ""
-                        val savePassword = intent.getStringExtra(EXTRA_PASSWORD) ?: ""
-                        // THE UPDATE-VS-NEW WORDING: the same site +
-                        // identity lookup the upsert performs.
-                        val saveItem = ProtonItem(
-                            name = origin, username = saveUsername,
-                            urls = if (origin.contains('.') && !origin.contains(' '))
-                                listOf("https://$origin") else emptyList())
                         val updating = VaultSession.upsertTarget(saveItem) != null
                         val r = insertAutofill(origin, saveUsername, savePassword)
                         when (r) {
@@ -308,7 +312,13 @@ class AutofillAuthActivity : ComponentActivity() {
                                 val gate = ScreenlockGate.promptGate(
                                     this@AutofillAuthActivity,
                                     "Unlock offlinepass",
-                                    "The device lock authorizes saving the login")
+                                    "The device lock authorizes saving the login",
+                                    description = VaultSession.saveTransactionText(ProtonItem(
+                                        name = origin,
+                                        username = intent.getStringExtra(EXTRA_USERNAME) ?: "",
+                                        urls = if (origin.contains('.') && !origin.contains(' '))
+                                            listOf("https://$origin") else emptyList(),
+                                        password = intent.getStringExtra(EXTRA_PASSWORD) ?: "")))
                                 if (!gate) {
                                     Log.i(TAG, "the card save's gate declined")
                                     Toast.makeText(this@AutofillAuthActivity,
@@ -416,6 +426,9 @@ class AutofillAuthActivity : ComponentActivity() {
                 val builder = android.hardware.biometrics.BiometricPrompt.Builder(this)
                     .setTitle("Sign vault change")
                     .setSubtitle("Screen-lock signature for this revision")
+                // THE TRANSACTION: the item save's summary in the ONE
+                // prompt (consumed once — null = no description).
+                VaultSession.consumeSignerDescription()?.let { builder.setDescription(it) }
                 if (android.os.Build.VERSION.SDK_INT >= 30) {
                     builder.setAllowedAuthenticators(
                         android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG
