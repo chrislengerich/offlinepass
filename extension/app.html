@@ -8,6 +8,8 @@ button{margin:.2em .3em .2em 0;padding:.4em .9em}
 .row{display:flex;gap:.5em;align-items:center}
 .list li{cursor:pointer;padding:.3em 0;border-bottom:1px solid #eee;list-style:none}
 .pw{font-family:monospace}
+.hint{font-size:.85em;color:#555}
+.modal{position:fixed;top:2em;left:50%;transform:translateX(-50%);background:#fff;border:1px solid #999;padding:1em 1.4em;box-shadow:0 2px 12px rgba(0,0,0,.3);max-width:36em;z-index:9;white-space:pre-wrap}
 #log{max-height:9em;overflow:auto;background:#f4f4f4;padding:.6em;font-size:.85em;white-space:pre-wrap}
 .hidden{display:none}
 canvas{border:1px solid #ccc}
@@ -28,6 +30,33 @@ video{max-width:20em}
     <button id="btnSync">Sync now</button>
     <label>or the vault file: <input id="file" type="file" accept=".gpg"></label>
   </div>
+  <h2>Import</h2>
+  <p class="hint">The foreign plaintext formats — the entries merge into the vault in bulk, each carrying an import note. One commit per import.</p>
+  <button id="btnImportOpen">Import…</button>
+</section>
+
+<!-- THE IMPORT POPUP (the source choice) -->
+<section id="importPopup" class="hidden">
+  <h2>Import from</h2>
+  <div class="row">
+    <button id="btnImpProtonUsb">Proton export (USB file)</button>
+    <button id="btnImpGoogleUsb">Google Passwords CSV (USB file)</button>
+  </div>
+  <div class="row">
+    <button id="btnImpQrft">QRFT scan (the phone's paste)</button>
+    <button id="btnImpCancel">Cancel</button>
+  </div>
+  <input id="impFile" type="file" accept=".json,.csv,.txt" class="hidden">
+</section>
+
+<!-- THE IMPORT SUMMARY (the one-transaction confirm) -->
+<section id="importSummary" class="hidden">
+  <h2>Import summary</h2>
+  <div id="impSummaryText"></div>
+  <div class="row">
+    <button id="btnImpConfirm">Import (one commit)</button>
+    <button id="btnImpAbort">Cancel</button>
+  </div>
 </section>
 
 <!-- THE ENTRIES -->
@@ -36,6 +65,7 @@ video{max-width:20em}
   <div class="row">
     <button id="btnAdd">Add entry</button>
     <button id="btnSyncTop">Sync</button>
+    <button id="btnImportTop">Import…</button>
     <button id="btnImport">QRFT import</button>
   </div>
   <ul id="list" class="list"></ul>

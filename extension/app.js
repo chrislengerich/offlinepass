@@ -11,6 +11,7 @@ import { cloneVault, syncVault } from "./git.js";
 import { parseEnvelope, serialize, listSummary, findItem,
   upsertItem, tombstone } from "./vault.js";
 import { renderFrames, cameraImport } from "./qrft-both.js";
+import { parseGoogleCsv, parseProtonPlaintext, appendImportNote } from "./formats.js";
 
 const $ = (id) => document.getElementById(id);
 const log = (line) => { $("log").textContent += line + "\n";
@@ -19,6 +20,10 @@ const show = (id) => {
   for (const s of ["settings", "entries", "detail", "qrftImport"])
     $(id).classList.toggle("hidden", s !== id);
 };
+/** The import modals OVERLAY any screen (the fixed position) — the
+ *  closed state = the hidden class. */
+const modal = (id, on) => $(id).classList.toggle("hidden", !on);
+const closeModals = () => { modal("importPopup", false); modal("importSummary", false); };
 
 const state = { card: null, env: null, url: "", token: "", currentUuid: null };
 const REPO_DIR = "/offlinepass";
@@ -224,6 +229,88 @@ $("btnQr").onclick = async () => {
   } catch (e) { log("the QRFT render failed: " + e.message); }
 };
 
+// -- THE IMPORT (the popup → the parse → the summary → the ONE commit) ------
+// No autodetection: the popup names the source explicitly (the user's
+// choice). The whole batch merges in one transaction: one union-merge,
+// one re-encrypt, one commit, one push — no extra card touches (the
+// session's decrypt already covers the batch).
+let impFmt = null;          // the pending parse for the picked file
+let impPending = null;      // { items, label } awaiting the confirm
+
+const impModal = (id) => modal(id, true);
+
+$("btnImportOpen").onclick = () => impModal("importPopup");
+$("btnImpCancel").onclick = () => closeModals();
+$("btnImpProtonUsb").onclick = () => { impFmt = "proton"; $("impFile").click(); };
+$("btnImpGoogleUsb").onclick = () => { impFmt = "google"; $("impFile").click(); };
+$("btnImpAbort").onclick = () => { impPending = null; closeModals(); };
+
+$("impFile").onchange = async () => {
+  try {
+    const f = $("impFile").files[0];
+    if (!f) return;
+    const text = new TextDecoder().decode(new Uint8Array(await f.arrayBuffer()));
+    const label = impFmt === "google"
+      ? "Google Passwords CSV (USB file)"
+      : "Proton Pass export (USB file)";
+    const items = impFmt === "google"
+      ? parseGoogleCsv(text)
+      : parseProtonPlaintext(text);
+    if (items === null) {
+      log("not a plaintext " + (impFmt === "google"
+        ? "Google Passwords CSV export" : "Proton Pass export"));
+      return;
+    }
+    if (!items.length) {
+      log(impFmt === "google"
+        ? "no entries found — is that a Google Passwords CSV export?"
+        : "no entries in the export");
+      return;
+    }
+    for (const it of items) appendImportNote(it, label);
+    showImportSummary(items, label);
+  } catch (e) { log("the import failed: " + e.message); }
+  $("impFile").value = "";   // the re-pick of the same file must fire
+};
+
+function showImportSummary(items, label) {
+  impPending = { items, label };
+  const existing = new Set(
+    (state.env?.vaults?.local?.items ?? []).map(
+      (it) => it.data.metadata.itemUuid));
+  const neu = items.filter((it) => !existing.has(it.data.metadata.itemUuid)).length;
+  $("impSummaryText").textContent =
+    `${items.length} entries — ${neu} new, ${items.length - neu} updated ` +
+    "(the newer modifyTime wins):\n" +
+    items.map((it) =>
+      `• ${it.data.metadata.name || "(unnamed)"}` +
+      (it.data.content.itemUsername ? ` — ${it.data.content.itemUsername}` : "")).join("\n") +
+    `\n\nEach carries: [Imported from ${label} — today]\n` +
+    "One commit; the push follows the save.";
+  modal("importPopup", false);
+  impModal("importSummary");
+}
+
+$("btnImpConfirm").onclick = async () => {
+  if (!impPending) return;
+  try {
+    const incoming = {
+      rev: state.env?.rev ?? 0, deviceId: state.env?.deviceId,
+      deletedItemUuids: [], vaults: { local: { items: impPending.items } },
+    };
+    state.env = unionMerge(state.env ?? { rev: 0, deviceId: "ext", deletedItemUuids: [], vaults: { local: { items: [] } } }, incoming);
+    await persist();
+    log(`the import committed (rev ${state.env.rev}): ` +
+      `${impPending.items.length} entries — ${impPending.label}`);
+    renderList();
+  } catch (e) { log("the import commit failed: " + e.message); }
+  impPending = null;
+  closeModals();
+  show("entries");
+};
+
+$("btnImportTop").onclick = () => impModal("importPopup");
+
 // The QRFT import: the camera → the reassembler → the upsert.
 $("btnImport").onclick = async () => {
   try {
@@ -241,6 +328,7 @@ $("btnImport").onclick = async () => {
         log(`skipped ${it.data.metadata.name} (the local kept)`);
         continue;
       }
+      appendImportNote(it, "QRFT scan (the phone's paste)");
       upsertItem(state.env, it);
       log(`imported ${it.data.metadata.name}`);
     }
