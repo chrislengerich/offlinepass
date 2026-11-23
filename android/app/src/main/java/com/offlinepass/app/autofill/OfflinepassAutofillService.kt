@@ -35,10 +35,7 @@ class OfflinepassAutofillService : AutofillService() {
         /** The first non-empty text currently in the fields (the save
          *  request's capture; the fill requests leave them null). */
         val usernameValue: String? = null,
-        val passwordValue: String? = null,
-        /** The focused field's kind (the sheet's shape: the ✨ chip's
-         *  docs'-CVC experiment applies to the username-focused sheets). */
-        val focusedIsUsername: Boolean = false
+        val passwordValue: String? = null
     ) {
         /** The page-match predicate (the ranking's match rule, shared with
          *  the generate-chip's offer condition). */
@@ -227,18 +224,12 @@ class OfflinepassAutofillService : AutofillService() {
                 else -> 0
             }
         }
-        // THE EXPERIMENT (the docs' CVC shape): the ✨-focused sheet = the
-        // response = the single auth'd dataset — the platform's
-        // dataset-replacement ("the new dataset replaces the dataset that
-        // requires authentication, and the views are filled out
-        // immediately") is then exercised in its documented shape.
+        // THE EXPERIMENT (the docs' CVC shape) is retired: the
+        // single-✨-dataset sheet never fired (focusedIsUsername was never
+        // captured by the parse walk) and its shape - the sheet WITHOUT
+        // the items - is not the picker the user wants. The ✨ chip is
+        // back in the full sealed sheet, below.
         val slUuid = sealedSimpleLoginUuid()
-        if (fields.focusedIsUsername && slUuid != null) {
-            Log.i(TAG, "EXPERIMENT: the docs' CVC shape — the response = the ✨'s dataset only (the username-focused sheet)")
-            val builderExp = FillResponse.Builder()
-            generateAliasDataset(fields, 10, slUuid)?.let { builderExp.addDataset(it) }
-            return builderExp.build()
-        }
 
         val builder = FillResponse.Builder()
         var count = 0
@@ -261,6 +252,12 @@ class OfflinepassAutofillService : AutofillService() {
         var requestCode = 10
         // THE ⚡ CHIP: the password-focused sheets — the registration case.
         generateDataset(fields, requestCode++)?.let { builder.addDataset(it) }
+        count++
+        // THE ✨ CHIP: the alias + password generate (the SL link required
+        // — the slUuid carries the sealed cache's key entry for the
+        // flow's gated reveal). The dataset carries the username ids, so
+        // it surfaces when an email/username field is focused.
+        generateAliasDataset(fields, requestCode++, slUuid)?.let { builder.addDataset(it) }
         count++
         for (item in ranked.take(5)) {
             if (revealed != null && item.itemUuid == revealed.itemUuid) continue
@@ -465,7 +462,6 @@ class OfflinepassAutofillService : AutofillService() {
         val password = mutableListOf<AutofillId>()
         var usernameValue: String? = null
         var passwordValue: String? = null
-        var focusedIsUsername = false
         var appPackage = structure.activityComponent.packageName
         var webDomain: String? = null
 
@@ -511,7 +507,7 @@ class OfflinepassAutofillService : AutofillService() {
         for (i in 0 until structure.windowNodeCount) {
             walk(structure.getWindowNodeAt(i).rootViewNode)
         }
-        return Fields(username, password, appPackage, webDomain, usernameValue, passwordValue, focusedIsUsername)
+        return Fields(username, password, appPackage, webDomain, usernameValue, passwordValue)
     }
 
     private fun appContext() = applicationContext
