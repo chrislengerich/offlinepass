@@ -189,21 +189,20 @@ fun EntryDetailScreen(
                 Text("Enroll TOTP", style = MaterialTheme.typography.bodySmall)
             }
         } else {
-            // THE ENROLLED LINE: the whole line is the re-enroll trigger —
-            // the tap opens the overwrite warning; the live code renders
-            // under it.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = busy == null) {
-                        showReenrollConfirm = true
-                    }
-            ) {
-                Text("TOTP enrolled", style = MaterialTheme.typography.bodySmall)
-            }
+            Text("TOTP enrolled", style = MaterialTheme.typography.bodySmall)
             if (totp != null) {
                 val (code, remaining) = totp!!
                 Text("TOTP: $code  (${remaining}s)", style = MaterialTheme.typography.titleMedium)
+            }
+            // Re-enroll: the same small inline action as Regenerate —
+            // right-justified under the TOTP display.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End
+            ) {
+                TextButton(onClick = { showReenrollConfirm = true }, enabled = busy == null) {
+                    Text("Re-enroll TOTP", style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
         if (showTotpEntry) {
