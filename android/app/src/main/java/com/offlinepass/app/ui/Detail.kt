@@ -189,17 +189,17 @@ fun EntryDetailScreen(
                 Text("Enroll TOTP", style = MaterialTheme.typography.bodySmall)
             }
         } else {
-            // THE ENROLLED ROW: the live code + the re-enroll (the overwrite
-            // warning gates it — the current TOTP is replaced on Save).
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // THE ENROLLED LINE: the whole line is the re-enroll trigger —
+            // the tap opens the overwrite warning; the live code renders
+            // under it.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = busy == null) {
+                        showReenrollConfirm = true
+                    }
+            ) {
                 Text("TOTP enrolled", style = MaterialTheme.typography.bodySmall)
-                TextButton(
-                    onClick = { showReenrollConfirm = true },
-                    enabled = busy == null,
-                    contentPadding = PaddingValues(0.dp)
-                ) {
-                    Text("(Re-enroll)", style = MaterialTheme.typography.bodySmall)
-                }
             }
             if (totp != null) {
                 val (code, remaining) = totp!!
