@@ -35,22 +35,29 @@ video{max-width:20em}
   <button id="btnImportOpen">Import…</button>
 </section>
 
-<!-- THE IMPORT POPUP (the source choice) -->
-<section id="importPopup" class="hidden">
+<!-- THE IMPORT POPUP — step 1: the format -->
+<section id="importPopup" class="modal hidden">
   <h2>Import from</h2>
   <div class="row">
-    <button id="btnImpProtonUsb">Proton export (USB file)</button>
-    <button id="btnImpGoogleUsb">Google Passwords CSV (USB file)</button>
+    <button id="btnImpProton">Proton export</button>
+    <button id="btnImpGoogle">Google Passwords CSV</button>
   </div>
+  <button id="btnImpCancel">Cancel</button>
+</section>
+
+<!-- THE IMPORT POPUP — step 2: the channel -->
+<section id="importChannel" class="modal hidden">
+  <h2 id="impChannelTitle">Importing — via</h2>
   <div class="row">
-    <button id="btnImpQrft">QRFT scan (the phone's paste)</button>
-    <button id="btnImpCancel">Cancel</button>
+    <button id="btnImpUsb">USB file</button>
+    <button id="btnImpQrft">QRFT scan</button>
   </div>
+  <button id="btnImpChCancel">Cancel</button>
   <input id="impFile" type="file" accept=".json,.csv,.txt" class="hidden">
 </section>
 
 <!-- THE IMPORT SUMMARY (the one-transaction confirm) -->
-<section id="importSummary" class="hidden">
+<section id="importSummary" class="modal hidden">
   <h2>Import summary</h2>
   <div id="impSummaryText"></div>
   <div class="row">

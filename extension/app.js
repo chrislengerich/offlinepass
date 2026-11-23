@@ -230,48 +230,86 @@ $("btnQr").onclick = async () => {
 };
 
 // -- THE IMPORT (the popup → the parse → the summary → the ONE commit) ------
-// No autodetection: the popup names the source explicitly (the user's
-// choice). The whole batch merges in one transaction: one union-merge,
-// one re-encrypt, one commit, one push — no extra card touches (the
-// session's decrypt already covers the batch).
-let impFmt = null;          // the pending parse for the picked file
+// The user's choice names BOTH dimensions explicitly — the format (step 1:
+// Proton / Google) and the channel (step 2: USB file / QRFT scan). No
+// autodetection: the parse is the explicit call, an unparseable payload
+// gets a named status and no commit. The whole batch merges in one
+// transaction: one union-merge, one re-encrypt, one commit, one push —
+// no extra card touches (the session's decrypt already covers the batch).
+let impFmt = null;          // "proton" | "google"
+let impChannel = null;      // "usb" | "qrft"
 let impPending = null;      // { items, label } awaiting the confirm
 
 const impModal = (id) => modal(id, true);
+const impLabel = () =>
+  (impFmt === "google" ? "Google Passwords CSV" : "Proton Pass export") +
+  ` (${impChannel === "qrft" ? "QRFT scan" : "USB file"})`;
+
+/** The explicit parse per the chosen format. Null = not that format. */
+const impParse = (text) => impFmt === "google"
+  ? parseGoogleCsv(text)
+  : parseProtonPlaintext(text);
 
 $("btnImportOpen").onclick = () => impModal("importPopup");
+$("btnImportTop").onclick = () => impModal("importPopup");
 $("btnImpCancel").onclick = () => closeModals();
-$("btnImpProtonUsb").onclick = () => { impFmt = "proton"; $("impFile").click(); };
-$("btnImpGoogleUsb").onclick = () => { impFmt = "google"; $("impFile").click(); };
+$("btnImpChCancel").onclick = () => closeModals();
 $("btnImpAbort").onclick = () => { impPending = null; closeModals(); };
+
+// Step 1: the format → step 2: the channel.
+$("btnImpProton").onclick = () => { impFmt = "proton"; impChannelStep(); };
+$("btnImpGoogle").onclick = () => { impFmt = "google"; impChannelStep(); };
+function impChannelStep() {
+  $("impChannelTitle").textContent =
+    `Importing ${impFmt === "google" ? "a Google Passwords CSV" : "a Proton Pass export"} — via`;
+  modal("importPopup", false);
+  impModal("importChannel");
+}
+
+// The channel: the USB = the picker; the QRFT = the scanner → the parse.
+$("btnImpUsb").onclick = () => $("impFile").click();
+$("btnImpQrft").onclick = async () => {
+  try {
+    modal("importChannel", false);
+    show("qrftImport");
+    const payload = await cameraImport($("video"),
+      (s) => { $("qrStatus").textContent = s; });
+    $("qrStatus").textContent = "importing…";
+    await impRun(payload.text);
+  } catch (e) {
+    $("qrStatus").textContent = "the QRFT import failed: " + e.message;
+  }
+};
 
 $("impFile").onchange = async () => {
   try {
     const f = $("impFile").files[0];
     if (!f) return;
-    const text = new TextDecoder().decode(new Uint8Array(await f.arrayBuffer()));
-    const label = impFmt === "google"
-      ? "Google Passwords CSV (USB file)"
-      : "Proton Pass export (USB file)";
-    const items = impFmt === "google"
-      ? parseGoogleCsv(text)
-      : parseProtonPlaintext(text);
-    if (items === null) {
-      log("not a plaintext " + (impFmt === "google"
-        ? "Google Passwords CSV export" : "Proton Pass export"));
-      return;
-    }
-    if (!items.length) {
-      log(impFmt === "google"
-        ? "no entries found — is that a Google Passwords CSV export?"
-        : "no entries in the export");
-      return;
-    }
-    for (const it of items) appendImportNote(it, label);
-    showImportSummary(items, label);
+    await impRun(new TextDecoder().decode(
+      new Uint8Array(await f.arrayBuffer())));
   } catch (e) { log("the import failed: " + e.message); }
   $("impFile").value = "";   // the re-pick of the same file must fire
 };
+
+/** The shared handler: the parse → the notes → the summary (the confirm
+ *  commits — one union-merge, one re-encrypt, one commit, one push). */
+async function impRun(text) {
+  const items = impParse(text);
+  if (items === null) {
+    log("not a plaintext " + (impFmt === "google"
+      ? "Google Passwords CSV export" : "Proton Pass export"));
+    return;
+  }
+  if (!items.length) {
+    log(impFmt === "google"
+      ? "no entries found — is that a Google Passwords CSV export?"
+      : "no entries in the export");
+    return;
+  }
+  const label = impLabel();
+  for (const it of items) appendImportNote(it, label);
+  showImportSummary(items, label);
+}
 
 function showImportSummary(items, label) {
   impPending = { items, label };
@@ -287,7 +325,7 @@ function showImportSummary(items, label) {
       (it.data.content.itemUsername ? ` — ${it.data.content.itemUsername}` : "")).join("\n") +
     `\n\nEach carries: [Imported from ${label} — today]\n` +
     "One commit; the push follows the save.";
-  modal("importPopup", false);
+  closeModals();
   impModal("importSummary");
 }
 
@@ -308,8 +346,6 @@ $("btnImpConfirm").onclick = async () => {
   closeModals();
   show("entries");
 };
-
-$("btnImportTop").onclick = () => impModal("importPopup");
 
 // The QRFT import: the camera → the reassembler → the upsert.
 $("btnImport").onclick = async () => {
