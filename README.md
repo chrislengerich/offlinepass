@@ -7,10 +7,9 @@ one OpenPGP-encrypted vault file in a git repo, with three clients.
 
 - **Linux (terminal UI)** — this repo's `linux/offlinepass.py`: search, display,
   and manage Proton Pass login entries; render any entry as a QR code.
-  See [the Linux client](#linux-client-tui) below.
-- **Android (native app)** — the same vault on the phone: unlock with a
-  hardware key, full CRUD, live TOTP, git sync, autofill, and QR/qrft
-  exports. **[`android/README.md`](android/README.md)**
+  See [the Linux client](#linux-client-tui) below. 
+- **Android (native app)** — drop-in replacement for Proton Pass Android, including
+  autofill, email aliases and autogeneration, share vaults to friends and other devices offline. See **[`android/README.md`](android/README.md)**
 - **Chrome extension** — receives an encrypted single-entry paste from
   the phone's QR and auto-fills it into the browser tab, gated by a
   security-key PIN + touch. **[`extension/README.md`](extension/README.md)**
@@ -29,8 +28,8 @@ Key Features:
 - Share passwords via QR codes (qrft.org) to other phones or friends (encrypted) or to desktop (via the Chrome extension: https://github.com/chrislengerich/offlinepass/blob/main/extension/README.md), without logging in.
 - Back up to any Git remote (VPC or public Internet) or USB cold storage, allowing for decentralized and self-hosted state.
 - Low-dependency vault format - single git repo that can also be decrypted using GPG and linux tools.
-- Low-dependency supply chain - security keys and cellphone screenlocks as hardware tools.
-- Import/export from Proton Pass.
+- Low-dependency supply chain - security keys and cellphone screenlocks.
+- Import/export from Proton Pass and Google Passwords.
 - Will make smoothie for you, if you ask it nicely (or so I’ve heard).
 
 ## License
