@@ -42,6 +42,24 @@ object YubiKitCardDecrypt {
 
     private const val TAG = "YubiKitCardDecrypt"
 
+    /** THE BLANK-CARD MESSAGE: the OpenPGP applet answers but holds NO
+     *  GPG key (the fingerprint DO absent or the spec's all-zero shape —
+     *  other key types, FIDO for example, may well be set). The fix is
+     *  the Android README's initialize section, from Linux (gpg) or from
+     *  Android (OpenKeyChain). */
+    const val BLANK_CARD_MESSAGE: String =
+        "The security key has no GPG key set (it may have other keys) — " +
+            "it is new/uninitialized for OpenPGP. Initialize a key set on the " +
+            "YubiKey first: the Android README's 'Initialize the security key " +
+            "(OpenPGP key set)' section — From Linux (gpg, the authoritative " +
+            "flow) or From Android (OpenKeyChain, NFC/USB)."
+
+    /** The DECRYPTION-slot fingerprint state: BLANK when absent or the
+     *  spec's 20-zero-bytes shape (a factory-new card — without this the
+     *  all-zero pass used to enroll recipient id 0). */
+    fun isBlankFingerprint(fp: ByteArray?): Boolean =
+        fp == null || fp.size < 20 || fp.all { it.toInt() == 0 }
+
     /** The DECRYPTION slot's key id — an unauthenticated read (no PIN, no
      *  touch). The id = the v4 fingerprint's low half — the same id the
      *  vault's PKESKs name. Used to auto-add the card as a new vault's
@@ -61,8 +79,8 @@ object YubiKitCardDecrypt {
             try {
                 val decFp = session.applicationRelatedData.discretionary
                     .getFingerprint(KeyRef.DEC)
-                if (decFp == null || decFp.size < 20) {
-                    throw java.io.IOException("the card reports no DECRYPTION fingerprint (an empty slot?)")
+                if (isBlankFingerprint(decFp)) {
+                    throw java.io.IOException(BLANK_CARD_MESSAGE)
                 }
                 return (12 until 20).fold(0L) { acc, k ->
                     (acc shl 8) or (decFp[k].toLong() and 0xFF)
@@ -112,8 +130,14 @@ object YubiKitCardDecrypt {
                 // unauthenticated read; the key id = the fp's low half).
                 val decFp = session.applicationRelatedData.discretionary
                     .getFingerprint(KeyRef.DEC)
-                if (decFp == null || decFp.size < 20) {
-                    throw java.io.IOException("the card reports no DECRYPTION fingerprint (an empty slot?)")
+                if (isBlankFingerprint(decFp)) {
+                    // A blank card cannot decrypt — name the cause (the
+                    // README's initialize flow) instead of the later
+                    // wrong-card PKESK failure.
+                    val msg = BLANK_CARD_MESSAGE
+                    log("yubikit-decrypt: $msg")
+                    Log.w(TAG, "yubikit: $msg")
+                    throw java.io.IOException(msg)
                 }
                 val decKeyId = (12 until 20).fold(0L) { acc, k ->
                     (acc shl 8) or (decFp[k].toLong() and 0xFF)

@@ -20,7 +20,6 @@ fun SetupTabScreen(
     busy: String?,
     onBack: () -> Unit,
     onTestSync: () -> Unit,
-    onResetRepo: () -> Unit,
     onExportRepoQrft: () -> Unit = {},
     onUsbRestore: () -> Unit,
     onEnableAutofill: () -> Unit,
@@ -76,7 +75,6 @@ fun SetupTabScreen(
     onLinkSimpleLogin: (apiKey: String) -> Unit = {},
 ) {
     val cfg = VaultSession.config()
-    var confirmDialog by remember { mutableStateOf<String?>(null) }
     var deviceNameDialog by remember { mutableStateOf<String?>(null) }
     var showSlLink by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -142,28 +140,6 @@ fun SetupTabScreen(
         )
     }
 
-    confirmDialog?.let { what ->
-        AlertDialog(
-            onDismissRequest = { confirmDialog = null },
-            title = { Text("Confirm reset") },
-            text = {
-                Text("Wipe the local git clone and re-clone from the remote?\n\n" +
-                    // The divergence against the last-fetched origin/main —
-                    // computed once per remote change (a local git read, no
-                    // network, no touch prompt).
-                    (remember(cfg?.remoteUrl) { VaultSession.resetRemoteWarning() }))
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDialog = null
-                    onResetRepo()
-                }) { Text("Reset") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDialog = null }) { Text("Cancel") }
-            }
-        )
-    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -224,13 +200,6 @@ fun SetupTabScreen(
                     maxLines = 1
                 )
             }
-            if (cfg?.remoteUrl != null) {
-                Button(
-                    onClick = { confirmDialog = "repo" },
-                    enabled = busy == null,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Reset local repo (wipe + re-clone)") }
-            }
         } else if (cfg?.remoteUrl != null) {
             Text(
                 "Sync: ${VaultSession.syncStatus ?: "not synced this session"}",
@@ -239,11 +208,6 @@ fun SetupTabScreen(
             Button(onClick = onTestSync, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
                 Text("Sync now (fetch/push)")
             }
-            Button(
-                onClick = { confirmDialog = "repo" },
-                enabled = busy == null,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Reset local repo (wipe + re-clone)") }
         }
         HorizontalDivider()
 

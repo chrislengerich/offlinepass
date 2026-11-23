@@ -1545,10 +1545,18 @@ class MainActivity : androidx.activity.ComponentActivity() {
                         val decId = runCatching {
                             com.offlinepass.app.crypto.YubiKitCardDecrypt
                                 .decKeyId(applicationContext)
-                        }.getOrNull()
-                        if (decId != null) {
-                            VaultSession.setRecipientKeyIds(listOf(decId))
+                        }
+                        if (decId.isSuccess && decId.getOrNull() != null &&
+                            decId.getOrNull() != 0L) {
+                            VaultSession.setRecipientKeyIds(listOf(decId.getOrNull()!!))
                             status = "The security key's key added as the first recipient."
+                        } else if (decId.isFailure) {
+                            // The card op's own error carries the cause — the
+                            // blank-card case names the README's initialize flow.
+                            status = decId.exceptionOrNull()?.message
+                                ?.takeIf { it.contains("GPG key set") }
+                                ?: ("The security key not readable — add a recipient " +
+                                    "in Setup before saving.")
                         } else {
                             status = "The security key not readable — add a recipient " +
                                 "in Setup before saving."
@@ -2337,14 +2345,6 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             status = when (val r = VaultSession.syncNow()) {
                                 VaultSession.Result.Success -> "Sync OK (rev ${VaultSession.currentRev()})."
                                 else -> "Sync: $r"
-                            }
-                        }
-                    },
-                    onResetRepo = {
-                        lifecycleScope.launch {
-                            status = when (val r = VaultSession.resetRepo()) {
-                                VaultSession.Result.Success -> "Repo reset (fresh clone, state re-applied)."
-                                else -> "Reset: $r"
                             }
                         }
                     },

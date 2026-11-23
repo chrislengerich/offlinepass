@@ -2576,29 +2576,6 @@ object VaultSession {
         }
     }
 
-    /** The reset dialog's warning: compares the local clone against the
-     *  remote-tracking ref (origin/main — the state of the LAST FETCH, no
-     *  network needed). The wording says so; a live fetch would demand
-     *  the SSH handshake (and the YubiKey touch) just to show a dialog. */
-    fun resetRemoteWarning(): String {
-        if (config()?.remoteUrl == null) return ""
-        val div = runCatching { VaultGitClient().headVsRemote(gitRoot()) }
-            .getOrElse { return "The local repo state could not be read (${it.message?.take(60)})." }
-        val tail = "Resetting wipes local commits."
-        return when (div) {
-            is VaultGitClient.Divergence.UpToDate ->
-                "The local clone matches the remote as of the last fetch — nothing unpushed."
-            is VaultGitClient.Divergence.AheadOnly ->
-                "WARNING: the local clone has UNPUSHED commits (ahead of the remote). " + tail
-            is VaultGitClient.Divergence.BehindOnly ->
-                "The local clone is BEHIND the remote (the remote has newer commits, " +
-                    "as of the last fetch). Resetting takes the remote's newer state."
-            is VaultGitClient.Divergence.Diverged ->
-                "WARNING: the local clone and the remote have DIVERGED (both have " +
-                    "commits the other lacks, as of the last fetch). " + tail
-        }
-    }
-
     fun currentRev(): Long = rev
 
     /** The local HEAD's short commit hash (front 7, like the Recent
@@ -3027,8 +3004,13 @@ object VaultSession {
             try {
                 val decFp = session.applicationRelatedData.discretionary
                     .getFingerprint(com.yubico.yubikit.openpgp.KeyRef.DEC)
-                if (decFp == null || decFp.size < 20) {
-                    return Result.Error("The card reports no DECRYPTION fingerprint (an empty slot?)")
+                if (com.offlinepass.app.crypto.YubiKitCardDecrypt
+                        .isBlankFingerprint(decFp)
+                ) {
+                    // The factory-new card: no GPG key to enroll — the
+                    // message names the README's initialize flow.
+                    return Result.Error(
+                        com.offlinepass.app.crypto.YubiKitCardDecrypt.BLANK_CARD_MESSAGE)
                 }
                 val decId = (12 until 20).fold(0L) { acc, k ->
                     (acc shl 8) or (decFp[k].toLong() and 0xFF)
@@ -3164,43 +3146,6 @@ object VaultSession {
     private fun syncMessage(r: Result): String = when (r) {
         is Result.Error -> r.message
         else -> r.toString()
-    }
-
-    /** Wipes + re-clones the git state, preserving the current vault
-     * ciphertext (re-applied + pushed when the session is unlocked). This
-     * is the escape hatch for "destination path exists"/corrupted-clone
-     * states. The LOCAL-ONLY vault file is untouched (it's not a repo). */
-    suspend fun resetRepo(): Result {
-        val cfg = config() ?: return Result.Error("Local-only mode: nothing to reset")
-        val remote = cfg.remoteUrl ?: return Result.Error("Local-only mode: nothing to reset")
-        val pat = if (VaultGitClient().isSshRemote(remote)) "" else
-            (pat() ?: return Result.Error("No PAT stored"))
-        busy = "Resetting repo…"
-        try {
-            withContext(Dispatchers.IO) {
-                val saved = vaultFile().takeIf { it.exists() }?.readBytes()
-                gitRoot().deleteRecursively()
-                VaultGitClient().open(remote, pat, gitRoot())
-                saved?.let { bytes ->
-                    val vf = vaultFile()
-                    vf.parentFile?.mkdirs()
-                    vf.writeBytes(bytes)
-                }
-            }
-            // Re-apply the live session state (re-encrypt + merge-aware push)
-            // when the vault is unlocked; otherwise the restored ciphertext
-            // stands as-is.
-            val items = (state as? State.Unlocked)?.items
-            if (items != null) return save(items)
-            syncStatus = "Repo reset (re-cloned)"
-            return Result.Success
-        } catch (e: Exception) {
-            Log.w(TAG, "resetRepo failed: ${e.message}")
-            syncStatus = "Repo reset failed: ${e.message?.take(50)}"
-            return Result.Error("${e.javaClass.simpleName}: ${e.message}")
-        } finally {
-            busy = null
-        }
     }
 
     /** Fetch + push, with application-level union-merge when the two
