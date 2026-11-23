@@ -59,6 +59,7 @@ fun EntryDetailScreen(
     var revealed by remember { mutableStateOf(false) }
     var totp by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var showTotpEntry by remember { mutableStateOf(false) }
+    var showReenrollConfirm by remember { mutableStateOf(false) }
     // THE SCANNED URI: the raw-QR scan lands here and re-opens the entry —
     // the row consumes the URI into its own input (the scan never saves
     // alone; the user reviews before saving).
@@ -188,7 +189,22 @@ fun EntryDetailScreen(
                 Text("Enroll TOTP", style = MaterialTheme.typography.bodySmall)
             }
         } else {
-            Text("TOTP enrolled", style = MaterialTheme.typography.bodySmall)
+            // THE ENROLLED ROW: the live code + the re-enroll (the overwrite
+            // warning gates it — the current TOTP is replaced on Save).
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("TOTP enrolled", style = MaterialTheme.typography.bodySmall)
+                TextButton(
+                    onClick = { showReenrollConfirm = true },
+                    enabled = busy == null,
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text("(Re-enroll)", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (totp != null) {
+                val (code, remaining) = totp!!
+                Text("TOTP: $code  (${remaining}s)", style = MaterialTheme.typography.titleMedium)
+            }
         }
         if (showTotpEntry) {
             TotpEnrollRow(
@@ -228,10 +244,26 @@ fun EntryDetailScreen(
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
         if (dirty) Text("Unsaved changes — Save to persist.", style = MaterialTheme.typography.bodySmall)
 
-        if (totp != null) {
-            val (code, remaining) = totp!!
-            Text("TOTP: $code  (${remaining}s)", style = MaterialTheme.typography.titleMedium)
+        // THE RE-ENROLL WARNING: overwriting an enrolled TOTP needs the
+        // explicit yes — the yes opens the enrollment row; the save inside
+        // it commits the replacement.
+        if (showReenrollConfirm) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showReenrollConfirm = false },
+                title = { Text("Re-enroll TOTP?") },
+                text = { Text("The current TOTP will be replaced.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showReenrollConfirm = false
+                        showTotpEntry = true
+                    }) { Text("Yes") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showReenrollConfirm = false }) { Text("No") }
+                }
+            )
         }
+
         if (item.modifyTime > 0) {
             Text("Last modified: ${item.modifyTimeText}", style = MaterialTheme.typography.bodySmall)
         }
