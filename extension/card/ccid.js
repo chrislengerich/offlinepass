@@ -8,6 +8,35 @@
  * Chrome extension context: navigator.usb works in both the extension
  * pages and the service worker; the device pick needs a user gesture.
  */
+
+/** The claim failure's message: the WebUSB shapes → the user-facing
+ *  actionable text. The CCID interface is a shared resource — the OS's
+ *  smart-card stack (pcscd on Linux, CryptoTokenKit on macOS, the
+ *  Windows Smart Card service) or another app can hold it; the message
+ *  names the usual suspect per platform and the recovery. */
+export function describeClaimFailure(err, platform) {
+  const s = `${err?.name ?? ""}: ${err?.message ?? String(err)}`.toLowerCase();
+  const busy = s.includes("claimed") || s.includes("busy") ||
+    s.includes("reserved class") || s.includes("driver");
+  const disconnect = s.includes("disconnected") ||
+    s.includes("no device") || s.includes("not found") ||
+    s.includes("must be opened") || s.includes("not opened");
+  const us = {
+    linux: "pcscd (the desktop smart-card daemon)",
+    macos: "CryptoTokenKit (macOS's built-in smart-card support)",
+    windows: "the Windows Smart Card service",
+  }[platform] ?? "the OS's smart-card stack";
+  if (disconnect) {
+    return "The security key is not connected — reconnect (or re-grant) it and retry. " +
+      `(${err?.message ?? s})`;
+  }
+  if (busy) {
+    return "The key's smartcard interface is held by another app — " +
+      `${us} counts. Close it or unplug/replug the key, then retry. ` +
+      `(${err?.message ?? s})`;
+  }
+  return `The security key's card transport failed: ${err?.message ?? s}`;
+}
 export class Ccid {
   static YUBICO_VID = 0x1050;
 
@@ -15,15 +44,32 @@ export class Ccid {
    *  and remembers the bulk endpoints. The USB permission = per-plug
    *  (the same model as the Android app's ensureUsbPermission). */
   static async open(requestDevice = (f) => navigator.usb.requestDevice(f)) {
-    const device = await requestDevice({
-      filters: [{ vendorId: Ccid.YUBICO_VID }],
-    });
-    await device.open();
-    // The CCID interface = the one with the smartcard class (0x0B).
+    const platform = navigator.platform?.toLowerCase() ?? "";
+    const plat = platform.includes("mac") ? "macos"
+      : platform.includes("win") ? "windows" : "linux";
+    let device;
+    try {
+      device = await requestDevice({
+        filters: [{ vendorId: Ccid.YUBICO_VID }],
+      });
+    } catch (e) {
+      throw new Error(describeClaimFailure(e, plat));
+    }
+    try {
+      await device.open();
+      // The CCID interface = the one with the smartcard class (0x0B).
+      const ccid = device.configuration.interfaces.find((i) =>
+        i.alternate.interfaceClass === 0x0b);
+      if (!ccid) throw new Error("no CCID interface on the attached device");
+      await device.claimInterface(ccid.interfaceNumber);
+    } catch (e) {
+      // THE CLAIM: the interface is a shared resource — the OS's
+      // smart-card stack or another app can hold it (the platform's
+      // usual suspect named in the message).
+      throw new Error(describeClaimFailure(e, plat));
+    }
     const ccid = device.configuration.interfaces.find((i) =>
       i.alternate.interfaceClass === 0x0b);
-    if (!ccid) throw new Error("no CCID interface on the attached device");
-    await device.claimInterface(ccid.interfaceNumber);
     const endpoints = {};
     for (const ep of ccid.alternate.endpoints) {
       if (ep.type === "bulk") endpoints[ep.direction] = ep.endpointNumber;
