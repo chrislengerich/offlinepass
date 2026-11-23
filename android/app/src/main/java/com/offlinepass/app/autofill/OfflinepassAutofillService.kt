@@ -306,6 +306,14 @@ class OfflinepassAutofillService : AutofillService() {
 
     private fun lockedResponse(fields: Fields): FillResponse {
         Log.i(TAG, "branch=locked pkg=${fields.appPackage} domain=${fields.webDomain}")
+        val builder = FillResponse.Builder()
+        // THE GENERATE CHIPS: offered in EVERY state — the generation and
+        // the fill never need the vault unlocked. The save may not land
+        // here (a key-locked vault needs the app's unlock first) — the
+        // toast reports that honestly, and the filled password can be
+        // saved manually after the app's own unlock.
+        generateDataset(fields, 30)?.let { builder.addDataset(it) }
+        generateAliasDataset(fields, 40)?.let { builder.addDataset(it) }
         val intent = android.content.Intent(appContext(), MainActivity::class.java)
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val pi = android.app.PendingIntent.getActivity(
@@ -319,7 +327,8 @@ class OfflinepassAutofillService : AutofillService() {
         val ds = Dataset.Builder()
         ids.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
         ds.setAuthentication(pi.intentSender)
-        return FillResponse.Builder().addDataset(ds.build()).withSaveInfo(fields).build()
+        builder.addDataset(ds.build())
+        return builder.withSaveInfo(fields).build()
     }
 
     /** THE SEALED CHIP's LABEL: the clear-text identity (the username /
