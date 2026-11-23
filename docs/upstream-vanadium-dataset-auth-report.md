@@ -1,4 +1,4 @@
-# Vanadium/AOSP: dataset-authentication result never applied — the for-result launch of a service-created auth PendingIntent aborts with a spurious CANCELED before the auth activity runs
+# Vanadium/AOSP: dataset-authentication result never applied — the auth launch is forced into a new task, so the framework cancels the activity result ("Activity is launching as a new task, so cancelling activity result.")
 
 **Affected:** Vanadium (GrapheneOS) / Chromium-based browsers on Android; the platform autofill pipeline (framework-side behavior captured on device).
 **Reporter:** offlinepass (an open-source password manager with a standard `AutofillService`).
@@ -11,12 +11,20 @@ developer.android.com/guide/topics/text/autofill-services, "Require user
 authentication", the CVC example) never applies its returned dataset in
 Vanadium. The auth activity is launched by the browser via
 `Activity.startIntentSenderForResult` with the framework's
-`@android:autoFillAuth:` routing. On this device the for-result launch of a
-**service-created** auth PendingIntent **aborts before the auth activity's
-`onCreate`** and delivers a spurious **CANCELED result to the browser**. That
-spurious result consumes the framework's authentication tracking; the system
-then relaunches the auth activity as a plain (non-result) launch. When the
-auth activity later finishes with the real `RESULT_OK` + the filled
+`@android:autoFillAuth:` routing. The auth PendingIntent is created by the
+**service** (a task-less context), so the system **forces
+`FLAG_ACTIVITY_NEW_TASK`** on the launch — and a new-task launch cannot
+carry an activity result. The system logs exactly that and dispatches a
+spurious **CANCELED result to the browser** before the auth activity's
+`onCreate`:
+
+```
+W/ActivityTaskManager: Activity is launching as a new task, so cancelling activity result.
+```
+
+That spurious result consumes the framework's authentication tracking; the
+system then relaunches the auth activity as a plain (non-result) launch. When
+the auth activity later finishes with the real `RESULT_OK` + the filled
 `Dataset` in `AutofillManager.EXTRA_AUTHENTICATION_RESULT` (exactly the
 documented pattern), the result has **no recipient** and is dropped. The
 session stays `WAITING_FOR_AUTH` forever and nothing fills.
@@ -78,6 +86,28 @@ Key observations:
    aborted first attempt. The real `RESULT_OK` + `Dataset` returned by the
    auth activity is silently dropped.
 
+## The root cause (verbatim, from the `system` log buffer)
+
+```
+00:20:57.416 W/ActivityTaskManager: Activity is launching as a new task, so cancelling activity result.
+00:20:57.425 I/ActivityTaskManager: START u0 {flg=0x10000000
+             cmp=com.offlinepass.app/.autofill.AutofillAuthActivity (has extras)}
+             with LAUNCH_MULTIPLE from uid 10211 (com.offlinepass.app)
+             (realCallingUid=10140) (BAL_ALLOW_VISIBLE_WINDOW [realCaller]) result code=0
+```
+
+- The launch itself is **permitted** — the background-activity-start is
+  explicitly allowed (`BAL_ALLOW_VISIBLE_WINDOW`, `result code=0`).
+- But because the launch carries `FLAG_ACTIVITY_NEW_TASK` (forced by the
+  system: the PendingIntent's creator is the autofill service — a task-less
+  context with no source activity record), the framework applies its
+  documented rule — **results do not deliver for new-task launches** — and
+  cancels the result at launch time.
+- The cancellation is dispatched to the browser during the launch's own
+  pause transaction (before the auth activity's `onCreate`), consuming the
+  framework's auth tracking. The relaunch is a plain start; the eventual
+  real result is orphaned.
+
 ## Configuration-independence (three captured configurations)
 
 | # | The auth activity's config | The auth intent's flags | Outcome |
@@ -123,6 +153,16 @@ one) flows.
 - Browser: Vanadium (`app.vanadium.browser`), current stable at report time
 - The autofill service: offlinepass (the standard `AutofillService`, no
   compatibility mode, no accessibility hacks)
+
+## Evaluated and rejected workarounds (all app-side)
+
+| Approach | Why it fails |
+|---|---|
+| Translucent auth activity (the browser never stops, so the response never expires) | The launch abort is upstream of the expiry — identical spurious CANCELED. Also removes the response-expiry recovery: the stuck session then never resets and re-focusing produces no sheet at all. |
+| The auth intent without `FLAG_ACTIVITY_NEW_TASK`, plain activity declaration, no task-forcing manifest properties | The system still adds `NEW_TASK` at send time — the PendingIntent's creator is a service (a task-less context has no source activity record to join the caller's task from). |
+| Prefill ciphertext as the dataset placeholder, "decrypt on pick" | The decryption still has to write the plaintext through the framework's fill — the same broken delivery. Only moves the plaintext out of the response bundle. |
+| A helper activity with a context (to give the PendingIntent a source task) | The task placement is resolved at **send** time from the PendingIntent's creator (the service), not at creation; a kept-alive activity cannot be the creator. |
+| Chromium feature flags | `components/android_autofill/browser/android_autofill_features.cc` defines six features (LazyFrameworkWrapper, ImprovedVisibilityDetection, FieldsUpdatedOnSelect, SuppressOffscreenDatalist, IncludeSelectOptionValues, RefetchManagerIfDisabled) — none touches the launch/result plumbing; the abort is a system-side rule. |
 
 ## Notes
 
