@@ -1285,7 +1285,15 @@ class VaultSaveTransactionTest {
         VaultSession.patOverride = "fake-pat" // ignored by the file:// transport
         val remoteDir = File(app.cacheDir, "op-sl-relink-remote.git")
         remoteDir.deleteRecursively()
-        org.eclipse.jgit.api.Git.init().setBare(true).setDirectory(remoteDir).call().close()
+        // PIN THE HEAD (same as the divergence test above): the bare init's
+        // HEAD symref = the environment-dependent default branch (JGit
+        // reads init.defaultBranch from the SYSTEM config — the runner's
+        // /etc/gitconfig differs from the desktop's). Unpinned, the clone
+        // fails with "Remote branch 'HEAD' not found in upstream origin"
+        // on the runner (measured).
+        org.eclipse.jgit.api.Git.init().setBare(true).setDirectory(remoteDir).call().use { g ->
+            g.repository.updateRef(Constants.HEAD).link(Constants.R_HEADS + "main")
+        }
         val remoteUrl = "file://" + remoteDir.absolutePath
         VaultSession.configure(remoteUrl, listOf("user@example.com"))
         seedRepo("PREVIOUS".toByteArray())
@@ -1304,7 +1312,10 @@ class VaultSaveTransactionTest {
         //    item's uuid (the linkSimpleLogin's behavior) → the commit+push.
         val second = File(app.cacheDir, "op-sl-relink-second")
         second.deleteRecursively()
-        Git.cloneRepository().setURI(remoteUrl).setDirectory(second).call().use { g ->
+        // The explicit branch: the clone must not depend on the remote's
+        // HEAD symref resolving.
+        Git.cloneRepository().setURI(remoteUrl).setDirectory(second)
+            .setBranch("main").call().use { g ->
             val env = Envelope.fromJson(String(
                 java.util.Base64.getDecoder().decode(
                     File(second, "state/10.gpg").readBytes())))

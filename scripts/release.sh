@@ -187,13 +187,20 @@ cmd_sign() {
   require_stage
   for apk in "$STAGE"/offlinepass-"$VERSION"-*.apk; do
     [ -f "$apk" ] || continue
-    if [ -f "$apk.asc" ]; then
+    local sig="$apk.asc" tmp="$apk.asc.tmp"
+    if [ -f "$sig" ] && [ ! -s "$sig" ]; then
+      echo "empty signature: $(basename "$apk").asc — re-signing"
+    elif [ -f "$sig" ]; then
       echo "already signed: $(basename "$apk") — keeping the existing .asc"
       continue
     fi
-    # The security key's secret half is on the hardware token — gpg will
-    # prompt/touch as configured.
-    gpg --detach-sign --armor $(gpg_key_args) "$apk"
+    # Sign to a temp file and move into place: an aborted hardware-token
+    # sign leaves no empty .asc for verify to trip over (gpg creates its
+    # --output file before the touch/pinentry). The mv is atomic within
+    # the stage dir, so a concurrent verify can never see a partial sig.
+    rm -f "$tmp"
+    gpg --detach-sign --armor --output "$tmp" $(gpg_key_args) "$apk"
+    mv "$tmp" "$sig"
     echo "signed: $(basename "$apk")"
   done
   checksums
@@ -210,6 +217,7 @@ cmd_verify() {
     found=1
     echo "== $(basename "$apk")"
     [ -f "$apk.asc" ] || die "missing signature: $apk.asc — run: scripts/release.sh sign $VERSION"
+    [ -s "$apk.asc" ] || die "empty signature file: $apk.asc — re-run: scripts/release.sh sign $VERSION"
     gpg --verify "$apk.asc" "$apk" || die "GPG signature INVALID: $apk"
   done
   [ "$found" = 1 ] || die "no APKs staged in $STAGE"
@@ -224,7 +232,7 @@ cmd_publish() {
   require_stage
   for apk in "$STAGE"/offlinepass-"$VERSION"-*.apk; do
     [ -f "$apk" ] || continue
-    [ -f "$apk.asc" ] || die "$(basename "$apk") not signed — run: scripts/release.sh sign $VERSION"
+    [ -s "$apk.asc" ] || die "$(basename "$apk") missing or empty signature — run: scripts/release.sh sign $VERSION"
   done
   ( cd "$REPO_ROOT"
     [ -z "$(git status --porcelain)" ] || die "git tree is dirty — commit the release first"
