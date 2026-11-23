@@ -25,7 +25,12 @@ function walkPackets(bytes) {
     const first = bytes[p];
     let tag, len, hdr;
     if (first & 0x80) {
-      tag = (first >>> 2) & 0x0f;
+      // The NEW format: bit7 = 1, bit6 = 1, the tag = the 6 low bits.
+      // (The (first >>> 2) & 0x0f here before decoded every new-format
+      // tag wrongly — the old format's shapes only — the fixture now
+      // caught it: openpgp.js writes 0xc1 = new-format tag 1 = the
+      // PKESK the old decode read as tag 0.)
+      tag = first & 0x3f;
       const ltype = first & 3;
       if (ltype === 0) { len = bytes[p + 1]; hdr = 2; }
       else if (ltype === 1) { len = (((bytes[p + 1] & 0x1f) << 8) | bytes[p + 2]) + 192; hdr = 3; }
@@ -66,13 +71,13 @@ function parsePkesk(body) {
 }
 
 /** The session data's parse: the algo-byte + the key + the checksum
- *  (the sum mod 65536 over the algo+key must equal the trailing two
- *  bytes, big-endian). */
+ *  (RFC 4880 §5.1: the checksum = the sum of the SESSION KEY's octets
+ *  ONLY — not the algorithm byte — mod 65536, big-endian). */
 export function parseSessionData(m) {
   if (m.length < 4) throw new DecryptError("the session data too short");
   const algorithm = m[0];
   const key = m.slice(1, m.length - 2);
-  const sum = [...m.slice(0, m.length - 2)].reduce((a, b) => (a + b) & 0xffff, 0);
+  const sum = [...key].reduce((a, b) => (a + b) & 0xffff, 0);
   const expect = (m[m.length - 2] << 8) | m[m.length - 1];
   if (sum !== expect) throw new DecryptError("the session key's checksum mismatch");
   return { algorithm, key, name: SYM_ALG_NAMES[algorithm] || `alg${algorithm}` };
@@ -84,7 +89,19 @@ export async function decryptWithCard(msgBytes, card, onLog = () => {}) {
   const pkesks = packets.filter((pk) => pk.tag === 1);
   if (!pkesks.length) throw new DecryptError("no PKESK in the message");
   const message = await openpgp.readMessage({ binaryMessage: msgBytes });
-  const decKey = await card.decPublicKey();
+  // The BLANK CARD first (the paired-key interaction's discrimination):
+  // the applet answers but the DEC slot holds no GPG key — the
+  // initialize-the-key-set error, NOT a wrong-card complaint.
+  let decKey;
+  try {
+    decKey = await card.decPublicKey();
+  } catch (e) {
+    throw new DecryptError(
+      "the card's DEC slot has no GPG key set (it may have other keys) — " +
+        "initialize a key set on the YubiKey first: the Android README's " +
+        "'Initialize the security key (OpenPGP key set)' section",
+      { cause: e });
+  }
   onLog(`the PKESKs: ${pkesks.length}; the DEC slot: ${decKey.rsa ? `RSA-${decKey.modulusLen * 8}` : "EC"}`);
 
   const lastError = [];

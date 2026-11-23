@@ -67,6 +67,17 @@ test("the clone: the fresh dir → the remote's HEAD + the files", async () => {
   assert.deepEqual([...blob.blob], [1, 2, 3]);
 });
 
+test("the wrong token: the auth failure surfaces as actionable (no silent retry)", async () => {
+  const dir = path.join(workdir, "clone-badtoken");
+  fs.mkdirSync(dir, { recursive: true });
+  await assert.rejects(
+    git.clone({ fs: fsParams(), http, url: remoteUrl, dir,
+      ref: "main", singleBranch: true,
+      onAuth: () => ({ username: "x", password: "the-wrong-token" }) }),
+    (e) => /401|Unauthorized|auth/i.test(String(e.message ?? e)),
+    "the wrong token must surface the auth failure — the UI's message builds on it");
+});
+
 test("the commit + the push: the tracking ref + the remote advance", async () => {
   const dir = path.join(workdir, "clone");
   // The local commit: the modified vault.
