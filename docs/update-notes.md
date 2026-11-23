@@ -6,7 +6,7 @@ is folded into the release notes (`scripts/release.sh` writes
 `RELEASE_NOTES.md` at build stage) and any standing README claims are
 updated; the entries then move under that release's version heading here.
 
-## Unreleased
+## v0.10.6
 
 ### Android
 
@@ -37,6 +37,17 @@ updated; the entries then move under that release's version heading here.
   fields.
 - **Generated password default** — 16 characters over letters and
   digits (was 24 with symbols).
+- **TOTP enrollment reworked** — the entry field sits inline next to
+  Enroll TOTP, with a Scan QR option that reads an otpauth:// QR code
+  straight into the field. Enrolled items show the live code with a
+  Re-enroll TOTP action behind a replace warning; the counter updates
+  only after the save confirms.
+- **Save prompt shows the transaction** — the screenlock prompt for an
+  item save names the site, username, URL, and the password length (the
+  password itself stays hidden).
+- **Form parser hardening** — URL-shaped fields (loginUrl, returnUrl) and
+  URL-shaped values are never captured as the username; explicitly marked
+  email/username fields always win over loose id/hint matches.
 - **SimpleLogin linked accounts** — Setup → Linked accounts links the
   SimpleLogin account by pasting an API key from the dashboard
   (numbered a/b/c instructions with a direct link to the API-keys
