@@ -310,8 +310,8 @@ class OfflinepassAutofillService : AutofillService() {
      *  unlock — the secrets stay sealed. */
     internal fun sealedLabel(item: ProtonItem): String {
         val id = item.identity.trim()
-        return if (id.isNotBlank()) "🔒 ${item.displayName} — $id"
-        else "🔒 ${item.displayName}"
+        return if (id.isNotBlank()) "${item.displayName} — $id"
+        else item.displayName
     }
 
     private fun datasetFor(
