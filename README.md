@@ -21,12 +21,6 @@ Key Features:
 - Works fully offline, no account needed.
 - Encrypts memory at rest in addition to files, ensuring defense-in-depth against browser compromises like the recent Optimizely hack.
 - E2E encrypted to hardware-backed private keys (YubiKey and screenlock), unlike Proton Pass, which uses software-based private keys that are more easily stolen.[^protonkeys]
-
-Getting started:
-- Grab an Android phone and Yubikey if you don't have one already.
-- Download the most recent release APK of the Android app from https://github.com/chrislengerich/offlinepass/releases/
-- Setup per instructions in android/README.md
-
 [^protonkeys]: Verified against the Proton Pass Android source (at [`60cf8cb0`](https://github.com/protonpass/android-pass/blob/60cf8cb0ae7d2f26ff0f313ce3d726e3280e97b6)): the share keys are in-memory encrypted blobs ([`ShareKey.kt#L25`](https://github.com/protonpass/android-pass/blob/60cf8cb0ae7d2f26ff0f313ce3d726e3280e97b6/pass/domain/src/main/kotlin/proton/android/pass/domain/key/ShareKey.kt#L25)), decrypted via the software PGP chain ([`CoreUserKeys.kt#L49`](https://github.com/protonpass/android-pass/blob/60cf8cb0ae7d2f26ff0f313ce3d726e3280e97b6/pass/crypto/impl/src/main/kotlin/proton/android/pass/crypto/impl/CoreUserKeys.kt#L49)), and the AndroidKeyStore appears only as the local cache wrapper and biometric gates ([`NavHostController.kt#L41`](https://github.com/protonpass/android-pass/blob/60cf8cb0ae7d2f26ff0f313ce3d726e3280e97b6/pass/navigation/api/src/main/kotlin/proton/android/pass/navigation/api/NavHostController.kt#L41), [`EnrollmentGuardKey.kt#L36`](https://github.com/protonpass/android-pass/blob/60cf8cb0ae7d2f26ff0f313ce3d726e3280e97b6/pass/biometry/impl/src/main/java/proton/android/pass/biometry/EnrollmentGuardKey.kt#L36)) — no security key anywhere in the item crypto (the YubiKey = the account 2FA only). Our keys, at [`a681b99`](https://github.com/chrislengerich/offlinepass/blob/a681b9931d3a4b0ba0f22f5b3e46baf3d33d0bd1e): the vault decrypt runs as `PSO:DEC` **on the card's DEC slot** — the private key never leaves the Secure Element ([`YubiKitCardDecrypt.kt#L20`](https://github.com/chrislengerich/offlinepass/blob/a681b99/android/app/src/main/java/com/offlinepass/app/crypto/YubiKitCardDecrypt.kt#L20), [`OpenPgpCardCrypto.kt#L128`](https://github.com/chrislengerich/offlinepass/blob/a681b99/android/app/src/main/java/com/offlinepass/app/crypto/OpenPgpCardCrypto.kt#L128)); the seal and the screenlock signing use the TEE-held, non-exportable AndroidKeyStore keys with `setUserAuthenticationRequired(true)` (the 60s biometric window) — [`SealedVault.kt#L50`](https://github.com/chrislengerich/offlinepass/blob/a681b99/android/app/src/main/java/com/offlinepass/app/vault/SealedVault.kt#L50), [`SealedVault.kt#L194`](https://github.com/chrislengerich/offlinepass/blob/a681b99/android/app/src/main/java/com/offlinepass/app/vault/SealedVault.kt#L194), [`KeystoreSigner.kt#L54`](https://github.com/chrislengerich/offlinepass/blob/a681b99/android/app/src/main/java/com/offlinepass/app/crypto/KeystoreSigner.kt#L54).
 - Signed transactions using Yubikey or screenlock. No changes to your data unless you explicitly authorize with a touch.
 - Transaction memory, no more accidentally overwritten passwords.
@@ -36,6 +30,11 @@ Getting started:
 - Low-dependency supply chain - security keys and cellphone screenlocks.
 - Import/export from Proton Pass and Google Passwords.
 - Will make smoothie for you, if you ask it nicely (or so I’ve heard).
+
+Getting Started:
+- Grab an Android phone and Yubikey if you don't have one already.
+- Download the most recent release APK of the Android app from https://github.com/chrislengerich/offlinepass/releases/
+- Setup per instructions in [`android/README.md`](android/README.md)
 
 ## License
 
