@@ -59,22 +59,19 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- THE TASK AFFINITY = EMPTY: the auth lives in the framework's
-             own launch (the finish = back to the form). THE TRANSLUCENT
-             THEME: the auth does NOT cover the browser — the underlying
-             activity stays visible (paused, never stopped), so the
-             framework's onStop-driven onInvisibleForAutofill never fires
-             and the fill response never expires while the auth runs. The
-             earlier opaque theme was the black flash; the earlier
-             TRANSLUCENT failure (the empty placeholders applied) cannot
-             recur — the placeholders are null now and the auth result
-             carries the filled dataset. -->
+        <!-- THE TRANSLUCENT THEME: the auth does NOT cover the browser —
+             the underlying activity stays visible (paused, never
+             stopped), so the framework's onStop-driven
+             onInvisibleForAutofill never fires and the fill response
+             never expires while the auth runs. NO taskAffinity/noHistory/
+             excludeFromRecents: the task-forcing properties aborted the
+             framework's FOR-RESULT launch (the captured instant CANCELED
+             result before onCreate, consuming the auth tracking; the
+             relaunch then dropped the real RESULT_OK) — a plain activity
+             launches INTO the browser's task and the result routes. -->
         <activity
             android:name=".autofill.AutofillAuthActivity"
             android:exported="false"
-            android:taskAffinity=""
-            android:noHistory="true"
-            android:excludeFromRecents="true"
             android:theme="@style/Theme.Offlinepass.TranslucentAuth" />
         <service
             android:name=".autofill.OfflinepassAutofillService"
