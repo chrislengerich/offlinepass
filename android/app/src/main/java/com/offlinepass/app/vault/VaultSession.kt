@@ -167,6 +167,35 @@ object VaultSession {
      *  (or null on decline). Set by MainActivity; hops to Main itself. */
     var keystoreSignerHook: (suspend (ByteArray) -> ByteArray?)? = null
 
+    /** THE SIGNER PROMPT'S TRANSACTION: the item saves set the summary
+     *  (the site, the identity, the URL, the masked password) so the ONE
+     *  screenlock prompt shows WHAT is being saved; the UI signer hook
+     *  reads it into the prompt's description and consumes it. Null = the
+     *  non-item saves (the sync merges, the imports) keep the default
+     *  wording. */
+    var pendingSignerDescription: String? = null
+        private set
+
+    /** THE SAVE TRANSACTION TEXT for the one screenlock prompt: the site,
+     *  the identity, the URL, the password's SHAPE — masked, because the
+     *  prompt is a system surface any onlooker can read. */
+    fun saveTransactionText(item: ProtonItem): String = buildString {
+        append(item.name)
+        item.identity.takeIf { it.isNotBlank() }?.let { append(" — $it") }
+        item.urls.firstOrNull()?.let { append("\n$it") }
+        if (item.password.isNotBlank())
+            append("\npassword •••••••• (${item.password.length} chars)")
+    }
+
+    /** THE CONSUME for the signer hooks: the prompt reads the transaction
+     *  ONCE (null = the default wording) — nothing lingers for a later
+     *  unrelated prompt. */
+    fun consumeSignerDescription(): String? {
+        val d = pendingSignerDescription
+        pendingSignerDescription = null
+        return d
+    }
+
     /** SSH sync identities: the SCREENLOCK keystore key or the YUBIKEY's
      *  OpenPGP auth subkey (via OpenKeyChain — the key already enrolled in
      *  GitHub). Whichever was enrolled last wins; both are exclusive of
@@ -203,12 +232,18 @@ object VaultSession {
     }
 
     fun yubikeySshLine(): String? = prefs().getString("yubikeySshLine", null)
-    fun yubikeyAuthSubkeyId(): Long? = prefs().getString("yubikeyAuthSubkeyId", null)
-        // The stored value is UNSIGNED 64-bit hex; ids with the high bit set
-        // (very common) are negative as signed Longs — base-10 parsing or
-        // toLongOrNull(16) would return null for exactly the ids real keys
-        // have. (This was the root cause of the silent "Auth cancelled".)
-        ?.let { runCatching { java.lang.Long.parseUnsignedLong(it, 16) }.getOrNull() }
+
+    /** THE UNSIGNED-HEX 16 PARSE: the OpenPGP key ids with the high bit
+     *  set (very common) are negative as signed Longs — base-10 parsing
+     *  or toLongOrNull(16) returns null for exactly the ids real keys
+     *  have (the root cause of the silent "Auth cancelled"). Null =
+     *  malformed (absent, not 16 hex digits, or unparsable). */
+    internal fun parseSubkeyId16(hex: String?): Long? =
+        hex?.takeIf { it.length == 16 }?.let {
+            runCatching { java.lang.Long.parseUnsignedLong(it, 16) }.getOrNull()
+        }
+
+    fun yubikeyAuthSubkeyId(): Long? = parseSubkeyId16(prefs().getString("yubikeyAuthSubkeyId", null))
 
     /** Persists the YubiKey SSH enrollment (public line + auth subkey id)
      *  and activates the YubiKey SSH sync mode. */
@@ -385,6 +420,20 @@ object VaultSession {
         val arr = org.json.JSONArray()
         env.items.forEach { arr.put(it.toProtonJson()) }
         return arr.toString(2)
+    }
+
+    /** THE GOOGLE EXPORT: the password material in PLAINTEXT, in the Google
+     *  Passwords CSV shape (the same the importer reads) — the four columns
+     *  `name,url,username,password`. THE LOSSY RULE: the note, the TOTP
+     *  uri, the extra URLs and the passkeys DO NOT FIT the Google format —
+     *  the caller warns before/after handing the file over. Requires a
+     *  full (promoted) session: the secrets leave the app in the clear by
+     *  explicit request. */
+    suspend fun exportGoogleCsv(): String? {
+        if (state !is State.Unlocked) return null
+        if (stubSession && !promoteIfStub()) return null
+        val env = loadedEnvelope ?: return null
+        return GooglePasswordsCsv.serialize(env.items)
     }
 
     /** The plugged key's current name (the registry entry for the last
@@ -1359,6 +1408,9 @@ object VaultSession {
         registerConnectivityWatch()
     }
 
+    /** Test-only: the vault file's path as a File (the fixtures). */
+    internal fun vaultFileForTest(): File = File(vaultFilePath())
+
     /** Test-only: put the session in the FULL state (the toggle-off's
      *  shape: the secrets in memory, the toggle on, no stubbing). */
     internal fun fullSessionForTest(items: List<ProtonItem>) {
@@ -1373,6 +1425,12 @@ object VaultSession {
     /** Test-only: put the session in the stub state (the unlock's shape:
      *  stubs in memory, the secrets only in the sealed cache). */
     internal fun stubSessionForTest() {
+        // The envelope = the cache's public metadata + the manifest items
+        // (the real promote sets loadedEnvelope the same way) — without it
+        // the envelope-touching ops (the pairing!) see "no vault".
+        val env = SealedVault.toEnvelope(SealedVault.manifestItems())
+        loadedEnvelope = env
+        rev = env.rev
         state = State.Unlocked(SealedVault.manifestItems())
         stubSession = true
     }
@@ -1644,6 +1702,13 @@ object VaultSession {
         authDescription = what ?: (editedUuid?.let { uuid ->
             items.firstOrNull { it.itemUuid == uuid }?.let { "Saving '${it.displayName}'" }
         } ?: "Saving the vault")
+        // THE SIGNER PROMPT'S TRANSACTION: the item save derives the
+        // summary from the edited entry (the same lookup the description
+        // uses); the non-item saves CLEAR it — no stale site lingers into
+        // a sync merge's prompt.
+        pendingSignerDescription = editedUuid?.let { uuid ->
+            items.firstOrNull { it.itemUuid == uuid }?.let { saveTransactionText(it) }
+        }
         try {
             return withContext(Dispatchers.IO) {
                 // THE STUB-INVARIANT: the in-memory list = the stubs (the
@@ -2047,19 +2112,10 @@ object VaultSession {
     var screenLockOn by mutableStateOf(false)
         private set
 
-    fun screenLockRequired(): Boolean =
-        prefs().getBoolean("screenLockRequired", false).also { screenLockOn = it }
+    fun screenLockRequired(): Boolean = idleLockEnabled()
 
     fun setScreenLockRequired(on: Boolean) {
-        prefs().edit().putBoolean("screenLockRequired", on).apply()
         screenLockOn = on
-        if (!on) {
-            // The toggle now means "the app is screenlock-governed": the
-            // pre-unlock prompt AND the idle auto-lock. Turning it off
-            // means no governance — a running session is zeroed right
-            // here so nothing plaintext outlives the decision.
-            zero()
-        }
     }
 
     /** Idle auto-lock timeout in SECONDS (0 = never); only meaningful
@@ -2308,7 +2364,21 @@ object VaultSession {
             // manifest is genuinely empty; otherwise the promote fails
             // honestly (the cache stays; the repo decrypt can rebuild).
             if (items.isEmpty()) {
-                if (SealedVault.manifestItems().isEmpty()) return Result.Success
+                if (SealedVault.manifestItems().isEmpty()) {
+                    // THE GENUINELY-EMPTY VAULT: the success — but the
+                    // state MUST be set (the early-return skipped it and
+                    // the session stayed Locked forever: the "unlock
+                    // doesn't navigate" bug — the empty vault never
+                    // exercised this path before).
+                    val env = SealedVault.toEnvelope(emptyList())
+                    loadedEnvelope = env
+                    rev = env.rev
+                    state = State.Unlocked(emptyList())
+                    stubSession = true
+                    android.util.Log.i("UnlockTiming",
+                        "promote: the empty-vault edge -> Unlocked")
+                    return Result.Success
+                }
                 return Result.Error(
                     "The sealed cache's secrets failed to open — refusing to proceed " +
                         "with an empty session (the vault file is untouched).")
@@ -2317,9 +2387,32 @@ object VaultSession {
             // new envelope resets them; the stub-session's deletes must
             // survive the re-seal).
             val carriedTombstones = loadedEnvelope?.deletedItemUuids?.toList() ?: emptyList()
+            // THE PAIRED DEVICES carried the same way: a paste-device
+            // pairing staged in the stub session lives only in
+            // loadedEnvelope.devices — the cache's meta snapshot predates
+            // it, and toEnvelope would wipe the staging (the measured
+            // "paired but not showing" bug).
+            // THE STASH (the idle lock's zero) + the live envelope's: the
+            // staged pairings from both are carried; the stash consumed.
+            val carriedDevices = (stashedDevices ?: emptyList()) +
+                (loadedEnvelope?.devices?.toList() ?: emptyList())
+            stashedDevices = null
+            // The unpair TOMBSTONES carried the same way (the stash had
+            // them; the promote never read them — an unpair was lost on
+            // the idle lock and the device resurrected on the next sync).
+            val carriedRemoved = (stashedRemovedDeviceIds ?: emptyList()) +
+                (loadedEnvelope?.removedDeviceIds?.toList() ?: emptyList())
+            stashedRemovedDeviceIds = null
             val env = SealedVault.toEnvelope(items)
             rev = env.rev
             env.deletedItemUuids = (carriedTombstones + env.deletedItemUuids)
+                .distinct().toMutableSet()
+            // The staged pairings win over the cache's snapshot (the newer
+            // staging = the newer state; the union = the removals honored).
+            val stagedIds = carriedDevices.map { it.keyId }.toSet()
+            env.devices = (carriedDevices + env.devices.filter { it.keyId !in stagedIds })
+                .distinctBy { it.keyId }.toMutableList()
+            env.removedDeviceIds = (carriedRemoved + env.removedDeviceIds)
                 .distinct().toMutableSet()
             // THE MODELS SEPARATED: loadedEnvelope = the FULL envelope (the
             // save's encryption base — NEVER the stubs); the state = a
@@ -2332,6 +2425,7 @@ object VaultSession {
             val stubs = items.map { it.asStub() }.toMutableList()
             state = State.Unlocked(stubs)
             stubSession = true
+            android.util.Log.i("UnlockTiming", "promote: state->Unlocked (${stubs.size} items, devices=${env.devices.size})")
             Log.i(TAG, "promoted sealed session (stubs): ${stubs.size} items, rev=${env.rev}")
             Result.Success
         } catch (e: Exception) {
@@ -2374,6 +2468,37 @@ object VaultSession {
      *  The empty-username generate re-run at the same site = the update
      *  (no duplicate pile-up). The measured drop: the SAVE mode's
      *  edit-path save no-opped the brand-new item (4→3). */
+    /** THE UPSERT TARGET for [item]: the existing login the upsert would
+     *  update — the site + identity match (username.ifBlank { email }).
+     *  Works in EITHER state: the unlocked session's items or the sealed
+     *  manifest's clear-text identities. Null = the upsert would append
+     *  (a new record). The UI's update-vs-new wording reads THIS — the
+     *  single match implementation shared with [upsertSealed]. */
+    fun upsertTarget(item: ProtonItem): ProtonItem? {
+        val items = (state as? State.Unlocked)?.items
+            ?: SealedVault.manifestItems()
+        return upsertMatch(items, item)
+    }
+
+    private fun upsertMatch(items: List<ProtonItem>, item: ProtonItem): ProtonItem? {
+        val siteMatch: (ProtonItem) -> Boolean = if (item.urls.isNotEmpty()) { existing ->
+            existing.urls.any { u -> item.urls.contains(u) }
+        } else { existing ->
+            existing.name.equals(item.name, ignoreCase = true)
+        }
+        // THE IDENTITY = THE DEDUP KEY's second half (site + identity):
+        // username.ifBlank { email } — the same login whose address sits
+        // in EITHER bucket updates in place; a genuinely different
+        // identity (a second account, a different address) = the append
+        // (if in doubt, one extra record — never a silent drop). The
+        // password NEVER gates the match: a changed password on the same
+        // login = the update.
+        return items.firstOrNull { existing ->
+            siteMatch(existing) &&
+                existing.identity.trim() == item.identity.trim()
+        }
+    }
+
     suspend fun upsertSealed(item: ProtonItem): Result {
         when (val p = promoteSealedSession()) {
             is Result.Success -> {}
@@ -2381,15 +2506,7 @@ object VaultSession {
         }
         val items = (state as? State.Unlocked)?.items
             ?: return Result.Error("Session unavailable")
-        val siteMatch: (ProtonItem) -> Boolean = if (item.urls.isNotEmpty()) { existing ->
-            existing.urls.any { u -> item.urls.contains(u) }
-        } else { existing ->
-            existing.name.equals(item.name, ignoreCase = true)
-        }
-        val existing = items.firstOrNull { existing ->
-            siteMatch(existing) &&
-                existing.username.trim() == item.username.trim()
-        }
+        val existing = upsertMatch(items, item)
         return if (existing != null) {
             Log.i(TAG, "upsertSealed: the existing entry ${existing.name.take(20)} " +
                 "(site+username) — the update")
@@ -2459,29 +2576,6 @@ object VaultSession {
         }
     }
 
-    /** The reset dialog's warning: compares the local clone against the
-     *  remote-tracking ref (origin/main — the state of the LAST FETCH, no
-     *  network needed). The wording says so; a live fetch would demand
-     *  the SSH handshake (and the YubiKey touch) just to show a dialog. */
-    fun resetRemoteWarning(): String {
-        if (config()?.remoteUrl == null) return ""
-        val div = runCatching { VaultGitClient().headVsRemote(gitRoot()) }
-            .getOrElse { return "The local repo state could not be read (${it.message?.take(60)})." }
-        val tail = "Resetting wipes local commits."
-        return when (div) {
-            is VaultGitClient.Divergence.UpToDate ->
-                "The local clone matches the remote as of the last fetch — nothing unpushed."
-            is VaultGitClient.Divergence.AheadOnly ->
-                "WARNING: the local clone has UNPUSHED commits (ahead of the remote). " + tail
-            is VaultGitClient.Divergence.BehindOnly ->
-                "The local clone is BEHIND the remote (the remote has newer commits, " +
-                    "as of the last fetch). Resetting takes the remote's newer state."
-            is VaultGitClient.Divergence.Diverged ->
-                "WARNING: the local clone and the remote have DIVERGED (both have " +
-                    "commits the other lacks, as of the last fetch). " + tail
-        }
-    }
-
     fun currentRev(): Long = rev
 
     /** The local HEAD's short commit hash (front 7, like the Recent
@@ -2498,6 +2592,46 @@ object VaultSession {
     // -- paired paste devices (Chrome extension; Plan 2) ---------------------
 
     fun pairedDevices(): List<DeviceRecord> = loadedEnvelope?.devices ?: emptyList()
+
+    // -- THE SIMPLELOGIN LINK (the api key = a vault item) -------------------
+
+    /** THE SL LINK'S DEFAULT DOMAIN: the aliases' mail domain — the
+     *  fallback when the item carries no domain list (the pre-existing
+     *  linked vaults). */
+    const val SL_HOST = "app.simplelogin.io"
+
+    /** THE SL LINK = the vault item holding the api key: the URL = the
+     *  SL host, a password present. The item = card-encrypted, synced,
+     *  user-visible/editable — the strongest storage this architecture
+     *  has. Null = not linked. */
+    fun simpleLoginItem(): ProtonItem? = loadedEnvelope?.items?.firstOrNull { item ->
+        item.password.isNotBlank() && item.urls.any { url ->
+            runCatching {
+                java.net.URI(url.trim()).host?.removePrefix("www.") == SL_HOST
+            }.getOrDefault(false)
+        }
+    }
+
+    /** THE LINKED ALIAS DOMAINS: parsed from the SL item's note (the
+     *  marker line the link flow writes: "SimpleLogin alias domains: "
+     *  + the comma list) — the v5/alias/options' domains at the link
+     *  time. Display-only: the CREATION always uses the account's
+     *  default domain (SimpleLoginChain). Empty when the item carries
+     *  no list. */
+    fun simpleLoginDomains(): Set<String> {
+        val note = simpleLoginItem()?.note ?: return emptySet()
+        val marker = "SimpleLogin alias domains: "
+        val line = note.lineSequence().firstOrNull { it.startsWith(marker) }
+            ?: return emptySet()
+        return line.removePrefix(marker).split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
+    }
+
+    /** The item's email = an SL alias on ANY of the account's alias
+     *  domains (the item-page toggle's gate). */
+    fun isSimpleLoginAlias(email: String): Boolean {
+        val domain = email.substringAfter('@', "").lowercase()
+        return domain in simpleLoginDomains()
+    }
 
     /** Adds or updates a pairing record scanned from the extension's QR
      *  (R2: re-wrapped seeds / restored pairings update in place — newer
@@ -2870,8 +3004,13 @@ object VaultSession {
             try {
                 val decFp = session.applicationRelatedData.discretionary
                     .getFingerprint(com.yubico.yubikit.openpgp.KeyRef.DEC)
-                if (decFp == null || decFp.size < 20) {
-                    return Result.Error("The card reports no DECRYPTION fingerprint (an empty slot?)")
+                if (com.offlinepass.app.crypto.YubiKitCardDecrypt
+                        .isBlankFingerprint(decFp)
+                ) {
+                    // The factory-new card: no GPG key to enroll — the
+                    // message names the README's initialize flow.
+                    return Result.Error(
+                        com.offlinepass.app.crypto.YubiKitCardDecrypt.BLANK_CARD_MESSAGE)
                 }
                 val decId = (12 until 20).fold(0L) { acc, k ->
                     (acc shl 8) or (decFp[k].toLong() and 0xFF)
@@ -3007,43 +3146,6 @@ object VaultSession {
     private fun syncMessage(r: Result): String = when (r) {
         is Result.Error -> r.message
         else -> r.toString()
-    }
-
-    /** Wipes + re-clones the git state, preserving the current vault
-     * ciphertext (re-applied + pushed when the session is unlocked). This
-     * is the escape hatch for "destination path exists"/corrupted-clone
-     * states. The LOCAL-ONLY vault file is untouched (it's not a repo). */
-    suspend fun resetRepo(): Result {
-        val cfg = config() ?: return Result.Error("Local-only mode: nothing to reset")
-        val remote = cfg.remoteUrl ?: return Result.Error("Local-only mode: nothing to reset")
-        val pat = if (VaultGitClient().isSshRemote(remote)) "" else
-            (pat() ?: return Result.Error("No PAT stored"))
-        busy = "Resetting repo…"
-        try {
-            withContext(Dispatchers.IO) {
-                val saved = vaultFile().takeIf { it.exists() }?.readBytes()
-                gitRoot().deleteRecursively()
-                VaultGitClient().open(remote, pat, gitRoot())
-                saved?.let { bytes ->
-                    val vf = vaultFile()
-                    vf.parentFile?.mkdirs()
-                    vf.writeBytes(bytes)
-                }
-            }
-            // Re-apply the live session state (re-encrypt + merge-aware push)
-            // when the vault is unlocked; otherwise the restored ciphertext
-            // stands as-is.
-            val items = (state as? State.Unlocked)?.items
-            if (items != null) return save(items)
-            syncStatus = "Repo reset (re-cloned)"
-            return Result.Success
-        } catch (e: Exception) {
-            Log.w(TAG, "resetRepo failed: ${e.message}")
-            syncStatus = "Repo reset failed: ${e.message?.take(50)}"
-            return Result.Error("${e.javaClass.simpleName}: ${e.message}")
-        } finally {
-            busy = null
-        }
     }
 
     /** Fetch + push, with application-level union-merge when the two
@@ -3455,10 +3557,28 @@ object VaultSession {
      * copies are released for GC rather than overwritten; the on-disk
      * copies, though, are zero-filled byte-for-byte before unlink.
      */
+    /** THE PAIRING STASH: zero() (the idle lock) clears the envelope;
+     *  the staged-but-unsaved pairings stash here so the next promote
+     *  carries them (the session-scope: the process death loses them
+     *  exactly as it loses the un-saved envelope). */
+    @Volatile private var stashedDevices: List<DeviceRecord>? = null
+    @Volatile private var stashedRemovedDeviceIds: List<String>? = null
+
     fun zero() {
+        android.util.Log.i("UnlockTiming", "zero() called-from: " +
+            Throwable().stackTrace.drop(1).take(4)
+                .joinToString(" ← ") { "${it.className.substringAfterLast('.')}.${it.methodName}(${it.lineNumber})" })
         loadedEnvelope?.items?.clear()
         loadedEnvelope?.deletedItemUuids?.clear()
         loadedEnvelope?.extraFields?.clear()
+        // THE PAIRING STASH: the staged-but-unsaved pairings survive the
+        // idle lock (the promote picks them up on the next unlock). The
+        // COALESCE: a second zero() (the idle lock → the activity
+        // teardown's onDestroy) sees no envelope and must not clobber
+        // the first call's stash with an empty one.
+        stashedDevices = loadedEnvelope?.devices?.toList() ?: stashedDevices
+        stashedRemovedDeviceIds = loadedEnvelope?.removedDeviceIds?.toList()
+            ?: stashedRemovedDeviceIds
         loadedEnvelope = null
         rev = 0
         stubSession = false

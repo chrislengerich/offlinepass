@@ -34,6 +34,9 @@ class YubiKitCommitSigner(
     /** Injectable for tests: the card op (the real one is YubiKitSshAuth). */
     private val cardSign: suspend (pin: CharArray, payload: ByteArray) -> ByteArray =
         { pin, payload -> YubiKitSshAuth.sign(context, pin, payload) },
+    /** Injectable for tests: the slot's key-type read (RSA/EC/ED25519). */
+    private val slotKeyProbe: (android.content.Context) -> String? =
+        { YubiKitSshAuth.slotKeyType(it) },
 ) : Signer {
 
     override fun sign(
@@ -49,10 +52,14 @@ class YubiKitCommitSigner(
                 ?: throw IOException("OpenPGP PIN cancelled — commit aborted")
             // The sig packet's body = the KEY TYPE's (one unauthenticated
             // read): RSA = the one-MPI padded block; EC = the r/s MPIs
-            // from the card's DER. Unknown = RSA (the legacy default).
+            // from the card's DER; Ed25519 = the R/S MPIs from the raw
+            // 64-byte R||S. Unknown = RSA (the legacy default).
             val pubkeyAlg = runCatching {
-                if (YubiKitSshAuth.slotKeyType(context) == "EC")
-                    PgpSigBuilder.PUB_ALG_ECDSA else PgpSigBuilder.PUB_ALG_RSA
+                when (slotKeyProbe(context)) {
+                    "EC" -> PgpSigBuilder.PUB_ALG_ECDSA
+                    "ED25519" -> PgpSigBuilder.PUB_ALG_ED25519
+                    else -> PgpSigBuilder.PUB_ALG_RSA
+                }
             }.getOrDefault(PgpSigBuilder.PUB_ALG_RSA)
             val packet = try {
                 // The v4 hash (content+trailer) and the packet share the

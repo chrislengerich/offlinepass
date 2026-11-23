@@ -3,12 +3,17 @@ package com.offlinepass.app.crypto
 import java.math.BigInteger
 
 /**
- * Builds a v4 OpenPGP DETACHED SIGNATURE packet (tag 2) over raw RSA
+ * Builds a v4 OpenPGP DETACHED SIGNATURE packet over the card's raw
  * signature bytes — the mirror of PgpSshBridge's parsers, which were
- * developed against real gpg output. Used by the YubiKey commit signer:
- * the card's SIGNATURE slot computes RSA over the SHA-256 DigestInfo
- * (PgpSshBridge.SshRsaPkcs1), and this builder wraps the raw result into
- * the armored block git's gpgsig header carries.
+ * developed against real gpg output. Used by the YubiKey commit signer.
+ * The three card key flavors, each with its own card-input and sig-body:
+ *   RSA     — the SHA-256 DigestInfo in, the padded block out (one MPI)
+ *   ECDSA   — the raw digest in (the DigestInfo stripped by sign()), the
+ *             DER (r, s) out → MPI(r) || MPI(s)
+ *   Ed25519 — the SHA-256 DIGEST in (the card PureEdDSAs the digest —
+ *             the OpenPGP card spec's EdDSA PSO:CDS is digest-only; the
+ *             hash octet = SHA-256 for the left-16-bits confirmation),
+ *             the raw 64-byte R||S out → MPI(R)||MPI(S)
  *
  * THE v4 HASH IS NOT THE CONTENT ALONE: RFC 4880 §5.2.4 signs
  * `content || packetPrefix(version..hashed subpackets) || trailer`
@@ -21,6 +26,7 @@ object PgpSigBuilder {
 
     const val PUB_ALG_RSA = 1
     const val PUB_ALG_ECDSA = 19
+    const val PUB_ALG_ED25519 = 22
     const val HASH_SHA256 = 8
     const val SIG_TYPE_BINARY = 0
     const val SUB_CREATION_TIME = 2
@@ -39,6 +45,9 @@ object PgpSigBuilder {
         hashAlg: Int = HASH_SHA256,
     ): ByteArray {
         val hashed = subpacket(SUB_CREATION_TIME, u32(createdAt))
+        require(pubkeyAlg != PUB_ALG_ED25519 || hashAlg == HASH_SHA256) {
+            "the v4 EdDSA signature requires SHA-256 (RFC 4880bis §5.2.3)"
+        }
         val prefix = byteArrayOf(4, sigType.toByte(), pubkeyAlg.toByte(), hashAlg.toByte()) +
             u16(hashed.size) + hashed
 
@@ -49,15 +58,41 @@ object PgpSigBuilder {
         md.update(byteArrayOf(4, 0xFF.toByte()) + u32(prefix.size))
         val digest = md.digest()
 
-        val raw = sign(SshRsaPkcs1.digestInfoFromDigest(hashName(hashAlg), digest))
+        // THE CARD'S INPUT FOLLOWS THE ALGORITHM: RSA/ECDSA sign the
+        // SHA-256 DigestInfo (the RSA pads on-device; the ECDSA takes the
+        // raw digest — sign() strips it). EdDSA (Ed25519): the card
+        // PureEdDSAs the RAW SHA-256 DIGEST of the signed material — the
+        // OpenPGP card spec's EdDSA PSO:CDS is digest-only (the host
+        // hashes; the card treats the 32-byte digest as the Ed25519
+        // message — BC's EdDsaSigner does the same in software). The
+        // response: RSA = the padded block; ECDSA = the DER (r, s);
+        // Ed25519 = the raw 64-byte R||S.
+        val raw = when (pubkeyAlg) {
+            PUB_ALG_ED25519 -> sign(digest)
+            else -> sign(SshRsaPkcs1.digestInfoFromDigest(hashName(hashAlg), digest))
+        }
         val unhashed = subpacket(SUB_ISSUER_KEY_ID, u64(keyId))
         // The sig body = the ALGORITHM's: RSA = one MPI (the padded block);
-        // ECDSA = MPI(r) || MPI(s) from the card's DER SEQUENCE.
-        val sigBody = if (pubkeyAlg == PUB_ALG_ECDSA) ecdsaMpis(raw) else mpi(raw)
+        // ECDSA = MPI(r) || MPI(s) from the card's DER SEQUENCE;
+        // Ed25519 = MPI(R) || MPI(S) from the raw 64-byte R||S.
+        val sigBody = when (pubkeyAlg) {
+            PUB_ALG_ECDSA -> ecdsaMpis(raw)
+            PUB_ALG_ED25519 -> ed25519Mpis(raw)
+            else -> mpi(raw)
+        }
         val body = prefix +
             u16(unhashed.size) + unhashed +
             digest.copyOfRange(0, 2) + sigBody
         return packet(tag = 2, body = body)
+    }
+
+    /** The card's Ed25519 output = the raw 64-byte R||S (PureEdDSA over
+     *  the digest) — the PGP packet wants the two 32-byte MPIs. */
+    private fun ed25519Mpis(raw: ByteArray): ByteArray {
+        require(raw.size == 64) {
+            "the Ed25519 signature is not the 64-byte R||S (${raw.size}B)"
+        }
+        return mpi(raw.copyOfRange(0, 32)) + mpi(raw.copyOfRange(32, 64))
     }
 
     /** The card's ECDSA output = the DER SEQUENCE(INTEGER r, INTEGER s) —
@@ -98,8 +133,9 @@ object PgpSigBuilder {
     }
 
     /** New-format packet header for tag [tag] with the RFC 4880 §4.2.2
-     *  length encodings (1-octet < 192, 2-octet to 8383, 5-octet beyond). */
-    private fun packet(tag: Int, body: ByteArray): ByteArray {
+     *  length encodings (1-octet < 192, 2-octet to 8383, 5-octet beyond).
+     *  internal: the length-encoder's branches are pinned by test. */
+    internal fun packet(tag: Int, body: ByteArray): ByteArray {
         val lenEnc = when {
             body.size < 192 -> byteArrayOf(body.size.toByte())
             body.size <= 8383 -> {

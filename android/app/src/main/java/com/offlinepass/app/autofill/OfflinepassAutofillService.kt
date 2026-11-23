@@ -27,6 +27,17 @@ class OfflinepassAutofillService : AutofillService() {
 
     private val TAG = "OfflinepassAutofill"
 
+    /** THE AUTH PENDINGINTENT FLAGS (Proton Pass's shape): MUTABLE +
+     *  CANCEL_CURRENT on S+ — the mutable binding lets the framework's
+     *  fill-in intent merge, and CANCEL_CURRENT rebinds fresh per send. */
+    private val authPendingIntentFlags: Int =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            android.app.PendingIntent.FLAG_MUTABLE or
+                android.app.PendingIntent.FLAG_CANCEL_CURRENT
+        } else {
+            android.app.PendingIntent.FLAG_CANCEL_CURRENT
+        }
+
     data class Fields(
         val username: List<AutofillId>,
         val password: List<AutofillId>,
@@ -138,7 +149,8 @@ class OfflinepassAutofillService : AutofillService() {
         if (allIds.isEmpty()) return this
         return setSaveInfo(android.service.autofill.SaveInfo.Builder(
             android.service.autofill.SaveInfo.SAVE_DATA_TYPE_PASSWORD or
-                android.service.autofill.SaveInfo.SAVE_DATA_TYPE_USERNAME,
+                android.service.autofill.SaveInfo.SAVE_DATA_TYPE_USERNAME or
+                android.service.autofill.SaveInfo.SAVE_DATA_TYPE_EMAIL_ADDRESS,
             allIds
         ).build())
     }
@@ -163,12 +175,20 @@ class OfflinepassAutofillService : AutofillService() {
         for (item in shown) {
             builder.addDataset(datasetFor(item, fields, "${item.displayName} — ${item.identity}"))
         }
-        // THE GENERATE CHIP: the registration / new-credentials case — no
-        // entry matches the page. Tapping gates, generates, and the
-        // re-invoke fills the fresh password. Only WITH a password field
-        // (a zero-value dataset = the platform build() throws).
-        if (shown.none { fields.matches(it) }) {
+        // THE GENERATE CHIP: offered on EVERY password field (the user's
+        // call — the generate option must never be missing). Tapping
+        // gates, generates, and the fill rides the auth result.
+        if (passwordChipOffered(fields, shown)) {
             generateDataset(fields)?.let { builder.addDataset(it) }
+        }
+        // THE ALIAS CHIP (the email fields' generate): offered on ANY form
+        // with a username/email field (not registration-only — the second
+        // account on a matched site works too), only with the SL link
+        // (the creation needs the api key). The dataset carries the
+        // username/email ids, so it surfaces when an email field is
+        // focused.
+        if (aliasChipOffered(fields, VaultSession.simpleLoginItem() != null)) {
+            generateAliasDataset(fields)?.let { builder.addDataset(it) }
         }
         // Search-in-app dataset (covers non-matching or >5 entries). With the
         // empty-fields guard in onFillRequest, at least one id exists here.
@@ -215,9 +235,16 @@ class OfflinepassAutofillService : AutofillService() {
                 else -> 0
             }
         }
+        // THE EXPERIMENT (the docs' CVC shape) is retired: the
+        // single-✨-dataset sheet never fired (focusedIsUsername was never
+        // captured by the parse walk) and its shape - the sheet WITHOUT
+        // the items - is not the picker the user wants. The ✨ chip is
+        // back in the full sealed sheet, below.
+        val slUuid = sealedSimpleLoginUuid()
+
         val builder = FillResponse.Builder()
         var count = 0
-        // The revealed item's REAL dataset FIRST — with the SAME dataset
+        // THE REVEALED ITEM'S REAL DATASET FIRST — with the SAME dataset
         // ID as its sealed chip: the framework matches the authenticated
         // dataset by ID across the re-invocation and AUTO-FILLS the
         // values (no sheet re-show, no second tap — the measured 25s
@@ -228,27 +255,38 @@ class OfflinepassAutofillService : AutofillService() {
                 "✓ ${revealed.displayName} — ${revealed.identity}",
                 revealedId ?: revealed.itemUuid))
             count++
+            Log.i(TAG, "revealed dataset: id=${revealedId ?: revealed.itemUuid} " +
+                "identity=${revealed.identity} pwLen=${revealed.password.length} " +
+                "usernameIds=${fields.username.size} passwordIds=${fields.password.size}")
         }
         val ids = (fields.username + fields.password)
         var requestCode = 10
-        // THE GENERATE CHIP: no entry matches the page (the registration
-        // case) — the tap gates, generates, the re-invoke fills.
-        if (ranked.none { fields.matches(it) }) {
-            generateDataset(fields, requestCode++)?.let { builder.addDataset(it) }
-            count++
-        }
+        // THE ⚡ CHIP: the password-focused sheets — the registration case.
+        generateDataset(fields, requestCode++)?.let { builder.addDataset(it) }
+        count++
+        // THE ✨ CHIP: the alias + password generate (the SL link required
+        // — the slUuid carries the sealed cache's key entry for the
+        // flow's gated reveal). The dataset carries the username ids, so
+        // it surfaces when an email/username field is focused.
+        generateAliasDataset(fields, requestCode++, slUuid)?.let { builder.addDataset(it) }
+        count++
         for (item in ranked.take(5)) {
             if (revealed != null && item.itemUuid == revealed.itemUuid) continue
             val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
                 .putExtra(AutofillAuthActivity.EXTRA_UUID, item.itemUuid)
-                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                // THE FILL TARGETS: the reveal's auth result carries the
+                // filled dataset (the docs' CVC pattern — the same shape
+                // the generate chips use) — the ids it must fill.
+                .putParcelableArrayListExtra(
+                    AutofillAuthActivity.EXTRA_FILL_USERNAME_IDS, ArrayList(fields.username))
+                .putParcelableArrayListExtra(
+                    AutofillAuthActivity.EXTRA_FILL_PASSWORD_IDS, ArrayList(fields.password))
+                // NO FLAG_ACTIVITY_NEW_TASK — the for-result delivery (the
+                // same reasoning as generateIntent).
             val pi = android.app.PendingIntent.getActivity(
-                appContext(), requestCode++, intent,
-                android.app.PendingIntent.FLAG_IMMUTABLE or
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+                appContext(), requestCode++, intent, authPendingIntentFlags)
             val view = RemoteViews(packageName, R.layout.autofill_item).apply {
-                setTextViewText(R.id.autofill_text,
-                    "🔒 ${item.displayName} — tap, unlock, fill")
+                setTextViewText(R.id.autofill_text, sealedLabel(item))
             }
             val ds = Dataset.Builder().setAuthentication(pi.intentSender)
                 .setId(item.itemUuid)
@@ -256,27 +294,26 @@ class OfflinepassAutofillService : AutofillService() {
             builder.addDataset(ds.build())
             count++
         }
-        // The unsealed/not-sealed fallback: the open-the-app dataset.
-        val intent = android.content.Intent(appContext(), MainActivity::class.java)
-            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        val pi = android.app.PendingIntent.getActivity(
-            appContext(), 0, intent,
-            android.app.PendingIntent.FLAG_IMMUTABLE or
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT)
-        val view = RemoteViews(packageName, R.layout.autofill_item).apply {
-            setTextViewText(R.id.autofill_text, "🔒 Unlock offlinepass (touch key), then autofill again")
-        }
-        val ds = Dataset.Builder().setAuthentication(pi.intentSender)
-            .setId("app")
-        ids.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
-        builder.addDataset(ds.build())
-        Log.i(TAG, "sealed response: $count entry datasets + the app fallback")
+        // THE APP FALLBACK is NOT offered here: the sealed sheet's unlock
+        // lives in the 🔒 items themselves (tap, unlock, fill) and the
+        // chips cover the generate - a standing "Unlock offlinepass"
+        // dataset on every field was misplaced noise. It remains the
+        // whole point of the LOCKED sheet (no sealed items - nothing
+        // else to offer).
+        Log.i(TAG, "sealed response: $count entry datasets")
         return builder.withSaveInfo(fields).build()
     }
 
     private fun lockedResponse(fields: Fields): FillResponse {
         Log.i(TAG, "branch=locked pkg=${fields.appPackage} domain=${fields.webDomain}")
+        val builder = FillResponse.Builder()
+        // THE GENERATE CHIPS: offered in EVERY state — the generation and
+        // the fill never need the vault unlocked. The save may not land
+        // here (a key-locked vault needs the app's unlock first) — the
+        // toast reports that honestly, and the filled password can be
+        // saved manually after the app's own unlock.
+        generateDataset(fields, 30)?.let { builder.addDataset(it) }
+        generateAliasDataset(fields, 40)?.let { builder.addDataset(it) }
         val intent = android.content.Intent(appContext(), MainActivity::class.java)
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val pi = android.app.PendingIntent.getActivity(
@@ -290,7 +327,17 @@ class OfflinepassAutofillService : AutofillService() {
         val ds = Dataset.Builder()
         ids.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
         ds.setAuthentication(pi.intentSender)
-        return FillResponse.Builder().addDataset(ds.build()).withSaveInfo(fields).build()
+        builder.addDataset(ds.build())
+        return builder.withSaveInfo(fields).build()
+    }
+
+    /** THE SEALED CHIP's LABEL: the clear-text identity (the username /
+     *  email from the manifest) makes the picker usable without the
+     *  unlock — the secrets stay sealed. */
+    internal fun sealedLabel(item: ProtonItem): String {
+        val id = item.identity.trim()
+        return if (id.isNotBlank()) "${item.displayName} — $id"
+        else item.displayName
     }
 
     private fun datasetFor(
@@ -323,82 +370,219 @@ class OfflinepassAutofillService : AutofillService() {
      *  Null when no password field exists — a zero-value dataset makes
      *  the platform's build() THROW (the measured process-killer on the
      *  password-less Google sign-in page). */
+    /** THE GENERATE INTENT (shared by the chips): the mode, the origin,
+     *  and THE FILL TARGETS — the parcelable field ids the auth activity
+     *  needs to return the filled dataset via EXTRA_AUTHENTICATION_RESULT.
+     *  The direct apply matters: the browser's log shows the framework
+     *  EXPIRES the response when the auth activity covers the window
+     *  (onInvisibleForAutofill) and receives our result as an "empty
+     *  intent" — the re-invoke fallback then re-offers the generated item
+     *  as a chip instead of filling it. */
+    internal fun generateIntent(
+        mode: String, origin: String, fields: Fields
+    ): android.content.Intent =
+        android.content.Intent(appContext(), AutofillAuthActivity::class.java)
+            .putExtra(AutofillAuthActivity.EXTRA_MODE, mode)
+            .putExtra(AutofillAuthActivity.EXTRA_NAME, origin)
+            .putParcelableArrayListExtra(
+                AutofillAuthActivity.EXTRA_FILL_USERNAME_IDS, ArrayList(fields.username))
+            .putParcelableArrayListExtra(
+                AutofillAuthActivity.EXTRA_FILL_PASSWORD_IDS, ArrayList(fields.password))
+            // NO FLAG_ACTIVITY_NEW_TASK: the framework starts the auth
+            // PendingIntent FOR RESULT (startIntentSenderForResult) — the
+            // new-task launch ABORTS on the first attempt (the measured
+            // instant CANCELED result 9ms in, before onCreate) and the
+            // spurious result consumes the framework's auth tracking —
+            // the real RESULT_OK at the finish then has no recipient and
+            // the session stays WAITING_FOR_AUTH forever. The in-task
+            // launch (translucent over the browser) delivers the result.
+
     private fun generateDataset(fields: Fields, requestCode: Int = 30): Dataset? {
         if (fields.password.isEmpty()) {
             Log.i(TAG, "generate chip skipped — no password field detected")
             return null
         }
         val origin = fields.webDomain ?: fields.appPackage
-        val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
-            .putExtra(AutofillAuthActivity.EXTRA_MODE, AutofillAuthActivity.MODE_GENERATE)
-            .putExtra(AutofillAuthActivity.EXTRA_NAME, origin)
-            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        val intent = generateIntent(AutofillAuthActivity.MODE_GENERATE, origin, fields)
+            .putExtra(AutofillAuthActivity.EXTRA_USERNAME, fields.usernameValue ?: "")
         val pi = android.app.PendingIntent.getActivity(
-            appContext(), requestCode, intent,
-            android.app.PendingIntent.FLAG_IMMUTABLE or
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+            appContext(), requestCode, intent, authPendingIntentFlags)
         val view = RemoteViews(packageName, R.layout.autofill_item).apply {
             setTextViewText(R.id.autofill_text, "⚡ Generate a strong password")
         }
         val ds = Dataset.Builder().setAuthentication(pi.intentSender)
             .setId("generate")
-        fields.password.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
+        // THE AUTH'D DATASET's PLACEHOLDERS = NULL (the docs' CVC pattern):
+        // the empty-string values mark the views CHANGED and pollute the
+        // session state — the docs' sample passes null.
+        fields.password.forEach { id -> ds.setValue(id, null, view) }
         Log.i(TAG, "generate chip offered for $origin (id=generate)")
         return ds.build()
     }
 
-    private fun parse(structure: AssistStructure): Fields {
-        val username = mutableListOf<AutofillId>()
-        val password = mutableListOf<AutofillId>()
-        var usernameValue: String? = null
-        var passwordValue: String? = null
-        var appPackage = structure.activityComponent.packageName
-        var webDomain: String? = null
+    /** THE ⚡ CHIP: offered on EVERY form with a password field — the
+     *  user's call: the generate option must never be missing from a
+     *  password field (the matched-entry datasets fill from the vault;
+     *  the chip joins them). */
+    internal fun passwordChipOffered(fields: Fields, shown: List<ProtonItem>) =
+        fields.password.isNotEmpty()
 
-        fun walk(node: AssistStructure.ViewNode) {
-            node.webDomain?.let { if (webDomain == null) webDomain = it }
-            val hints = node.autofillHints?.joinToString(" ")?.lowercase() ?: ""
-            val hint = node.hint?.lowercase() ?: ""
-            val resId = (node.idEntry ?: "").lowercase()
-            val isPassword = node.autofillHints?.contains(View.AUTOFILL_HINT_PASSWORD) == true ||
-                hints.contains("password") || hint.contains("password") ||
-                resId.contains("password") || resId.contains("passwd") ||
-                (node.inputType and (android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD)) ==
-                (android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD)
-            val isUsername = !isPassword && (
-                node.autofillHints?.contains(View.AUTOFILL_HINT_USERNAME) == true ||
-                    hints.contains("username") || hints.contains("email") || hint.contains("email") ||
-                    hint.contains("user") || resId.contains("user") || resId.contains("email") ||
-                    resId.contains("login") || resId.contains("account")
-                )
-            node.autofillId?.let { id ->
-                if (node.visibility == View.VISIBLE) {
-                    when {
-                        isPassword -> {
-                            password.add(id)
-                            if (passwordValue == null) {
-                                (node.autofillValue?.textValue as? CharSequence)
-                                    ?.takeIf { it.isNotBlank() }?.let { passwordValue = it.toString() }
-                            }
-                        }
-                        isUsername -> {
-                            username.add(id)
-                            if (usernameValue == null) {
-                                (node.autofillValue?.textValue as? CharSequence)
-                                    ?.takeIf { it.isNotBlank() }?.let { usernameValue = it.toString() }
-                            }
-                        }
-                    }
-                }
-                Unit
+    internal fun aliasChipOffered(fields: Fields, slReachable: Boolean) =
+        fields.username.isNotEmpty() && slReachable
+
+    /** The SL entry's uuid in the SEALED manifest, or null. The manifest
+     *  items carry name/urls in the clear (the passwords stay sealed), so
+     *  the detection = the app.simplelogin.io URL — the same marker the
+     *  link flow writes. */
+    internal fun sealedSimpleLoginUuid(): String? =
+        SealedVault.manifestItems().firstOrNull { item ->
+            item.urls.any { url ->
+                runCatching {
+                    java.net.URI(url.trim()).host?.removePrefix("www.") == VaultSession.SL_HOST
+                }.getOrDefault(false)
             }
-            for (i in 0 until node.childCount) walk(node.getChildAt(i))
+        }?.itemUuid
+
+    /** The "✨ Generate SimpleLogin alias + password" dataset: the auth =
+     *  the auth activity's GENERATE_ALIAS mode (the screenlock gates, the
+     *  SL chain creates the alias on the linked account); the fill = the
+     *  alias into the username/email ids AND the generated password into
+     *  the password ids — the full signup fill in one tap. Offered only
+     *  when the SimpleLogin is linked. Null when no username/email field
+     *  exists. */
+    private fun generateAliasDataset(
+        fields: Fields, requestCode: Int = 40, slUuid: String? = null
+    ): Dataset? {
+        val ids = fields.username
+        if (ids.isEmpty()) {
+            Log.i(TAG, "alias chip skipped — no username/email field detected")
+            return null
         }
-        for (i in 0 until structure.windowNodeCount) {
-            walk(structure.getWindowNodeAt(i).rootViewNode)
+        val origin = fields.webDomain ?: fields.appPackage
+        val intent = generateIntent(AutofillAuthActivity.MODE_GENERATE_ALIAS, origin, fields)
+        slUuid?.let { intent.putExtra(AutofillAuthActivity.EXTRA_SL_UUID, it) }
+        val pi = android.app.PendingIntent.getActivity(
+            appContext(), requestCode, intent, authPendingIntentFlags)
+        val view = RemoteViews(packageName, R.layout.autofill_item).apply {
+            setTextViewText(R.id.autofill_text, "✨ Generate SimpleLogin alias + password")
         }
-        return Fields(username, password, appPackage, webDomain, usernameValue, passwordValue)
+        val ds = Dataset.Builder().setAuthentication(pi.intentSender)
+            .setId("generate_alias")
+        // THE PLACEHOLDERS = NULL (the docs' CVC pattern — the empty
+        // strings mark the views CHANGED and pollute the session state).
+        // THE USERNAME IDS ONLY: the placeholders decide where the chip
+        // SURFACES — the password ids would offer the alias chip on
+        // password-focused fields too (the user's call: the ⚡ chip owns
+        // those). The FILL still covers both fields — the auth result's
+        // dataset carries the alias AND the password.
+        for (id in fields.username) ds.setValue(id, null, view)
+        Log.i(TAG, "alias chip offered for $origin (id=generate_alias)")
+        return ds.build()
     }
 
+    internal fun parse(structure: AssistStructure): Fields = parseAutofillStructure(structure)
+
     private fun appContext() = applicationContext
+}
+
+/**
+ * THE FORM PARSER — shared between the autofill service (the fill
+ * requests) and the auth activity (the auth launch's fill-in intent
+ * carries the LATEST AssistStructure once the PendingIntent is mutable,
+ * and the activity re-parses it to read the fields' CURRENT values — the
+ * user may have typed since the fill request).
+ */
+internal fun parseAutofillStructure(
+    structure: AssistStructure
+): OfflinepassAutofillService.Fields {
+    val username = mutableListOf<AutofillId>()
+    val password = mutableListOf<AutofillId>()
+    var usernameValue: String? = null
+    var passwordValue: String? = null
+    var appPackage = structure.activityComponent.packageName
+    var webDomain: String? = null
+    // THE TIERED USERNAME CAPTURE: the explicitly-marked email/username
+    // fields (tier 1) always beat the loose-substring matches (tier 2) —
+    // the login/SSO forms embed auxiliary fields (userToken,
+    // loginChallenge) that match the loose substrings and would win the
+    // first-non-blank race otherwise.
+    var strongUsernameValue: String? = null
+    var strongUsernameFrom: String? = null
+    var weakUsernameValue: String? = null
+    var weakUsernameFrom: String? = null
+
+    fun walk(node: AssistStructure.ViewNode) {
+        node.webDomain?.let { if (webDomain == null) webDomain = it }
+        val hints = node.autofillHints?.joinToString(" ")?.lowercase() ?: ""
+        val hint = node.hint?.lowercase() ?: ""
+        val resId = (node.idEntry ?: "").lowercase()
+        // THE URL-SHAPED FIELDS ARE NEVER USERNAMES: the login/SSO forms
+        // embed hidden fields carrying the page URL (loginUrl, returnUrl,
+        // accountRedirect) whose ids/hints match the loose username
+        // substrings — the captured username would be the page URL.
+        val looksLikeUrlField = resId.contains("url") || hint.contains("url") ||
+            resId.contains("redirect") || hint.contains("redirect")
+        val isPassword = node.autofillHints?.contains(View.AUTOFILL_HINT_PASSWORD) == true ||
+            hints.contains("password") || hint.contains("password") ||
+            resId.contains("password") || resId.contains("passwd") ||
+            (node.inputType and (android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD)) ==
+            (android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        // TIER 1: the explicit marks — the autofill hints, the email
+        // anywhere, the username in the id/hint.
+        val explicitEmail = node.autofillHints?.any {
+            it.contains("email", ignoreCase = true)
+        } == true || hints.contains("email") || hint.contains("email") ||
+            resId.contains("email")
+        val explicitUsername = node.autofillHints?.any {
+            it.contains("username", ignoreCase = true)
+        } == true || hints.contains("username") || resId.contains("username")
+        val isUsername = !isPassword && !looksLikeUrlField && (
+            explicitEmail || explicitUsername ||
+                node.autofillHints?.contains(View.AUTOFILL_HINT_USERNAME) == true ||
+                hint.contains("user") || resId.contains("user") ||
+                resId.contains("login") || resId.contains("account")
+            )
+        node.autofillId?.let { id ->
+            if (node.visibility == View.VISIBLE) {
+                when {
+                    isPassword -> {
+                        password.add(id)
+                        if (passwordValue == null) {
+                            (node.autofillValue?.textValue as? CharSequence)
+                                ?.takeIf { it.isNotBlank() }?.let { passwordValue = it.toString() }
+                        }
+                    }
+                    isUsername -> {
+                        username.add(id)
+                        (node.autofillValue?.textValue as? CharSequence)
+                            ?.takeIf { it.isNotBlank() && !it.startsWith("http") && !it.startsWith("www.") }
+                            ?.let { v ->
+                                val value = v.toString()
+                                if (explicitEmail || explicitUsername) {
+                                    if (strongUsernameValue == null) {
+                                        strongUsernameValue = value
+                                        strongUsernameFrom = resId.ifBlank { hint }
+                                    }
+                                } else if (weakUsernameValue == null) {
+                                    weakUsernameValue = value
+                                    weakUsernameFrom = resId.ifBlank { hint }
+                                }
+                            }
+                    }
+                }
+            }
+            Unit
+        }
+        for (i in 0 until node.childCount) walk(node.getChildAt(i))
+    }
+    for (i in 0 until structure.windowNodeCount) {
+        walk(structure.getWindowNodeAt(i).rootViewNode)
+    }
+    usernameValue = strongUsernameValue ?: weakUsernameValue
+    Log.d("OfflinepassAutofill", "the username capture: tier=${if (strongUsernameValue != null) 1 else 2} " +
+        "value=${usernameValue?.length ?: 0} chars " +
+        "from=${strongUsernameFrom ?: weakUsernameFrom ?: "none"} " +
+        "(username fields: ${username.size})")
+    return OfflinepassAutofillService.Fields(
+        username, password, appPackage, webDomain, usernameValue, passwordValue)
 }

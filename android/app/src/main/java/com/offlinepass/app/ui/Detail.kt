@@ -6,12 +6,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.offlinepass.app.simplelogin.SimpleLoginHttp
 import com.offlinepass.app.vault.ProtonItem
+import com.offlinepass.app.vault.VaultSession
 import com.offlinepass.app.vault.Totp
 import org.json.JSONObject
 
@@ -32,8 +35,13 @@ fun EntryDetailScreen(
     onExportQr: (Boolean) -> Unit,
     pairedDevices: List<com.offlinepass.app.vault.DeviceRecord> = emptyList(),
     onSaveChanges: (ProtonItem) -> Unit,
-    onEnrollTotp: (String) -> Unit,
-    onDelete: () -> Unit
+    onEnrollTotp: (uri: String, onDone: (Boolean) -> Unit) -> Unit,
+    onDelete: () -> Unit,
+    /** The raw-QR scan's pending otpauth:// URI (the scan never saves
+     *  alone — it pre-fills the entry for review). */
+    pendingTotpUri: String = "",
+    onTotpUriConsumed: () -> Unit = {},
+    onScanTotp: () -> Unit = {},
 ) {
     // Editable copies — applied to the item only on Save.
     var username by remember(item.itemUuid) { mutableStateOf(item.username) }
@@ -51,12 +59,36 @@ fun EntryDetailScreen(
     var revealed by remember { mutableStateOf(false) }
     var totp by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var showTotpEntry by remember { mutableStateOf(false) }
-    var totpInput by remember { mutableStateOf("") }
+    var showReenrollConfirm by remember { mutableStateOf(false) }
+    // THE COUNTER'S SECRET SOURCE: the pane's own state — the enrollment
+    // Save updates it FIRST, so the counter re-renders with the new
+    // secret immediately (the item param's in-place updates may never
+    // reach the recomposition).
+    var activeTotpUri by remember(item.itemUuid) { mutableStateOf(item.totpUri) }
+    // THE SCANNED URI: the raw-QR scan lands here and re-opens the entry —
+    // the row consumes the URI into its own input (the scan never saves
+    // alone; the user reviews before saving).
+    LaunchedEffect(pendingTotpUri) {
+        if (pendingTotpUri.isNotBlank()) showTotpEntry = true
+    }
 
-    if (item.totpUri.isNotBlank()) {
-        LaunchedEffect(item.totpUri) {
+    // -- THE SIMPLELOGIN ALIAS TOGGLE (the item-page management) ------------
+    // The gate: the SL api-key item exists AND the email = an SL alias on
+    // our domain. The items carry NO SL state and make NO network requests
+    // by default: the status check = one list call; the toggle = one
+    // call. The state lives in the screen only.
+    val slLinked = VaultSession.simpleLoginItem() != null
+    val slCandidate = slLinked && VaultSession.isSimpleLoginAlias(email)
+    var slStatus by remember(item.itemUuid) { mutableStateOf<String?>(null) }
+    var slAliasEnabled by remember(item.itemUuid) { mutableStateOf<Boolean?>(null) }
+    var slBusy by remember(item.itemUuid) { mutableStateOf(false) }
+    var slAliasId by remember(item.itemUuid) { mutableStateOf<Long?>(null) }
+    val slScope = androidx.compose.runtime.rememberCoroutineScope()
+
+    if (activeTotpUri.isNotBlank()) {
+        LaunchedEffect(activeTotpUri) {
             while (true) {
-                totp = runCatching { Totp.generate(item.totpUri) }.getOrNull()
+                totp = runCatching { Totp.generate(activeTotpUri) }.getOrNull()
                 kotlinx.coroutines.delay(1000)
             }
         }
@@ -88,6 +120,53 @@ fun EntryDetailScreen(
             label = { Text("Email") }, singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
+        if (slCandidate) {
+            // THE SL ALIAS MANAGEMENT: the status check (one list call)
+            // reveals the enabled state and arms the toggle (one call).
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = {
+                    val apiKey = VaultSession.simpleLoginItem()?.password ?: return@TextButton
+                    slBusy = true; slStatus = null
+                    slScope.launch {
+                        slStatus = try {
+                            val found = SimpleLoginHttp().listAliases(
+                                apiKey, query = email.trim())
+                                .firstOrNull { it.email.equals(email.trim(), true) }
+                            if (found == null) {
+                                slAliasId = null; slAliasEnabled = null
+                                "No SimpleLogin alias matches this email."
+                            } else {
+                                slAliasId = found.id; slAliasEnabled = found.enabled
+                                "SimpleLogin: ${found.email} is " +
+                                    if (found.enabled) "ENABLED" else "DISABLED"
+                            }
+                        } catch (e: Exception) {
+                            "SimpleLogin error: ${e.message}"
+                        }; slBusy = false
+                    }
+                }, enabled = !slBusy) { Text(if (slBusy) "Checking…" else "Check SimpleLogin status") }
+                if (slAliasId != null && slAliasEnabled != null && !slBusy) {
+                    Button(onClick = {
+                        val apiKey = VaultSession.simpleLoginItem()?.password ?: return@Button
+                        val id = slAliasId ?: return@Button
+                        slBusy = true
+                        slScope.launch {
+                            slStatus = try {
+                                slAliasEnabled = SimpleLoginHttp().toggleAlias(apiKey, id)
+                                "SimpleLogin: ${email.trim()} is now " +
+                                    if (slAliasEnabled == true) "ENABLED" else "DISABLED"
+                            } catch (e: Exception) {
+                                "SimpleLogin error: ${e.message}"
+                            }; slBusy = false
+                        }
+                    }, enabled = !slBusy) {
+                        Text(if (slAliasEnabled == true) "Disable alias" else "Enable alias")
+                    }
+                }
+            }
+            if (slStatus != null) Text(slStatus!!, style = MaterialTheme.typography.bodySmall)
+        }
         OutlinedTextField(
             value = password, onValueChange = { password = it },
             label = { Text("Password") }, singleLine = true,
@@ -110,12 +189,42 @@ fun EntryDetailScreen(
                 Text("Regenerate password", style = MaterialTheme.typography.bodySmall)
             }
         }
-        if (item.totpUri.isBlank()) {
+        if (activeTotpUri.isBlank()) {
             TextButton(onClick = { showTotpEntry = true }, enabled = busy == null) {
                 Text("Enroll TOTP", style = MaterialTheme.typography.bodySmall)
             }
         } else {
-            Text("TOTP enrolled", style = MaterialTheme.typography.bodySmall)
+            if (totp != null) {
+                val (code, remaining) = totp!!
+                Text("TOTP: $code  (${remaining}s)", style = MaterialTheme.typography.titleMedium)
+            }
+            // Re-enroll: the same small inline action as Regenerate —
+            // right-justified under the TOTP display.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End
+            ) {
+                TextButton(onClick = { showReenrollConfirm = true }, enabled = busy == null) {
+                    Text("Re-enroll TOTP", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        if (showTotpEntry) {
+            TotpEnrollRow(
+                pendingTotpUri = pendingTotpUri,
+                onTotpUriConsumed = onTotpUriConsumed,
+                onScan = onScanTotp,
+                busy = busy,
+                onEnroll = { newUri ->
+                    // THE COUNTER AFTER THE SUCCESSFUL SAVE: the pane's
+                    // secret source updates only when the save confirms —
+                    // a failed/declined save leaves the old secret ticking.
+                    onEnrollTotp(newUri) { success ->
+                        if (success) activeTotpUri = newUri
+                    }
+                },
+                onDismiss = { showTotpEntry = false }
+            )
         }
         OutlinedTextField(
             value = note, onValueChange = { note = it },
@@ -145,10 +254,26 @@ fun EntryDetailScreen(
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)
         if (dirty) Text("Unsaved changes — Save to persist.", style = MaterialTheme.typography.bodySmall)
 
-        if (totp != null) {
-            val (code, remaining) = totp!!
-            Text("TOTP: $code  (${remaining}s)", style = MaterialTheme.typography.titleMedium)
+        // THE RE-ENROLL WARNING: overwriting an enrolled TOTP needs the
+        // explicit yes — the yes opens the enrollment row; the save inside
+        // it commits the replacement.
+        if (showReenrollConfirm) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showReenrollConfirm = false },
+                title = { Text("Re-enroll TOTP?") },
+                text = { Text("The current TOTP will be replaced.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showReenrollConfirm = false
+                        showTotpEntry = true
+                    }) { Text("Yes") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showReenrollConfirm = false }) { Text("No") }
+                }
+            )
         }
+
         if (item.modifyTime > 0) {
             Text("Last modified: ${item.modifyTimeText}", style = MaterialTheme.typography.bodySmall)
         }
@@ -216,21 +341,47 @@ fun EntryDetailScreen(
                 }
             )
         }
-        if (showTotpEntry) {
-            OutlinedTextField(
-                value = totpInput,
-                onValueChange = { totpInput = it },
-                label = { Text("Base32 secret or otpauth:// URI") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                    onEnrollTotp(Totp.normalizeSecretInput(totpInput))
-                    showTotpEntry = false
-                }) { Text("Save") }
-                OutlinedButton(onClick = { showTotpEntry = false }) { Text("Cancel") }
-            }
+    }
+}
+
+/**
+ * THE TOTP ENROLLMENT ROW: the inline entry (next to the Enroll TOTP
+ * button), the camera scan (the scanned URI pre-fills the entry — the
+ * scan never saves alone), and the explicit save. The row is shared by
+ * every detail pane (the sealed reveal, the revealed, the unlocked).
+ */
+@Composable
+fun TotpEnrollRow(
+    pendingTotpUri: String,
+    onTotpUriConsumed: () -> Unit,
+    onScan: () -> Unit,
+    busy: String?,
+    onEnroll: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var totpInput by remember { mutableStateOf("") }
+    LaunchedEffect(pendingTotpUri) {
+        if (pendingTotpUri.isNotBlank()) {
+            totpInput = pendingTotpUri
+            onTotpUriConsumed()
         }
+    }
+    OutlinedTextField(
+        value = totpInput,
+        onValueChange = { totpInput = it },
+        label = { Text("Base32 secret or otpauth:// URI") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(
+            onClick = {
+                onEnroll(Totp.normalizeSecretInput(totpInput))
+                onDismiss()
+            },
+            enabled = totpInput.isNotBlank() && busy == null
+        ) { Text("Save") }
+        OutlinedButton(onClick = onScan) { Text("Scan QR") }
+        OutlinedButton(onClick = onDismiss) { Text("Cancel") }
     }
 }

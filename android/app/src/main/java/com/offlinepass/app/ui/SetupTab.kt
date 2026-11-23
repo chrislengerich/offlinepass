@@ -20,7 +20,6 @@ fun SetupTabScreen(
     busy: String?,
     onBack: () -> Unit,
     onTestSync: () -> Unit,
-    onResetRepo: () -> Unit,
     onExportRepoQrft: () -> Unit = {},
     onUsbRestore: () -> Unit,
     onEnableAutofill: () -> Unit,
@@ -51,6 +50,7 @@ fun SetupTabScreen(
     onLock: () -> Unit,
     onExportBackupZip: () -> Unit = {},
     onExportProton: () -> Unit = {},
+    onExportGoogle: () -> Unit = {},
     onImportQrft: () -> Unit,
     onPairDevice: () -> Unit = {},
     pairedDevices: List<com.offlinepass.app.vault.DeviceRecord> = emptyList(),
@@ -71,11 +71,50 @@ fun SetupTabScreen(
     onScanTempRecipient: () -> Unit = {},
     onShowDeviceKey: () -> Unit = {},
     onExportTempUsb: () -> Unit = {},
-    onExportTempQrft: () -> Unit = {}
+    onExportTempQrft: () -> Unit = {},
+    onLinkSimpleLogin: (apiKey: String) -> Unit = {},
 ) {
     val cfg = VaultSession.config()
-    var confirmDialog by remember { mutableStateOf<String?>(null) }
     var deviceNameDialog by remember { mutableStateOf<String?>(null) }
+    var showSlLink by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    if (showSlLink) {
+        // THE SL LINK DIALOG: the pasted api key (+ the optional email)
+        // → the vault item (the onLinkSimpleLogin callback's save).
+        var slKey by remember { mutableStateOf("") }
+        var slEmail by remember { mutableStateOf("") }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showSlLink = false },
+            title = { Text("Link SimpleLogin") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("a. Log in to SimpleLogin.", style = MaterialTheme.typography.bodySmall)
+                    Text("b. Open the API-keys page:", style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = {
+                        runCatching {
+                            context.startActivity(android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://app.simplelogin.io/dashboard/api_key")))
+                        }
+                    }) { Text("Open the API-keys page") }
+                    Text("c. Generate the key and paste it here — it stores " +
+                        "as a card-encrypted vault item (the aliases are " +
+                        "created on the account's default domain).",
+                        style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(value = slKey, onValueChange = { slKey = it },
+                        label = { Text("SimpleLogin API key") }, singleLine = true)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showSlLink = false
+                    onLinkSimpleLogin(slKey.trim())
+                }, enabled = slKey.isNotBlank()) { Text("Link") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSlLink = false }) { Text("Cancel") }
+            })
+    }
     deviceNameDialog?.let { pre ->
         var nameInput by androidx.compose.runtime.remember(pre) {
             androidx.compose.runtime.mutableStateOf(pre)
@@ -101,28 +140,6 @@ fun SetupTabScreen(
         )
     }
 
-    confirmDialog?.let { what ->
-        AlertDialog(
-            onDismissRequest = { confirmDialog = null },
-            title = { Text("Confirm reset") },
-            text = {
-                Text("Wipe the local git clone and re-clone from the remote?\n\n" +
-                    // The divergence against the last-fetched origin/main —
-                    // computed once per remote change (a local git read, no
-                    // network, no touch prompt).
-                    (remember(cfg?.remoteUrl) { VaultSession.resetRemoteWarning() }))
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDialog = null
-                    onResetRepo()
-                }) { Text("Reset") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDialog = null }) { Text("Cancel") }
-            }
-        )
-    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -158,14 +175,6 @@ fun SetupTabScreen(
                 Text("YubiKey SSH enrolled — every sync asks for the YubiKey touch.",
                     style = MaterialTheme.typography.bodySmall)
             }
-            Text(
-                "Connect remote: pick Screenlock SSH key (the QR enrolls this device's " +
-                    "key as a GitHub deploy key — syncs then open with the screen lock) " +
-                    "or PAT (HTTPS + fine-grained token). " +
-                    "YubiKey SSH: paste the auth subkey's OpenSSH line (desktop: gpg --export-ssh-key) " +
-                    "and its key id — every sync asks for the YubiKey touch.",
-                style = MaterialTheme.typography.bodySmall
-            )
         }
         // Sync state lives directly with its button.
         // The commit summaries = the LOCAL-ONLY too (the git history = on-device).
@@ -191,13 +200,6 @@ fun SetupTabScreen(
                     maxLines = 1
                 )
             }
-            if (cfg?.remoteUrl != null) {
-                Button(
-                    onClick = { confirmDialog = "repo" },
-                    enabled = busy == null,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Reset local repo (wipe + re-clone)") }
-            }
         } else if (cfg?.remoteUrl != null) {
             Text(
                 "Sync: ${VaultSession.syncStatus ?: "not synced this session"}",
@@ -206,11 +208,6 @@ fun SetupTabScreen(
             Button(onClick = onTestSync, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
                 Text("Sync now (fetch/push)")
             }
-            Button(
-                onClick = { confirmDialog = "repo" },
-                enabled = busy == null,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Reset local repo (wipe + re-clone)") }
         }
         HorizontalDivider()
 
@@ -334,6 +331,29 @@ fun SetupTabScreen(
         }
         HorizontalDivider()
 
+        // -- LINKED ACCOUNTS: the SimpleLogin (the alias management) and
+        // the Proton (the planned). The SL's api key = a VAULT ITEM (the
+        // card-encrypted, synced) — the presence = the linked state; the
+        // item-page alias toggle + the autofill's alias generation arm
+        // when it exists.
+        Text("Linked accounts:", style = MaterialTheme.typography.titleSmall)
+        val slItem = VaultSession.simpleLoginItem()
+        if (slItem == null) {
+            Text("SimpleLogin: not linked. The aliases are created on " +
+                "the account's default domain.",
+                style = MaterialTheme.typography.bodySmall)
+            Button(onClick = { showSlLink = true }, enabled = busy == null,
+                modifier = Modifier.fillMaxWidth()) { Text("Link SimpleLogin") }
+        } else {
+            Text("SimpleLogin: linked (" + (slItem.email.ifBlank { "the account email" }) +
+                "). The alias domains: " +
+                VaultSession.simpleLoginDomains().joinToString(", ") + ".",
+                style = MaterialTheme.typography.bodySmall)
+            Button(onClick = { showSlLink = true }, enabled = busy == null,
+                modifier = Modifier.fillMaxWidth()) { Text("Relink SimpleLogin") }
+        }
+        HorizontalDivider()
+
         // THE SHARE SECTION: how a vault moves between people. A scanned
         // key lives in the session only — appended to the export's
         // recipient set (the permanent recipients stay first) and never
@@ -449,8 +469,20 @@ fun SetupTabScreen(
             modifier = Modifier.fillMaxWidth()) {
             Text("To Proton (plaintext JSON)")
         }
+        Button(onClick = onExportGoogle, enabled = busy == null,
+            modifier = Modifier.fillMaxWidth()) {
+            Text("To Google Passwords (CSV)")
+        }
+        Text(
+            "The Google CSV carries ONLY name / url / username / password — " +
+                "the notes, the TOTP, the extra URLs and the passkeys are " +
+                "dropped (the Google format has no columns for them). " +
+                "PLAINTEXT — delete the file once imported.",
+            style = MaterialTheme.typography.bodySmall
+        )
         HorizontalDivider()
 
+        android.util.Log.i("SetupTiming", "MID: before Paste devices")
         Text("Paste devices (Chrome extension)", style = MaterialTheme.typography.titleSmall)
         Button(onClick = onPairDevice, enabled = busy == null, modifier = Modifier.fillMaxWidth()) {
             Text("Pair paste device (scan extension QR)")
@@ -482,6 +514,7 @@ fun SetupTabScreen(
         )
         HorizontalDivider()
 
+        android.util.Log.i("SetupTiming", "MID: before Autofill")
         Text("Autofill", style = MaterialTheme.typography.titleSmall)
         Button(onClick = onEnableAutofill, modifier = Modifier.fillMaxWidth()) {
             Text(if (autofillEnabled) "Autofill: enabled (re-open settings)" else "Enable autofill service")
@@ -539,18 +572,6 @@ fun SetupTabScreen(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                "Require screenlock (biometric/PIN) at unlock",
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodySmall
-            )
-            Switch(checked = screenLockOn, onCheckedChange = { onScreenLockToggle(it) })
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
                 "Encrypt items in memory — " +
                     "search/list works sealed; clicking an entry reveals it " +
                     "with a screen-lock prompt.",
@@ -595,6 +616,10 @@ fun SetupTabScreen(
         HorizontalDivider()
 
         if (busy != null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        android.util.Log.i("SetupTiming", "END of the Setup composition")
+        androidx.compose.runtime.SideEffect {
+            android.util.Log.i("SetupTiming", "composition APPLIED to the window (the frame drawn)")
+        }
         HorizontalDivider()
         Text("Log", style = MaterialTheme.typography.titleSmall)
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodyMedium)

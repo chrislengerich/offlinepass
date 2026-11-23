@@ -29,15 +29,6 @@ object AutofillSaveOffer {
      * by ID (the save happened — the tray offer is moot). */
     private const val SILENT_NOTIF_ID = 4002
 
-    /** THE SAVED REGISTRY (process-local): the password hashes inserted
-     * by the autofill's save paths this session — the guard against the
-     * double insert (the platform's confirmed save + the card's Save both
-     * arriving for one generated password). */
-    private val savedPwHashes = java.util.Collections.synchronizedSet(mutableSetOf<Int>())
-
-    fun markSaved(password: String) { savedPwHashes.add(password.hashCode()) }
-    fun isSaved(password: String): Boolean = savedPwHashes.contains(password.hashCode())
-
     fun cancelTrigger(context: Context) {
         try {
             context.getSystemService(android.app.NotificationManager::class.java)

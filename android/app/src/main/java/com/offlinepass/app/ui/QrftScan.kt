@@ -23,13 +23,18 @@ import androidx.webkit.WebViewClientCompat
 @Composable
 fun QrftScanScreen(
     onPayload: (name: String, payload: String) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    /** THE RAW MODE (the TOTP QR): every decoded QR is handed to the app
+     *  as-is — no QRFT frame reassembly. */
+    rawMode: Boolean = false,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("← Stop") }
-            Text("Point the camera at the sending phone's looping QR",
+            Text(
+                if (rawMode) "Point the camera at the TOTP QR code"
+                else "Point the camera at the sending phone's looping QR",
                 style = MaterialTheme.typography.bodySmall)
         }
         AndroidView(
@@ -59,7 +64,10 @@ fun QrftScanScreen(
                         }
                     }
                     addJavascriptInterface(Bridge(onPayload), "OfflinepassBridge")
-                    loadUrl("https://appassets.androidplatform.net/assets/qrft/scanner.html")
+                    loadUrl(
+                        "https://appassets.androidplatform.net/assets/qrft/scanner.html" +
+                            if (rawMode) "?mode=raw" else ""
+                    )
                 }
             }
         )

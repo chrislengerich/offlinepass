@@ -1,0 +1,90 @@
+name: tests
+
+# The test matrix per component (docs/testing-plan.md's L1 + the
+# contract/guard layers):
+#   linux      — the TUI's unit tests (stdlib-only)
+#   extension  — the paste-crypto CONTRACT test (the extension's real
+#                wrap.js vs the device-generated vectors)
+#   android    — the Robolectric unit suite + the release build with the
+#                baseline-profile packaging guard
+# The hardware-in-the-loop layers (L2/L3) stay manual — see
+# docs/testing-plan.md.
+
+on:
+  push:
+    branches: [main, paste-fix-*, feature/*]
+  pull_request:
+    branches: [main]
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Linux unit tests
+        run: python3 linux/test_passlib.py
+
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Paste-crypto contract test
+        run: node extension/test/wrap_contract_test.mjs
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+      - name: Set up the Android SDK (accept the licenses, install platform 36)
+        uses: android-actions/setup-android@v3
+        with:
+          # NB: the obsolete 'tools' package no longer exists in the
+          # repository — requesting it fails sdkmanager with exit 1.
+          packages: platform-tools platforms;android-36
+      - name: Android unit tests (255)
+        run: |
+          cd android
+          ./gradlew testDebugUnitTest -Pslf4jLevel=info --console=plain
+      - name: The release build + the baseline-profile guard
+        run: |
+          cd android
+          ./gradlew :app:assembleRelease --console=plain
+          cd ..
+          scripts/verify-profile.sh
+      - name: Dump the failing tests' detail into the log
+        if: failure()
+        run: |
+          cd android/app/build/test-results/testDebugUnitTest
+          python3 -c "
+          import glob, xml.etree.ElementTree as ET
+          for f in sorted(glob.glob('*.xml')):
+              t = ET.parse(f).getroot()
+              for tc in t.iter('testcase'):
+                  for kind in ('failure', 'error'):
+                      for e in tc.findall(kind):
+                          print(f'=== {tc.get(\"classname\")}.{tc.get(\"name\")} [{kind}]')
+                          print((e.text or e.get('message') or '')[:4000])
+          "
+      - name: Upload the test reports (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            android/app/build/reports/tests/
+            android/app/build/test-results/testDebugUnitTest/
+          retention-days: 7
+
+  # The release pipeline's full pass (the YubiKey signing, the GPG sigs,
+  # the GH publish) stays MANUAL — the key's touches cannot run on CI.

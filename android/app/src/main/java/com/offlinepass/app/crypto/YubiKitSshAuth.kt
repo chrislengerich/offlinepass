@@ -273,6 +273,10 @@ object YubiKitSshAuth {
                     else com.yubico.yubikit.openpgp.KeyRef.SIG)) {
                     is com.yubico.yubikit.core.keys.PublicKeyValues.Rsa -> "RSA"
                     is com.yubico.yubikit.core.keys.PublicKeyValues.Ec -> "EC"
+                    // The cv25519 curve values on the SIGNATURE/AUTH slot =
+                    // Ed25519 (EdDSA signing); on the DECRYPT slot it is
+                    // X25519 (ECDH) — the callers here only ask SIG/AUT.
+                    is com.yubico.yubikit.core.keys.PublicKeyValues.Cv25519 -> "ED25519"
                     else -> null
                 }
             } finally {
@@ -620,6 +624,25 @@ object YubiKitSshAuth {
                             "yubikit: EC challenge = the raw digest (${hash.size}B)")
                         try {
                             if (useAut) session.authenticate(hash) else session.sign(hash)
+                        } catch (e: com.yubico.yubikit.core.smartcard.ApduException) {
+                            if (e.sw.toInt() == 0x6982) {
+                                throw java.io.IOException(
+                                    (if (useAut) "the AUTH" else "the SIGNATURE") +
+                                        " slot answered 0x6982 — the PIN is not verified " +
+                                        "for " + (if (useAut) "'other use'" else "signing"), e)
+                            }
+                            throw e
+                        }
+                    }
+                    is com.yubico.yubikit.core.keys.PublicKeyValues.Cv25519 -> {
+                        // Ed25519 (EdDSA): PureEdDSA over the RAW payload —
+                        // the caller passes the FULL SIGNED MATERIAL (no
+                        // DigestInfo, no digest strip). The response = the
+                        // raw 64-byte R||S.
+                        android.util.Log.i("YubiKeySsh",
+                            "yubikit: Ed25519 challenge = the raw material (${payload.size}B)")
+                        try {
+                            if (useAut) session.authenticate(payload) else session.sign(payload)
                         } catch (e: com.yubico.yubikit.core.smartcard.ApduException) {
                             if (e.sw.toInt() == 0x6982) {
                                 throw java.io.IOException(

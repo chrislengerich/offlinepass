@@ -10,6 +10,19 @@
 -dontwarn javax.management.**
 -dontwarn org.ietf.jgss.**
 
+# The baseline profile's generated METHOD rules
+# (scripts/gen-baseline-profile.py) are written against the ORIGINAL
+# class/method names, and profgen's mapping application cannot resolve
+# R8's range-format method renames (`0:3:x y():334:334 -> a`) — renamed
+# methods' rules silently drop at build. keepnames preserves the names
+# so the generated rules match the dex directly. allowshrinking (what
+# -keepnames implies) still strips unreferenced classes/members — only
+# the NAMES of survivors are kept, costing dex string bytes, not code.
+-keepnames class org.eclipse.jgit.** { *; }
+-keepnames class com.jcraft.jsch.** { *; }
+-keepnames class org.bouncycastle.openpgp.** { *; }
+-keepnames class org.bouncycastle.crypto.** { *; }
+
 # JGit instantiates its translation bundle REFLECTIVELY
 # (TranslationBundle.load -> getDeclaredConstructor().newInstance()); R8
 # stripped the no-arg constructor and the minified build crashed with

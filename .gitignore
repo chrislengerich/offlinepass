@@ -9,3 +9,4 @@ android/app-release-signed.apk
 android/app-release-signed.apk.idsig
 android/app-release-mapping.txt
 *.swp
+linux/.offlinepass-device

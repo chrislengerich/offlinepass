@@ -1,18 +1,60 @@
 # offlinepass (alpha)
 
+[![tests](https://github.com/chrislengerich/offlinepass/actions/workflows/tests.yml/badge.svg)](https://github.com/chrislengerich/offlinepass/actions/workflows/tests.yml)
+
 A low-dependency password manager in the spirit of [Proton Pass](https://proton.me/pass):
-one OpenPGP-encrypted vault file in a git repo, with two clients.
+one OpenPGP-encrypted vault file in a git repo, with three clients. Data is encrypted at rest and in memory to hardware secure elements.
 
-- **Linux (terminal UI)** — search, display, and manage Proton Pass login
-  entries; render any entry as a QR code in the terminal.
-- **Android (native app)** — the same vault on the phone: unlock with a
-  hardware key, full CRUD, live TOTP, git sync, autofill, and QR/qrft
-  exports for the [QR Autofill](../qrautofill) app.
-- **Chrome extension (Chromebook)** — receives an encrypted single-entry
-  paste from the phone's QR and auto-fills it into the browser tab,
-  gated by a security-key PIN + touch.
+- **Linux (terminal UI)** — this repo's `linux/offlinepass.py`: search, display,
+  and manage Proton Pass login entries; render any entry as a QR code.
+  See [the Linux client](#linux-client-tui) below. 
+- **Android (native app)** — drop-in replacement for Proton Pass Android, including
+  autofill, email aliases and autogeneration, share vaults to friends and other devices offline. See **[`android/README.md`](android/README.md)**
+- **Chrome extension** — receives an encrypted single-entry paste from
+  the phone's QR and auto-fills it into the browser tab, gated by a
+  security-key PIN + touch. **[`extension/README.md`](extension/README.md)**
+- **Release tooling** — the build/sign/verify/publish pipeline, the
+  baseline-profile generator, and the protocol vector generators.
+  **[`scripts/README.md`](scripts/README.md)**
 
-Unlike Proton Pass, however, it works perfectly well fully offline and doesn't leak your sites via remote fetches of favicons. Unlike KeePassXC, it supports security key E2E encryption natively, is modern, simple and self-contained, and has QRFT export to support fully offline password management.
+Key Features: 
+- Works fully offline, no account needed.
+- Encrypts memory at rest in addition to files, ensuring defense-in-depth against browser compromises like the recent Optimizely hack.
+- E2E encrypted to hardware-backed private keys (YubiKey and screenlock), unlike Proton Pass, which uses software-based private keys that are more easily stolen.[^protonkeys]
+
+Getting started:
+- Grab an Android phone and Yubikey if you don't have one already.
+- Download the most recent release APK of the Android app from https://github.com/chrislengerich/offlinepass/releases/
+- Setup per instructions in android/README.md
+
+[^protonkeys]: Verified against the Proton Pass Android source (at [`60cf8cb0`](https://github.com/protonpass/android-pass/blob/60cf8cb0ae7d2f26ff0f313ce3d726e3280e97b6)): the share keys are in-memory encrypted blobs ([`ShareKey.kt#L25`](https://github.com/protonpass/android-pass/blob/60cf8cb0ae7d2f26ff0f313ce3d726e3280e97b6/pass/domain/src/main/kotlin/proton/android/pass/domain/key/ShareKey.kt#L25)), decrypted via the software PGP chain ([`CoreUserKeys.kt#L49`](https://github.com/protonpass/android-pass/blob/60cf8cb0ae7d2f26ff0f313ce3d726e3280e97b6/pass/crypto/impl/src/main/kotlin/proton/android/pass/crypto/impl/CoreUserKeys.kt#L49)), and the AndroidKeyStore appears only as the local cache wrapper and biometric gates ([`NavHostController.kt#L41`](https://github.com/protonpass/android-pass/blob/60cf8cb0ae7d2f26ff0f313ce3d726e3280e97b6/pass/navigation/api/src/main/kotlin/proton/android/pass/navigation/api/NavHostController.kt#L41), [`EnrollmentGuardKey.kt#L36`](https://github.com/protonpass/android-pass/blob/60cf8cb0ae7d2f26ff0f313ce3d726e3280e97b6/pass/biometry/impl/src/main/java/proton/android/pass/biometry/EnrollmentGuardKey.kt#L36)) — no security key anywhere in the item crypto (the YubiKey = the account 2FA only). Our keys, at [`a681b99`](https://github.com/chrislengerich/offlinepass/blob/a681b9931d3a4b0ba0f22f5b3e46baf3d33d0bd1e): the vault decrypt runs as `PSO:DEC` **on the card's DEC slot** — the private key never leaves the Secure Element ([`YubiKitCardDecrypt.kt#L20`](https://github.com/chrislengerich/offlinepass/blob/a681b99/android/app/src/main/java/com/offlinepass/app/crypto/YubiKitCardDecrypt.kt#L20), [`OpenPgpCardCrypto.kt#L128`](https://github.com/chrislengerich/offlinepass/blob/a681b99/android/app/src/main/java/com/offlinepass/app/crypto/OpenPgpCardCrypto.kt#L128)); the seal and the screenlock signing use the TEE-held, non-exportable AndroidKeyStore keys with `setUserAuthenticationRequired(true)` (the 60s biometric window) — [`SealedVault.kt#L50`](https://github.com/chrislengerich/offlinepass/blob/a681b99/android/app/src/main/java/com/offlinepass/app/vault/SealedVault.kt#L50), [`SealedVault.kt#L194`](https://github.com/chrislengerich/offlinepass/blob/a681b99/android/app/src/main/java/com/offlinepass/app/vault/SealedVault.kt#L194), [`KeystoreSigner.kt#L54`](https://github.com/chrislengerich/offlinepass/blob/a681b99/android/app/src/main/java/com/offlinepass/app/crypto/KeystoreSigner.kt#L54).
+- Signed transactions using Yubikey or screenlock. No changes to your data unless you explicitly authorize with a touch.
+- Transaction memory, no more accidentally overwritten passwords.
+- Share passwords via QR codes (qrft.org) to other phones or friends (encrypted) or to desktop (via the Chrome extension: https://github.com/chrislengerich/offlinepass/blob/main/extension/README.md), without logging in.
+- Back up to any Git remote (VPC or public Internet) or USB cold storage, allowing for decentralized and self-hosted state.
+- Low-dependency vault format - single git repo that can also be decrypted using GPG and linux tools.
+- Low-dependency supply chain - security keys and cellphone screenlocks.
+- Import/export from Proton Pass and Google Passwords.
+- Will make smoothie for you, if you ask it nicely (or so I’ve heard).
+
+## License
+
+GNU General Public License v3.0 — see [LICENSE](LICENSE). Contributions
+welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) (the repo assumptions and
+the test expectations before a change).
+
+## Prerequisites: a security key holding an OpenPGP key set
+
+The whole system assumes a **YubiKey (or any OpenPGP-compatible token)
+that holds a GPG key set** — the three card slots (SIGN, ENCRYPT, AUTH).
+The vault's decrypt happens in-process against the card (the DEC slot),
+the git commits sign with it (the SIG slot or the device screenlock
+key), and the sync authenticates with it (the AUT slot).
+
+To initialize a key set on the card — either from **Linux** (`gpg
+--card-edit`, the authoritative flow) or from **Android** (OpenKeyChain
+over NFC/USB) — see the step-by-step in
+**[`android/README.md`](android/README.md#initialize-the-security-key-openpgp-key-set)**.
 
 ## Security & authentication
 
@@ -42,12 +84,13 @@ algorithm); the card-side decrypt/sign needs per-algorithm support:
 | Key type (slot) | Sign | Encrypt/decrypt | Status |
 |---|---|---|---|
 | RSA-3072/4096 (DEC, SIG) | ✓ | ✓ | supported (the PSO:DEC RSA path) |
-| ECDSA NIST P-256 (SIG/AUT) | ✓ | n/a | supported (the commit signing, the SSH auth via OpenKeyChain/YubiKit) |
+| ECDSA NIST P-256/P-384/P-521 (SIG/AUT) | ✓ | n/a | supported (the commit signing — the curve-agnostic r/s MPIs; the SSH auth via YubiKit) |
 | ECDH NIST P-256 (DEC) | — | ✓ | the card PSO:DEC with the ephemeral point; the card performs the RFC 6637 KDF + the AES-key-unwrap |
 | ECDH NIST P-384/P-521 (DEC) | — | ✓ | the same flow; the point length follows the card's reported key |
 | ECDH Curve25519 (DEC) | — | ✓ | the same flow (the v6-era packets; the card applet 5.7+ / the OpenPGP 3.4 cards) |
-| Ed25519 (SIG/AUT) | planned | n/a | the card + YubiKit support it; the sign path = the same PSO:DEC shape (the 32-byte challenges) |
+| Ed25519 (SIG/AUT) | ✓ | n/a | supported — the alg-22 sig body (the card PureEdDSAs the raw SHA-256 digest per the card spec's digest-only PSO:CDS; the BC round-trip test pins it) |
 | RSA-2048 (any slot) | supported | supported | the same paths as RSA-4096 (the shorter moduli) |
+| ML-KEM / ML-DSA (PQ) | — | — | **not supported** — BC 1.87 has the low-level packet shapes but no high-level OpenPGP PQ paths; unblocks with BC 1.88+ (and the PQ hardware is further out) — see TODO.md |
 | secp256k1 | not planned | not planned | the niche OpenPGP use |
 
 The unit-test strategy: BC's own `BcPublicKeyDataDecryptorFactory`
@@ -56,29 +99,32 @@ as the fake card, so the app's decrypt pipeline is proven against the
 card's contract without hardware in the loop.
 
 **OpenPGP v6**: the v6 PKESK dispatch is pinned by test; the v6-ECDH
-session-data recovery is blocked by BC 1.79 (see TODO.md) — the AEAD
-SEIPD-v2 support follows the same BC upgrade.
+session-data recovery is still blocked on BC 1.87 (see TODO.md) — the
+AEAD SEIPD-v2 support follows the same BC upgrade.
 
 ## Repository layout
 
 ```
 offlinepass/
-├── offlinepass.py        # Linux: curses TUI (search, detail, QR, writes, TOTP)
-├── passlib.py          # Linux: item model, GPG storage, git sync, generators
-├── test_data.json      # Linux: 5 sample entries for testing
-├── test_passlib.py     # Linux: unit tests (37)
-├── android/            # Android: Gradle project (UI, crypto, git, autofill)
-│   └── README.md       #   status, spikes, on-device storage map
-├── extension/          # Chrome MV3 extension: scan/pair/decrypt/autofill
-│   └── selftest.html   #   crypto-chain self-test (fixed cross-impl vectors)
-├── scripts/            # release + vector generation
-└── docs/               # design, work plan, testing plan, extension protocol
+├── linux/                  # THE LINUX CLIENT (the TUI + the library)
+│   ├── offlinepass.py      #   curses TUI (search, detail, QR, writes, TOTP)
+│   ├── passlib.py          #   item model, GPG storage, git sync, generators
+│   ├── test_data.json      #   5 sample entries for testing
+│   └── test_passlib.py     #   unit tests (37)
+├── android/                # Android: Gradle project — README has the build/
+│   └── README.md           #   test/release instructions + the key-init guide
+├── extension/              # Chrome MV3 extension: scan/pair/decrypt/autofill
+│   ├── README.md           #   install, security model, the contract test
+│   └── test/               #   the paste-crypto contract test (node)
+├── scripts/                # release pipeline + generators — README covers each
+│   └── README.md
+└── docs/                   # design, work plan, testing plan, extension protocol
 ```
 
 ## The shared vault format
 
 The store file is a **Proton Pass JSON export envelope** (`vaults.<id>.items[]`),
-extended with sync bookkeeping both clients understand:
+extended with sync bookkeeping all clients understand:
 
 | Field | Meaning |
 |---|---|
@@ -90,11 +136,11 @@ extended with sync bookkeeping both clients understand:
 | *(unknown fields)* | preserved verbatim through round-trips |
 
 The file is **always ciphertext at rest**: GPG-encrypted on the desktop,
-OpenKeyChain-encrypted on the phone, to the configured recipients
-(YubiKey-held OpenPGP keys and/or a device-held software key). Git history
-holds ciphertext commits only — that enables rollback/audit without
-exposing content, and sync is ordinary pull/push with an application-level
-union-merge (by `itemUuid` + tombstones) when two devices diverge.
+card-encrypted on the phone (in-process YubiKit + BouncyCastle framing),
+to the configured recipients. Git history holds ciphertext commits only —
+that enables rollback/audit without exposing content, and sync is
+ordinary pull/push with an application-level union-merge (by `itemUuid` +
+tombstones) when two devices diverge.
 
 ### QR exports
 
@@ -130,7 +176,7 @@ mkdir -p ~/product/state && cd ~/product/state && git init
 cd ~/offlinepass
 
 # 4. Run in test mode (unencrypted, no GPG needed)
-python3 offlinepass.py
+python3 linux/offlinepass.py
 ```
 
 ### Production configuration
@@ -148,7 +194,7 @@ python3 offlinepass.py
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `offlinepass_FILE` | `~/offlinepass/test_data.json` | Path to store file |
+| `offlinepass_FILE` | `~/offlinepass/linux/test_data.json` | Path to store file |
 | `offlinepass_USE_GPG` | `0` | Set to `1` for GPG encryption |
 | `offlinepass_GPG_RECIPIENTS` | — | Comma-separated GPG key IDs/emails |
 | `offlinepass_GIT_DIR` | directory of `offlinepass_FILE` | Git repo root for auto-commit |
@@ -174,246 +220,33 @@ python3 offlinepass.py
 On exit the TUI pushes any pending commit to the remote (best-effort,
 `GIT_TERMINAL_PROMPT=0`).
 
-## Android client
-
-Status, spike results, and the per-file on-device storage map live in
-[`android/README.md`](android/README.md); design and plans in
-[`docs/android-app-design.md`](docs/android-app-design.md),
-[`docs/work-plan.md`](docs/work-plan.md),
-[`docs/testing-plan.md`](docs/testing-plan.md).
-
-Build:
-
-```bash
-cd android && ./gradlew :app:assembleDebug
-```
-
-Release build (R8-minified, unsigned) + hardware-key APK signing — the
-same security key offlinecam signs with (OpenPGP applet via OpenSC/PKCS11;
-expect the touch):
-
-```bash
-cd android && ./gradlew :app:assembleRelease && ./sign.sh
-# → android/app-release-signed.apk
-```
-
-### What it does
-
-- **Unlock** — clone/fetch the repo (SSH: the screenlock keystore key by
-  default, or the YubiKey OpenPGP auth subkey; HTTPS+PAT is deprecated),
-  decrypt `state/10.gpg` via OpenKeyChain (YubiKey touch + PIN). With the
-  **screen-lock toggle** on, the prompt is also required at app open and
-  after the idle timeout (entry gate) — before any content. With
-  **Encrypt individual items while in use**
-  (experimental, Setup toggle) the app keeps a device-local sealed cache:
-  the locked app stays fully searchable (names/usernames/URLs), and
-  clicking an entry reveals it after just a screen-lock prompt — see
-  "Encrypt individual items while in use" below.
-- **CRUD + TOTP** — search, add/edit (URL, username/email, editable
-  password, notes), update password, enroll TOTP with live countdown,
-  tombstoned delete; entries carry a last-modified timestamp (shown in the
-  list and detail views, with an optional secondary sort "most recently
-  modified first", default on); every save re-encrypts, commits (signed
-  via OpenKeyChain — or, when **screenlock signing** is enrolled in Setup,
-  via an AndroidKeystore key gated by the device screen lock, with its
-  public key published to `keys/keystore-signer.pub` for independent
-  verification), and pushes.
-- **QRFT transfer (phone ↔ phone)** — Settings → "Export as QRFT (pick
-  entries)" encodes a JSON array of the selected entries into the looping
-  QR sender; "Import from QRFT (scan)" opens the in-app camera scanner
-  (vendored jsQR + pako) to reassemble it on another device. Imports
-  dedupe by `itemUuid` — the local version wins on conflict.
-- **Encrypted pastes to the browser** — an entry's "Export as QRFT"
-  carries an *"Encrypt to paired paste keys (N)"* checkbox (default on):
-  the paste is encrypted once under a random CEK and wrapped to every
-  paired Chrome-extension key (any one of them opens it, after a
-  security-key PIN + touch); unchecked keeps the plain QR anyone can
-  read. The multi-entry picker wraps to a selectable subset.
-- **Paste devices (Chrome extension)** — Setup → *"Pair paste device
-  (scan)"* reads the extension's single pairing QR into the vault's
-  `devices` records (git-synced, newer copy wins); *"Show QR"* re-renders
-  a record to restore a pairing on a new Chromebook; *"Remove"* unpairs.
-  Protocol and threat model: [`docs/extension-protocol.md`](docs/extension-protocol.md).
-- **Sync** — explicit "Sync now" with divergence detection: behind →
-  fast-forward, diverged → union-merge and re-encrypt. Three sync-auth
-  options (Setup → Connect remote):
-  - **Screenlock SSH key (default, recommended)** — a Keystore RSA key
-    gated by the device screen lock; enrolled as a GitHub **deploy key**
-    (per-repo, least privilege); every sync opens with the screen lock.
-  - **YubiKey SSH** — the OpenPGP auth subkey already enrolled in GitHub
-    (desktop gpg-agent pushes); every sync asks for the YubiKey touch via
-    OpenKeyChain.
-  - **PAT (HTTPS, deprecated)** — a fine-grained token; kept for
-    compatibility, but prefer either SSH option — no token to leak, and
-    the signatures are screenlock-gated.
-  Local-only mode runs the same repo without a remote; a remote can be
-  attached later (Setup → Connect remote) — new vaults always start
-  local-only.
-- **Setup tab** — remote config, recipients (OpenKeyChain picker), commit
-  signer, USB save/restore, autofill enablement, screen-lock toggle
-  (pre-key prompt, app-open entry gate, idle auto-lock with a
-  configurable minutes field), item-encryption toggle (experimental),
-  lock-vault action.
-
-### Security posture
-
-| Artifact | State |
-|---|---|
-| Vault file (`10.gpg`) | OpenPGP ciphertext to the configured recipients. **Never plaintext on disk.** |
-| Git history | Ciphertext commits only |
-| PAT | AES-256-GCM blob wrapped by AndroidKeyStore (TEE-held) |
-| Decrypted entries | **RAM only**, while the session is unlocked; zeroed by the idle auto-lock (screen-lock toggle, default 5 min), Setup's lock button, or app exit |
-| Sealed cache (`sealed/sealed.json`, experimental) | Manifest (names/usernames/URLs) in the clear + secrets AES-GCM ciphertext under a screenlock-keystore-wrapped KEK; app-private, never synced, wiped on toggle-off |
-| QR exports | Plaintext by explicit user choice (screen = trust boundary); generated in memory and injected into the WebView — never persisted to disk |
-
-**Zeroing.** Decrypted material is deliberately erased, not left behind:
-
-- Every decrypt/encrypt call runs through a cache-dir temp file that is
-  **zero-filled and deleted on exit of the call** (`SecureWipe`) — unlock,
-  save, merge re-encrypt, and USB restore alike.
-- The OpenPGP pipe pump zeroes its 64 KB transfer buffer (it carries
-  plaintext chunks during decrypt).
-- On **exit** (`Activity.onDestroy` when finishing) and via **Setup →
-  "Lock vault (zero decrypted data)"**, `VaultSession.zero()` drops the
-  unlocked item list and envelope, wipes all plaintext temp files, steps
-  the state machine back to Locked, and hints GC.
-
-Zeroing is best-effort in two documented ways: Java strings are immutable,
-so heap copies are released for GC rather than overwritten; and flash
-wear-leveling limits in-place overwrites. The primary defenses remain
-ciphertext-at-rest and app-private storage — zeroing shrinks the window,
-it is not a guarantee.
-
-**What a stolen device yields:** vault ciphertext + a wrapped token. No
-plaintext, no keys, no decryptable state.
-
-### Encrypt individual items while in use (experimental, Setup toggle; default off)
-
-One device-local sealed cache (app-private storage, **never committed to
-git**) lets the locked app do almost everything except reveal secrets:
-
-- **At rest, plaintext** (app-private, device-only): the manifest the list
-  and search render — names, usernames, emails, URLs, modify times — plus
-  the envelope's public bookkeeping (rev, paired paste devices, tombstones;
-  all non-secret).
-- **At rest, sealed**: each entry's `{password, note, totpUri}` is
-  AES-256-GCM ciphertext under a cache key (KEK) wrapped to an
-  AndroidKeystore RSA key that **requires the device screen lock** (60 s
-  validity window per successful prompt).
-- **Flow**: run → the usual search/list over the manifest → tap an entry →
-  one screen-lock prompt → that entry unseals into its detail view (the
-  session stays locked). With the screen-lock toggle on, the prompt is
-  also required BEFORE the list itself at app open and after the idle
-  timeout (entry gate). Editing → Save promotes to a full session
-  (unseal-all, silent while the auth window is open) and signs via the
-  existing screenlock commit signer. A seal that is stale against the
-  vault file (first use, or after a remote pull) falls back to the GPG
-  unlock once and re-seals; key regeneration (screen-lock enrollment
-  changes) self-heals the same way.
-- **Toggle off** wipes the cache and restores the legacy behavior exactly
-  (GPG unlock for everything).
-
-**Idle auto-lock** (part of the screen-lock toggle, Setup → "Auto-lock
-(idle minutes)", a user-editable field — `0` = never, default **5**): after
-5 idle minutes the
-decrypted session is zeroed — every entry, the envelope, and the reveal
-overlay are back to encrypted-at-rest, and the app returns to the sealed
-search list (or the unlock screen when the sealed cache is off).
-Backgrounding the app counts toward the timeout: returning after it has
-expired locks first, before anything touches the session. An in-flight
-OpenKeyChain interaction is never interrupted by the timer.
-
-## Chrome extension (paste receive + autofill)
-
-**What it does** — click the offlinepass icon in Chrome: with a key paired,
-the scan window opens instantly for the tab you clicked from; scan the
-phone's looping paste QR with the Chromebook's camera; decryption starts
-automatically once the transfer completes (insert key → FIDO2 PIN +
-touch — no extra click); an entry whose URLs match the tab
-(subdomain-aware) **auto-fills** and the window closes; no match → entry
-cards with Fill / Reveal / Copy / TOTP-copy. Nothing runs on any site by
-default: `activeTab` + no content scripts — the platform grants access
-only to the tab you clicked on, and every decryption requires the key.
-
-### Install (ChromeOS / desktop Chrome)
-
-1. `chrome://extensions` → enable **Developer mode** → **Load unpacked**
-   → select the `extension/` directory of the repo.
-2. Click the offlinepass icon → the pair page opens → follow the two
-   touches (set a **FIDO2 PIN** if Chrome asks — the same PIN your
-   passkeys use, separate from the OpenPGP/PIV PINs).
-3. On the phone: offlinepass → Setup → **"Pair paste device (scan)"** →
-   scan the extension's pairing QR → the record lands in the vault and
-   syncs to all clients via git.
-4. Send a paste: open the entry → **Export as QRFT** → leave
-   *"Encrypt to paired paste keys (N)"* checked → scan the looping QR
-   with the extension (insert + PIN + touch) → auto-filled.
-
-**Requirements:** a security key with the WebAuthn `prf` extension
-(YubiKey 5, fw ≥ 5.3) and Chrome on ChromeOS/desktop. Pairing is per key,
-not per Chromebook — the same key works on any machine via the extension,
-and the pairing record can be re-shown from the phone (Setup → Paste
-devices → "Show QR") to restore a lost browser profile without re-pairing.
-
-### Security model
-
-A paste decrypts only with the paired key present + PIN + touch (touch
-every paste; the PIN re-asks per operation in practice — CTAP2.1
-auth-token expiry). The extension stores public records plus an
-AES-wrapped seed only — the seed never exists in plaintext without the
-touch — makes **no network requests**, and decrypts in memory. The
-security key accumulates no state: non-resident credential, no passkey
-slots used, existing GPG/PIV keys and passkeys untouched. Lost key → it
-alone decrypts nothing; unpair on the phone and re-pair. Lost
-Chromebook/profile → restore from the phone's "Show QR". Full wire
-format, key chain, and threat model:
-[`docs/extension-protocol.md`](docs/extension-protocol.md).
-
-### Troubleshooting
-
-- **Pairing fails with a PRF error** — the key lacks `hmac-secret`
-  (YubiKey fw < 5.3): update the firmware, or pair the ChromeOS platform
-  authenticator instead (PIN-based UV; pairing becomes per-machine).
-- **"No paired key for \<keyId\>"** — that key isn't paired in this
-  browser: pair it, or restore its pairing QR from the phone.
-- **Transfer stalls mid-chunks** — hold the phone steady; the progress
-  line names the missing chunk; if nothing moves for 5s, check the
-  sender's speed selector on the phone.
-- **Decrypt asks for the PIN every time** — expected: the key's PIN/UV
-  token expires between operations; the touch is always required.
-
-## Releases
-
-Release artifacts (debug + profileable + hardware-key-signed release APKs)
-attach to GitHub releases — `docs/release.md` and `scripts/release.sh`
-cover build → sign → verify → publish. `scripts/release.sh verify <version>`
-re-checks signatures and checksums at any time. Device installs should use
-the hardware-key-signed release APK (`android/sign.sh`).
-
 ## Testing
+
+CI runs the matrix on every push/PR (the badge at the top): the Linux
+unit tests, the extension's paste-crypto contract test, and the Android
+suite + the release build with the baseline-profile guard. The
+hardware-in-the-loop layers stay manual.
 
 ```bash
 # Linux unit tests (no terminal needed)
-python3 test_passlib.py
+python3 linux/test_passlib.py
 
 # Interactive TUI test
-python3 offlinepass.py
+python3 linux/offlinepass.py
 # → Search "git" → Enter → select GitHub → Show credentials
 # → or Display QR code → scan with the phone
 
-# Android unit tests
+# Android unit tests + the paste-crypto contract test
 cd android && ./gradlew :app:testDebugUnitTest
+node extension/test/wrap_contract_test.mjs
 
 # Extension self-test (fixed cross-impl vectors; needs a browser)
-# → chrome://extensions → offlinepass → "Run self-test" link on the pair page link on the pair page
-
-# Regenerate the cross-implementation vectors (protocol change only)
-python3 scripts/gen_device_wrap_vectors.py
+# → chrome://extensions → offlinepass → the "Run self-test" link
 ```
 
 Linux tests cover item parsing, search matching, password generation, TOTP
-(verified against RFC 6238 test vectors), display-name derivation, and file
-round-trips. The Android test matrix is defined in `docs/testing-plan.md`
-and includes the device-wrap vectors shared with the extension's
-self-test page — both sides assert the same numbers, so the JCE and
-WebCrypto implementations cannot drift apart.
+(verified against RFC 6238 test vectors), display-name derivation, and
+file round-trips. The Android side (229 unit tests + the extension
+contract test) is detailed in
+[`android/README.md`](android/README.md#test-layout) and
+[`docs/testing-plan.md`](docs/testing-plan.md).

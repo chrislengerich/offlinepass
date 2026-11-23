@@ -90,34 +90,73 @@ cmd_build() {
 ## offlinepass v$VERSION
 
 ### Android (com.offlinepass.app)
-- **Security keys are named entities** — each physical key gets a name
-  (per-key, identified by its OpenPGP card serial; renamed from Setup),
-  tracked in the repo's device registry and synced; device renames too
-- **The Proton handoff** — export the vault as plaintext Proton Pass
-  JSON (the native shape; importable by Proton and offlinepass), and
-  import a Proton export OpenKeyChain-free: the recipients are picked
-  in the Import tab (the card's key), the first commit is unsigned
-  until a signer is configured
-- **The import landings** — the repo-backup imports (USB/QRFT zip) and
-  the Proton import land on the Getting-Started checklist; a repo zip
-  pre-fills the GitHub remote from its own origin and seeds the
-  recipients; the vault-file imports (QRFT/USB .gpg) are data-only and
-  never touch the recipient set
-- **The layered save invariant** — the repo (signed commits,
-  re-encrypted to the current recipients) is the only durable truth;
-  the sealed cache is derived: saves re-seal only the affected item's
-  blob, and a cache wipe is always recoverable by a repo decrypt
-- **Idle lock decoupled from the entry gate** — "Enable idle lock?" is
-  its own toggle; the entry gate ("Require screenlock at unlock") is
-  optional independently
-- **The item-encryption toggle-off is loss-free** — it promotes (or
-  falls back to a fresh repo decrypt) before wiping the sealed cache,
-  and the toggle-ON pulls the decrypt forward so the next unlock stays
-  screenlock-only
-- The sync line shows the repo state: ahead/behind origin/main counts
-- The setup reorganization: Share vault / Backups / Devices / Vault
-  encryption keys / Commit signer; the delete warns; the biometric
-  prompts name the change being authenticated
+- **Autofill generate chips** — two generate options in the autofill sheet:
+  - **⚡ Generate a strong password** — offered on every password field.
+    Tapping it generates a 16-character password and saves it immediately
+    — no save card, no second prompt. Saving matches on site + username:
+    the same login is updated in place (its note, TOTP, and other fields
+    survive); a different username is saved as a second entry.
+  - **✨ Generate SimpleLogin alias + password** — offered on
+    username/email fields when SimpleLogin is linked. Tapping it creates
+    a real alias on the account's default domain plus a generated
+    password, and saves it immediately. If SimpleLogin is unreachable,
+    only the password fills — never a dead end.
+  - **Filling is one tap**: the chip fills the form immediately — the
+    auth result carries the filled dataset and the platform applies it
+    right away (this requires the auth PendingIntents to be mutable on
+    Android 12+; immutable bindings abort the fill).
+  - No screenlock before generation. When a save does need a screenlock,
+    the prompt shows what is being saved: site, username, URL, and the
+    password length (the password itself stays hidden).
+- **Cleaner autofill sheet when locked** — locked entries show site and
+  username in plain text, and entries unlock by tapping them. The alias
+  chip no longer appears on password fields.
+- **Generated password default** — 16 characters over letters and
+  digits (was 24 with symbols).
+- **TOTP enrollment reworked** — the entry field sits inline next to
+  Enroll TOTP, with a Scan QR option that reads an otpauth:// QR code
+  straight into the field. Enrolled items show the live code with a
+  Re-enroll TOTP action behind a replace warning; the counter updates
+  only after the save confirms.
+- **Save prompt shows the transaction** — the screenlock prompt for an
+  item save names the site, username, URL, and the password length (the
+  password itself stays hidden).
+- **Form parser hardening** — URL-shaped fields (loginUrl, returnUrl) and
+  URL-shaped values are never captured as the username; explicitly marked
+  email/username fields always win over loose id/hint matches.
+- **SimpleLogin linked accounts** — Setup → Linked accounts links the
+  SimpleLogin account by pasting an API key from the dashboard. The key
+  is stored as a regular vault item — card-encrypted and synced like
+  anything else. Relink replaces the key in place; the linked state
+  shows the account email and the alias domains.
+- **SimpleLogin aliases on Add-entry** — the email field is always
+  present; "✨ SimpleLogin alias" creates a real alias on the linked
+  account and writes it into the email field, saved with the entry.
+- **SimpleLogin status on the item page** — for an item whose email is
+  an alias, "Check SimpleLogin status" reveals its enabled/disabled
+  state and arms the enable/disable toggle.
+- **Google Passwords import/export** — Setup → Import gains "From Google
+  CSV" (the Android or Chrome export; quoted fields, the BOM,
+  case-insensitive headers, app rows without a URL all handled). Setup →
+  Export gains "To Google Passwords (CSV)" — the exact four-column CSV
+  Chrome's password import accepts back. The format carries only
+  name / url / username / password; the export flow says so up front.
+
+### Extension
+- **Fill without a URL match** — "Fill in tab" no longer refuses when no
+  entry URL matches the captured tab: the first entry fills anyway and
+  the window stays open with a warning banner naming the origin it
+  filled into (Reveal/Copy/TOTP keep working).
+
+### Repository
+- **Ed25519 + EC card crypto** — commit signing works on Ed25519 (alg
+  22) alongside RSA/ECDSA; the vault decrypt covers ECDH card keys;
+  BouncyCastle 1.79 → 1.87.
+- **CI** — GitHub Actions runs the Linux, extension, and Android test
+  jobs on every push/PR.
+- **Layout & licensing** — the Linux client lives under `linux/`; the
+  GPLv3 LICENSE and CONTRIBUTING.md added; the READMEs split per
+  component.
 
 ### Artifacts
 - \`offlinepass-vX.Y.Z-release.apk\` — minified release build, signed with
@@ -131,6 +170,12 @@ cmd_build() {
 NOTES
   fi
   checksums
+  # The baseline profile must survive packaging (work-plan T2): the two
+  # silent-death modes (rule mangling, the R8 rename drop) otherwise
+  # regress the first-run to the JIT cliff with no other signal.
+  "$REPO_ROOT/scripts/verify-profile.sh" \
+    "$ANDROID_DIR/app/build/outputs/apk/release/app-release-unsigned.apk" \
+    || die "baseline-profile verification failed"
   echo
   echo "Staged: $STAGE"
   echo "Next:   scripts/release.sh sign $VERSION   (gpg --detach-sign --armor every artifact)"
@@ -142,13 +187,20 @@ cmd_sign() {
   require_stage
   for apk in "$STAGE"/offlinepass-"$VERSION"-*.apk; do
     [ -f "$apk" ] || continue
-    if [ -f "$apk.asc" ]; then
+    local sig="$apk.asc" tmp="$apk.asc.tmp"
+    if [ -f "$sig" ] && [ ! -s "$sig" ]; then
+      echo "empty signature: $(basename "$apk").asc — re-signing"
+    elif [ -f "$sig" ]; then
       echo "already signed: $(basename "$apk") — keeping the existing .asc"
       continue
     fi
-    # The security key's secret half is on the hardware token — gpg will
-    # prompt/touch as configured.
-    gpg --detach-sign --armor $(gpg_key_args) "$apk"
+    # Sign to a temp file and move into place: an aborted hardware-token
+    # sign leaves no empty .asc for verify to trip over (gpg creates its
+    # --output file before the touch/pinentry). The mv is atomic within
+    # the stage dir, so a concurrent verify can never see a partial sig.
+    rm -f "$tmp"
+    gpg --detach-sign --armor --output "$tmp" $(gpg_key_args) "$apk"
+    mv "$tmp" "$sig"
     echo "signed: $(basename "$apk")"
   done
   checksums
@@ -165,6 +217,7 @@ cmd_verify() {
     found=1
     echo "== $(basename "$apk")"
     [ -f "$apk.asc" ] || die "missing signature: $apk.asc — run: scripts/release.sh sign $VERSION"
+    [ -s "$apk.asc" ] || die "empty signature file: $apk.asc — re-run: scripts/release.sh sign $VERSION"
     gpg --verify "$apk.asc" "$apk" || die "GPG signature INVALID: $apk"
   done
   [ "$found" = 1 ] || die "no APKs staged in $STAGE"
@@ -179,7 +232,7 @@ cmd_publish() {
   require_stage
   for apk in "$STAGE"/offlinepass-"$VERSION"-*.apk; do
     [ -f "$apk" ] || continue
-    [ -f "$apk.asc" ] || die "$(basename "$apk") not signed — run: scripts/release.sh sign $VERSION"
+    [ -s "$apk.asc" ] || die "$(basename "$apk") missing or empty signature — run: scripts/release.sh sign $VERSION"
   done
   ( cd "$REPO_ROOT"
     [ -z "$(git status --porcelain)" ] || die "git tree is dirty — commit the release first"
