@@ -10,25 +10,30 @@ updated; the entries then move under that release's version heading here.
 
 ### Android
 
-- **The autofill generate chips** — the sheet's two generate options,
-  each followed by the immediate **"Save this login to the vault?"**
-  card (the silent tray notification and its POST_NOTIFICATIONS
-  permission are gone). The platform's own save prompt still covers
-  user-typed changes: typing a NEW password on a site updates the SAME
-  saved item in place (matched by site + username — the note, TOTP and
-  other fields survive); a different username = a second entry.
-  - **⚡ Generate a strong password** — offered on forms with no
-    matching vault entry (the registration case); fills the generated
-    password ONLY, and the email already typed on the site's form rides
-    into the save card and the saved item.
-  - **✨ Generate SimpleLogin alias + password** — offered on any form
-    with a username/email field, with the vault unlocked OR sealed (the
-    common case: the sealed sheet finds the linked SimpleLogin entry in
-    the manifest and the device-lock gate authorizes the api-key
-    reveal). One tap: the gate → a real alias on the account's default
-    domain + the
-    generated password → both filled. SimpleLogin unreachable = the
-    password-only fill, never a dead end.
+- **Autofill generate chips** — two generate options in the autofill sheet:
+  - **⚡ Generate a strong password** — offered on every password field.
+    Tapping it generates a 16-character password and saves it immediately
+    — no save card, no second prompt. Saving matches on site + username:
+    the same login is updated in place (its note, TOTP, and other fields
+    survive); a different username is saved as a second entry.
+  - **✨ Generate SimpleLogin alias + password** — offered on
+    username/email fields when SimpleLogin is linked. Tapping it creates
+    a real alias on the account's default domain plus a generated
+    password, and saves it immediately. If SimpleLogin is unreachable,
+    only the password fills — never a dead end.
+  - **Filling takes two taps**: tap the chip, then tap the form field
+    again and pick the entry marked with a check. Chromium-based browsers
+    drop the one-tap fill result (analysis and draft bug report in
+    `docs/upstream-vanadium-dataset-auth-report.md`). A toast after each
+    generate walks you through it.
+  - No screenlock before generation. When a save does need a screenlock,
+    the prompt shows what is being saved: site, username, URL, and the
+    password length (the password itself stays hidden).
+- **Cleaner autofill sheet when locked** — locked entries show site and
+  username in plain text (no lock icon, no instruction text), and the
+  permanent "Unlock offlinepass" button is gone from that sheet; entries
+  unlock by tapping them. The alias chip no longer appears on password
+  fields.
 - **Generated password default** — 16 characters over letters and
   digits (was 24 with symbols).
 - **SimpleLogin linked accounts** — Setup → Linked accounts links the
