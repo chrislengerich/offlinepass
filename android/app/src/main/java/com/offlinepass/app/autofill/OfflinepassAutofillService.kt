@@ -507,12 +507,18 @@ internal fun parseAutofillStructure(
         val hints = node.autofillHints?.joinToString(" ")?.lowercase() ?: ""
         val hint = node.hint?.lowercase() ?: ""
         val resId = (node.idEntry ?: "").lowercase()
+        // THE URL-SHAPED FIELDS ARE NEVER USERNAMES: the login/SSO forms
+        // embed hidden fields carrying the page URL (loginUrl, returnUrl,
+        // accountRedirect) whose ids/hints match the loose username
+        // substrings — the captured username would be the page URL.
+        val looksLikeUrlField = resId.contains("url") || hint.contains("url") ||
+            resId.contains("redirect") || hint.contains("redirect")
         val isPassword = node.autofillHints?.contains(View.AUTOFILL_HINT_PASSWORD) == true ||
             hints.contains("password") || hint.contains("password") ||
             resId.contains("password") || resId.contains("passwd") ||
             (node.inputType and (android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD)) ==
             (android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD)
-        val isUsername = !isPassword && (
+        val isUsername = !isPassword && !looksLikeUrlField && (
             node.autofillHints?.contains(View.AUTOFILL_HINT_USERNAME) == true ||
                 hints.contains("username") || hints.contains("email") || hint.contains("email") ||
                 hint.contains("user") || resId.contains("user") || resId.contains("email") ||
@@ -532,7 +538,8 @@ internal fun parseAutofillStructure(
                         username.add(id)
                         if (usernameValue == null) {
                             (node.autofillValue?.textValue as? CharSequence)
-                                ?.takeIf { it.isNotBlank() }?.let { usernameValue = it.toString() }
+                                ?.takeIf { it.isNotBlank() && !it.startsWith("http") && !it.startsWith("www.") }
+                                ?.let { usernameValue = it.toString() }
                         }
                     }
                 }
