@@ -36,7 +36,12 @@ fun EntryDetailScreen(
     pairedDevices: List<com.offlinepass.app.vault.DeviceRecord> = emptyList(),
     onSaveChanges: (ProtonItem) -> Unit,
     onEnrollTotp: (String) -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    /** The raw-QR scan's pending otpauth:// URI (the scan never saves
+     *  alone — it pre-fills the entry for review). */
+    pendingTotpUri: String = "",
+    onTotpUriConsumed: () -> Unit = {},
+    onScanTotp: () -> Unit = {},
 ) {
     // Editable copies — applied to the item only on Save.
     var username by remember(item.itemUuid) { mutableStateOf(item.username) }
@@ -54,7 +59,12 @@ fun EntryDetailScreen(
     var revealed by remember { mutableStateOf(false) }
     var totp by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var showTotpEntry by remember { mutableStateOf(false) }
-    var totpInput by remember { mutableStateOf("") }
+    // THE SCANNED URI: the raw-QR scan lands here and re-opens the entry —
+    // the row consumes the URI into its own input (the scan never saves
+    // alone; the user reviews before saving).
+    LaunchedEffect(pendingTotpUri) {
+        if (pendingTotpUri.isNotBlank()) showTotpEntry = true
+    }
 
     // -- THE SIMPLELOGIN ALIAS TOGGLE (the item-page management) ------------
     // The gate: the SL api-key item exists AND the email = an SL alias on
@@ -180,6 +190,16 @@ fun EntryDetailScreen(
         } else {
             Text("TOTP enrolled", style = MaterialTheme.typography.bodySmall)
         }
+        if (showTotpEntry) {
+            TotpEnrollRow(
+                pendingTotpUri = pendingTotpUri,
+                onTotpUriConsumed = onTotpUriConsumed,
+                onScan = onScanTotp,
+                busy = busy,
+                onEnroll = onEnrollTotp,
+                onDismiss = { showTotpEntry = false }
+            )
+        }
         OutlinedTextField(
             value = note, onValueChange = { note = it },
             label = { Text("Notes") },
@@ -279,21 +299,47 @@ fun EntryDetailScreen(
                 }
             )
         }
-        if (showTotpEntry) {
-            OutlinedTextField(
-                value = totpInput,
-                onValueChange = { totpInput = it },
-                label = { Text("Base32 secret or otpauth:// URI") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                    onEnrollTotp(Totp.normalizeSecretInput(totpInput))
-                    showTotpEntry = false
-                }) { Text("Save") }
-                OutlinedButton(onClick = { showTotpEntry = false }) { Text("Cancel") }
-            }
+    }
+}
+
+/**
+ * THE TOTP ENROLLMENT ROW: the inline entry (next to the Enroll TOTP
+ * button), the camera scan (the scanned URI pre-fills the entry — the
+ * scan never saves alone), and the explicit save. The row is shared by
+ * every detail pane (the sealed reveal, the revealed, the unlocked).
+ */
+@Composable
+fun TotpEnrollRow(
+    pendingTotpUri: String,
+    onTotpUriConsumed: () -> Unit,
+    onScan: () -> Unit,
+    busy: String?,
+    onEnroll: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var totpInput by remember { mutableStateOf("") }
+    LaunchedEffect(pendingTotpUri) {
+        if (pendingTotpUri.isNotBlank()) {
+            totpInput = pendingTotpUri
+            onTotpUriConsumed()
         }
+    }
+    OutlinedTextField(
+        value = totpInput,
+        onValueChange = { totpInput = it },
+        label = { Text("Base32 secret or otpauth:// URI") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(
+            onClick = {
+                onEnroll(Totp.normalizeSecretInput(totpInput))
+                onDismiss()
+            },
+            enabled = totpInput.isNotBlank() && busy == null
+        ) { Text("Save") }
+        OutlinedButton(onClick = onScan) { Text("Scan QR") }
+        OutlinedButton(onClick = onDismiss) { Text("Cancel") }
     }
 }

@@ -32,6 +32,8 @@ sealed class Screen {
     data class ExportTarget(val items: List<ProtonItem>) : Screen()
     /** Camera scanner for the import-from-QRFT flow. */
     object QrftScan : Screen()
+    /** Raw-QR scanner for the TOTP enrollment (an otpauth:// URI). */
+    object TotpScan : Screen()
     /** Single-QR scanner for pairing a paste device (extension). */
     object PairScan : Screen()
     object Setup : Screen()

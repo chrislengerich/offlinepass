@@ -194,6 +194,16 @@ class MainActivity : androidx.activity.ComponentActivity() {
             else status = "Camera permission denied — cannot pair a paste device."
         }
 
+    /** TOTP QR scan: same camera permission, the scanner's raw mode — the
+     *  decoded otpauth:// URI lands in the pending state and the detail
+     *  panes pre-fill the enrollment entry with it (the scan never saves
+     *  alone). */
+    private val totpCameraLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) screen = Screen.TotpScan
+            else status = "Camera permission denied — cannot scan a TOTP QR."
+        }
+
     private fun launchInteraction(pi: PendingIntent) {
         interactionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
     }
@@ -1218,6 +1228,21 @@ class MainActivity : androidx.activity.ComponentActivity() {
             )
             return
         }
+        // The TOTP QR scanner: the raw mode — the decoded otpauth:// URI
+        // lands in the pending state; the detail panes consume it into the
+        // enrollment entry (the scan never saves alone). Routed in every
+        // state, like the QRFT scanner.
+        if (screen is Screen.TotpScan) {
+            QrftScanScreen(
+                rawMode = true,
+                onPayload = { _, payload ->
+                    MainActivity.pendingTotpUri = payload
+                    screen = Screen.Search
+                },
+                onBack = { screen = Screen.Search }
+            )
+            return
+        }
         // The QRFT scanner has no session dependency (the camera + the
         // WebView) — routed in EVERY state: the setup's Load row needs it
         // while the vault is still NoConfig.
@@ -1818,6 +1843,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                             }
                         }
                     },
+                    onScanTotp = { totpCameraLauncher.launch(android.Manifest.permission.CAMERA) },
+                    pendingTotpUri = MainActivity.pendingTotpUri,
+                    onTotpUriConsumed = { MainActivity.pendingTotpUri = "" },
                     onEnrollTotp = { secret ->
                         lifecycleScope.launch {
                             val base = sealedReveal ?: return@launch
@@ -1917,6 +1945,7 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 // (every state) and never reach this branch; the explicit
                 // branch keeps the when exhaustive.
                 is Screen.QrftPayload -> {}
+                is Screen.TotpScan -> {}
                 is Screen.QrftScan -> {}
                 Screen.SetupChoice, Screen.Search -> SearchScreen(
                     items = unlockedItems(),
@@ -1999,6 +2028,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                     }
                                 }
                             },
+                            onScanTotp = { totpCameraLauncher.launch(android.Manifest.permission.CAMERA) },
+                            pendingTotpUri = MainActivity.pendingTotpUri,
+                            onTotpUriConsumed = { MainActivity.pendingTotpUri = "" },
                             onEnrollTotp = { uri ->
                                 lifecycleScope.launch {
                                     val mutated = sealedReveal!!
@@ -2073,6 +2105,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                     }
                                 }
                             },
+                            onScanTotp = { totpCameraLauncher.launch(android.Manifest.permission.CAMERA) },
+                            pendingTotpUri = MainActivity.pendingTotpUri,
+                            onTotpUriConsumed = { MainActivity.pendingTotpUri = "" },
                             onEnrollTotp = { uri ->
                                 lifecycleScope.launch {
                                     val mutated = revealedItem!!
@@ -2115,6 +2150,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
                                 }
                             }
                         },
+                        onScanTotp = { totpCameraLauncher.launch(android.Manifest.permission.CAMERA) },
+                        pendingTotpUri = MainActivity.pendingTotpUri,
+                        onTotpUriConsumed = { MainActivity.pendingTotpUri = "" },
                         onEnrollTotp = { uri ->
                             lifecycleScope.launch {
                                 item.totpUri = uri
@@ -2768,6 +2806,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // Compose tree a fresh recomposer without losing the navigation
         // state (the instance-level reset to SetupChoice was the bug).
         var screen by mutableStateOf<Screen>(Screen.SetupChoice)
+        // The scanned TOTP URI (the raw-QR scan): the detail panes consume
+        // it into the enrollment entry. The class-level: it survives the
+        // scanner's navigation both ways.
+        var pendingTotpUri by mutableStateOf("")
         private const val TAG = "S1"
     }
 }
