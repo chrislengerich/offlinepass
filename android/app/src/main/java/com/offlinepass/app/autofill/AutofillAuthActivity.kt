@@ -77,8 +77,8 @@ class AutofillAuthActivity : ComponentActivity() {
                     // immediate save card.
                     val ok = ScreenlockGate.promptGate(
                         this@AutofillAuthActivity,
-                        "Generate SimpleLogin alias & fill",
-                        "The device lock authorizes creating a SimpleLogin alias and filling the signup")
+                        "Generate SimpleLogin alias, fill & save",
+                        "The device lock authorizes creating a SimpleLogin alias, filling the signup, and saving the login")
                     if (!ok) {
                         Log.i(TAG, "the alias generate's gate declined — RESULT_CANCELED")
                         setResult(RESULT_CANCELED)
@@ -124,56 +124,37 @@ class AutofillAuthActivity : ComponentActivity() {
                                 AutofillManager.EXTRA_AUTHENTICATION_RESULT, it)
                         }
                     setResult(RESULT_OK, resultIntent)
-                    // THE UPDATE-VS-NEW WORDING: the card says which one
-                    // this is (the same site + identity lookup the upsert
-                    // performs).
+                    // THE AUTO-SAVE (the A design): the first gate
+                    // authorizes the generation, the fill, AND the save —
+                    // the save card + the second gate = the 10-13s delay
+                    // that let the framework's autofill session expire
+                    // (the measured re-offered chip instead of the fill).
+                    // The insert runs IN-FLOW and the finish fires fast —
+                    // the 🔒 reveal's proven shape — so the fill applies
+                    // directly. The alias is already created remotely:
+                    // saving it = the only sane outcome.
                     val updating = VaultSession.upsertTarget(item) != null
-                    // THE IMMEDIATE SAVE CARD (the agreed design): the fill
-                    // landed; the save question = OURS, immediately. The
-                    // alias failure = VISIBLE (the reason line) — the
-                    // password-only degradation is never silent.
-                    AlertDialog.Builder(this@AutofillAuthActivity)
-                        .setTitle(if (updating) "Update this login in the vault?"
-                            else "Save this login to the vault?")
-                        .setMessage("The site: $origin\n" +
-                            (if (alias != null) "The alias: $alias\n" else "") +
-                            (if (aliasError != null) "The alias failed: $aliasError\n" else "") +
-                            (if (updating) "The existing login for this site will be updated.\n"
-                                else "") +
-                            "The password: ••••••••")
-                        .setPositiveButton("Save") { _, _ ->
-                            lifecycleScope.launch {
-                                val gate = ScreenlockGate.promptGate(
-                                    this@AutofillAuthActivity, "Save & sync",
-                                    "The device lock authorizes saving the login")
-                                if (!gate) {
-                                    Toast.makeText(this@AutofillAuthActivity,
-                                        "Not saved — the screen lock declined",
-                                        Toast.LENGTH_LONG).show()
-                                    finish()
-                                    return@launch
-                                }
-                                val r = insertAutofill(origin, item.username, item.password)
-                                when (r) {
-                                    VaultSession.Result.Success ->
-                                        Toast.makeText(this@AutofillAuthActivity,
-                                            if (updating) "Updated ✓" else "Saved ✓",
-                                            Toast.LENGTH_LONG).show()
-                                    else ->
-                                        Toast.makeText(this@AutofillAuthActivity,
-                                            "The save failed — $r", Toast.LENGTH_LONG).show()
-                                }
-                                finish()
-                            }
-                        }
-                        .setNegativeButton("Not now") { _, _ -> finish() }
-                        .show()
+                    val r = insertAutofill(origin, item.username, item.password)
+                    when (r) {
+                        VaultSession.Result.Success ->
+                            Toast.makeText(this@AutofillAuthActivity,
+                                (if (updating) "Saved ✓ (updated)" else "Saved ✓ (new)") +
+                                    (if (aliasError != null) " — the alias failed: $aliasError" else ""),
+                                Toast.LENGTH_LONG).show()
+                        else ->
+                            Toast.makeText(this@AutofillAuthActivity,
+                                "The save failed — $r" +
+                                    (if (aliasError != null) " — the alias failed: $aliasError" else ""),
+                                Toast.LENGTH_LONG).show()
+                    }
+                    finish()
+                    Log.i(TAG, "the alias flow done: alias=$alias updating=$updating r=$r")
                 }
                 MODE_GENERATE -> {
                     val ok = ScreenlockGate.promptGate(
                         this@AutofillAuthActivity,
-                        "Generate & fill",
-                        "The device lock authorizes filling a generated password")
+                        "Generate password, fill & save",
+                        "The device lock authorizes generating a password, filling it, and saving the login")
                     if (!ok) {
                         Log.i(TAG, "the generate's gate declined — RESULT_CANCELED")
                         setResult(RESULT_CANCELED)
@@ -204,52 +185,22 @@ class AutofillAuthActivity : ComponentActivity() {
                                 AutofillManager.EXTRA_AUTHENTICATION_RESULT, it)
                         }
                     setResult(RESULT_OK, resultIntent)
-                    // THE UPDATE-VS-NEW WORDING (the same as the alias chip).
+                    // THE AUTO-SAVE (the A design — the same as the alias
+                    // chip): the insert in-flow, the finish fast, the fill
+                    // applies directly. The typed email rides the item.
                     val updating = VaultSession.upsertTarget(item) != null
-                    // THE IMMEDIATE SAVE CARD (replaces the silent tray
-                    // trigger + its POST_NOTIFICATIONS dependency): the
-                    // platform's save event = the user-typed-delta only —
-                    // an all-autofilled submission fires NOTHING — so the
-                    // save question = OURS, immediately, in-context. The
-                    // card's Save = the screenlock gate + the insertAutofill
-                    // (the upsert by the site+user); Not now = the fill
-                    // stands unsaved.
-                    AlertDialog.Builder(this@AutofillAuthActivity)
-                        .setTitle(if (updating) "Update this login in the vault?"
-                            else "Save this login to the vault?")
-                        .setMessage("The name: $origin\n" +
-                            (if (typedEmail.isNotBlank()) "The email: $typedEmail\n" else "") +
-                            (if (updating) "The existing login for this site will be updated.\n"
-                                else "") +
-                            "The password: ••••••••")
-                        .setPositiveButton("Save") { _, _ ->
-                            lifecycleScope.launch {
-                                val gate = ScreenlockGate.promptGate(
-                                    this@AutofillAuthActivity, "Save & sync",
-                                    "The device lock authorizes saving the login")
-                                if (!gate) {
-                                    Toast.makeText(this@AutofillAuthActivity,
-                                        "Not saved — the screen lock declined",
-                                        Toast.LENGTH_LONG).show()
-                                    finish()
-                                    return@launch
-                                }
-                                val r = insertAutofill(origin, item.email, item.password)
-                                when (r) {
-                                    VaultSession.Result.Success ->
-                                        Toast.makeText(this@AutofillAuthActivity,
-                                            if (updating) "Updated ✓" else "Saved ✓",
-                                            Toast.LENGTH_LONG).show()
-                                    else ->
-                                        Toast.makeText(this@AutofillAuthActivity,
-                                            "The save failed — $r", Toast.LENGTH_LONG).show()
-                                }
-                                finish()
-                            }
-                        }
-                        .setNegativeButton("Not now") { _, _ -> finish() }
-                        .show()
-                    Log.i(TAG, "generated a password for $origin — RESULT_OK (the fill) + the save card")
+                    val r = insertAutofill(origin, item.email, item.password)
+                    when (r) {
+                        VaultSession.Result.Success ->
+                            Toast.makeText(this@AutofillAuthActivity,
+                                if (updating) "Saved ✓ (updated)" else "Saved ✓ (new)",
+                                Toast.LENGTH_LONG).show()
+                        else ->
+                            Toast.makeText(this@AutofillAuthActivity,
+                                "The save failed — $r", Toast.LENGTH_LONG).show()
+                    }
+                    finish()
+                    Log.i(TAG, "the generate flow done: updating=$updating r=$r")
                 }
                 MODE_SAVE -> {
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Login"

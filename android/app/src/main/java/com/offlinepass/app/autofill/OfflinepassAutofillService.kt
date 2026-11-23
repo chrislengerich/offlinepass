@@ -274,8 +274,7 @@ class OfflinepassAutofillService : AutofillService() {
                 android.app.PendingIntent.FLAG_IMMUTABLE or
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT)
             val view = RemoteViews(packageName, R.layout.autofill_item).apply {
-                setTextViewText(R.id.autofill_text,
-                    "🔒 ${item.displayName} — tap, unlock, fill")
+                setTextViewText(R.id.autofill_text, sealedLabel(item))
             }
             val ds = Dataset.Builder().setAuthentication(pi.intentSender)
                 .setId(item.itemUuid)
@@ -318,6 +317,15 @@ class OfflinepassAutofillService : AutofillService() {
         ids.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
         ds.setAuthentication(pi.intentSender)
         return FillResponse.Builder().addDataset(ds.build()).withSaveInfo(fields).build()
+    }
+
+    /** THE SEALED CHIP's LABEL: the clear-text identity (the username /
+     *  email from the manifest) makes the picker usable without the
+     *  unlock — the secrets stay sealed. */
+    internal fun sealedLabel(item: ProtonItem): String {
+        val id = item.identity.trim()
+        return if (id.isNotBlank()) "🔒 ${item.displayName} — $id — tap, unlock, fill"
+        else "🔒 ${item.displayName} — tap, unlock, fill"
     }
 
     private fun datasetFor(

@@ -150,6 +150,40 @@ class ChipOfferConditionsTest {
     // -- the sealed manifest's SL uuid scan ---------------------------
 
     @Test
+    fun `the sealed chip's label carries the clear-text identity`() {
+        // The manifest's username/email = plaintext (the secrets stay
+        // sealed) — the picker shows them without the unlock.
+        val item = ProtonItem(name = "github.com",
+            username = "user@x.test", urls = listOf("https://github.com"))
+        assertEquals("🔒 github.com — user@x.test — tap, unlock, fill",
+            svc.sealedLabel(item))
+    }
+
+    @Test
+    fun `the sealed chip's label falls back to the email bucket`() {
+        val item = ProtonItem(name = "github.com",
+            email = "alias@aleeas.com", urls = listOf("https://github.com"))
+        assertEquals("the email = the identity (username blank)",
+            "🔒 github.com — alias@aleeas.com — tap, unlock, fill",
+            svc.sealedLabel(item))
+    }
+
+    @Test
+    fun `the sealed chip's label without an identity stays clean`() {
+        assertEquals("🔒 github.com — tap, unlock, fill",
+            svc.sealedLabel(ProtonItem(name = "github.com")))
+    }
+
+    @Test
+    fun `the sealed label falls back to the url's host when the name is blank`() {
+        val item = ProtonItem(name = "", username = "u@x.test",
+            urls = listOf("https://gitlab.com"))
+        val label = svc.sealedLabel(item)
+        assertTrue("the host = the display name", label.contains("gitlab.com"))
+        assertTrue("the identity still rides", label.contains("u@x.test"))
+    }
+
+    @Test
     fun `the sealed manifest yields the SL entry's uuid`() {
         val sl = ProtonItem(name = "SimpleLogin API",
             urls = listOf("https://app.simplelogin.io"), password = "THE-KEY")
