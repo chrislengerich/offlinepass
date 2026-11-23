@@ -59,20 +59,26 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- THE TRANSLUCENT THEME: the auth does NOT cover the browser —
-             the underlying activity stays visible (paused, never
-             stopped), so the framework's onStop-driven
-             onInvisibleForAutofill never fires and the fill response
-             never expires while the auth runs. NO taskAffinity/noHistory/
-             excludeFromRecents: the task-forcing properties aborted the
-             framework's FOR-RESULT launch (the captured instant CANCELED
-             result before onCreate, consuming the auth tracking; the
-             relaunch then dropped the real RESULT_OK) — a plain activity
-             launches INTO the browser's task and the result routes. -->
+        <!-- THE OPAQUE THEME = THE SETTLED SHAPE: the framework's FOR-RESULT
+             launch of a service-created auth PendingIntent is aborted by
+             the system (the captured instant CANCELED result BEFORE the
+             auth activity's onCreate, consuming the auth tracking; the
+             relaunch then drops the real RESULT_OK) — REGARDLESS of the
+             activity's task configuration or the intent flags (the system
+             forces FLAG_ACTIVITY_NEW_TASK for the task-less creator). The
+             result-carried dataset stays for the platforms that deliver
+             it; on this ROM the fill happens on the re-focus: the opaque
+             activity's onStop expires the stuck session and the next
+             focus starts a FRESH fill request that serves the saved item
+             first (the translucent experiment removed that expiry and
+             left the session stuck — no sheet at all). -->
         <activity
             android:name=".autofill.AutofillAuthActivity"
             android:exported="false"
-            android:theme="@style/Theme.Offlinepass.TranslucentAuth" />
+            android:taskAffinity=""
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.Offlinepass" />
         <service
             android:name=".autofill.OfflinepassAutofillService"
             android:exported="false"
