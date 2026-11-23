@@ -139,7 +139,7 @@ class AutofillAuthActivity : ComponentActivity() {
                         VaultSession.Result.Success ->
                             Toast.makeText(this@AutofillAuthActivity,
                                 (if (updating) "Saved ✓ (updated)" else "Saved ✓ (new)") +
-                                    " — tap the field again to fill" +
+                                    " — tap the field again, pick the ✓ item to fill" +
                                     (if (aliasError != null) " — the alias failed: $aliasError" else ""),
                                 Toast.LENGTH_LONG).show()
                         else ->
@@ -189,7 +189,7 @@ class AutofillAuthActivity : ComponentActivity() {
                         VaultSession.Result.Success ->
                             Toast.makeText(this@AutofillAuthActivity,
                                 (if (updating) "Saved ✓ (updated)" else "Saved ✓ (new)") +
-                                    " — tap the field again to fill",
+                                    " — tap the field again, pick the ✓ item to fill",
                                 Toast.LENGTH_LONG).show()
                         else ->
                             Toast.makeText(this@AutofillAuthActivity,
