@@ -27,6 +27,17 @@ class OfflinepassAutofillService : AutofillService() {
 
     private val TAG = "OfflinepassAutofill"
 
+    /** THE AUTH PENDINGINTENT FLAGS (Proton Pass's shape): MUTABLE +
+     *  CANCEL_CURRENT on S+ — the mutable binding lets the framework's
+     *  fill-in intent merge, and CANCEL_CURRENT rebinds fresh per send. */
+    private val authPendingIntentFlags: Int =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            android.app.PendingIntent.FLAG_MUTABLE or
+                android.app.PendingIntent.FLAG_CANCEL_CURRENT
+        } else {
+            android.app.PendingIntent.FLAG_CANCEL_CURRENT
+        }
+
     data class Fields(
         val username: List<AutofillId>,
         val password: List<AutofillId>,
@@ -273,9 +284,7 @@ class OfflinepassAutofillService : AutofillService() {
                 // NO FLAG_ACTIVITY_NEW_TASK — the for-result delivery (the
                 // same reasoning as generateIntent).
             val pi = android.app.PendingIntent.getActivity(
-                appContext(), requestCode++, intent,
-                android.app.PendingIntent.FLAG_IMMUTABLE or
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+                appContext(), requestCode++, intent, authPendingIntentFlags)
             val view = RemoteViews(packageName, R.layout.autofill_item).apply {
                 setTextViewText(R.id.autofill_text, sealedLabel(item))
             }
@@ -388,9 +397,7 @@ class OfflinepassAutofillService : AutofillService() {
         val intent = generateIntent(AutofillAuthActivity.MODE_GENERATE, origin, fields)
             .putExtra(AutofillAuthActivity.EXTRA_USERNAME, fields.usernameValue ?: "")
         val pi = android.app.PendingIntent.getActivity(
-            appContext(), requestCode, intent,
-            android.app.PendingIntent.FLAG_IMMUTABLE or
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+            appContext(), requestCode, intent, authPendingIntentFlags)
         val view = RemoteViews(packageName, R.layout.autofill_item).apply {
             setTextViewText(R.id.autofill_text, "⚡ Generate a strong password")
         }
@@ -446,9 +453,7 @@ class OfflinepassAutofillService : AutofillService() {
         val intent = generateIntent(AutofillAuthActivity.MODE_GENERATE_ALIAS, origin, fields)
         slUuid?.let { intent.putExtra(AutofillAuthActivity.EXTRA_SL_UUID, it) }
         val pi = android.app.PendingIntent.getActivity(
-            appContext(), requestCode, intent,
-            android.app.PendingIntent.FLAG_IMMUTABLE or
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+            appContext(), requestCode, intent, authPendingIntentFlags)
         val view = RemoteViews(packageName, R.layout.autofill_item).apply {
             setTextViewText(R.id.autofill_text, "✨ Generate SimpleLogin alias + password")
         }
