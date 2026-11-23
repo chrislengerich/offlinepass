@@ -53,23 +53,6 @@ class AutofillAuthActivity : ComponentActivity() {
 
     private var touchDialog: AlertDialog? = null
 
-    /** THE SIGNING-TRANSACTION GATE's item summary: the generate flows
-     *  set it before the save; the seal window's reopen (the promote's
-     *  unseal, the SL key's reveal) renders the ONE screenlock AS the
-     *  signing transaction. */
-    private var pendingTxDescription: String? = null
-
-    /** THE ONE SCREENLOCK for the autofill's save: the signing
-     *  transaction's shape. Its success opens the 60s keystore window
-     *  the promote's unseal, the SL key's reveal and the commit
-     *  signature all share — the flow never shows a second prompt. */
-    private suspend fun signingTransactionGate(): Boolean =
-        ScreenlockGate.promptGate(this,
-            "Sign vault change",
-            "Screen-lock signature for this revision",
-            strongOrCredential = true,
-            description = pendingTxDescription)
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         com.offlinepass.app.vault.VaultSession.init(applicationContext)
@@ -104,12 +87,6 @@ class AutofillAuthActivity : ComponentActivity() {
                     // unlock, so the vault operations run quietly.
                     val origin = name?.takeIf { it.isNotBlank() } ?: "Generated login"
                     val generatedPassword = PasswordGen.password()
-                    // THE ONE SCREENLOCK's SUMMARY (provisional — the alias
-                    // is not created yet): the SL key's reveal may need the
-                    // window, and its reopen renders AS the signing
-                    // transaction.
-                    pendingTxDescription = VaultSession.saveTransactionText(
-                        ProtonItem(name = origin, password = generatedPassword))
                     var alias: String? = null
                     var aliasError: String? = null
                     try {
@@ -119,16 +96,9 @@ class AutofillAuthActivity : ComponentActivity() {
                         // default mailbox → the alias. The api key comes
                         // from EITHER state: the unlocked session, or — the
                         // common case, the vault auto-locks — the sealed
-                        // cache: a closed keystore window reopens BEHIND the
-                        // signing-transaction gate (ONE screenlock), then
-                        // the reveal retries quietly.
-                        val apiKey = try {
-                            resolveSimpleLoginApiKey()
-                        } catch (e: Exception) {
-                            if (!SealedVault.isAuthError(e)) throw e
-                            if (!signingTransactionGate()) throw e
-                            resolveSimpleLoginApiKey()
-                        }
+                        // cache (the gate ABOVE opened the keystore auth
+                        // window, so the reveal is authorized now).
+                        val apiKey = resolveSimpleLoginApiKey()
                         alias = SimpleLoginChain.createAlias(
                             SimpleLoginHttp(), apiKey, origin)
                         Log.i(TAG, "the alias created: $alias — the reveal store armed (generate_alias)")
@@ -142,7 +112,6 @@ class AutofillAuthActivity : ComponentActivity() {
                         username = alias ?: "",
                         urls = listOf("https://$origin"),
                         password = generatedPassword)
-                    pendingTxDescription = VaultSession.saveTransactionText(item)
                     AutofillRevealStore.put(item, "generate_alias")
                     // THE RESULT-CARRIED FILL: the response rides the
                     // auth result — the framework applies it directly at
@@ -199,10 +168,6 @@ class AutofillAuthActivity : ComponentActivity() {
                             listOf("https://$origin") else emptyList(),
                         email = typedEmail,
                         password = PasswordGen.password())
-                    // THE ONE SCREENLOCK's SUMMARY: the seal window's
-                    // reopen (the promote's gate) renders AS the signing
-                    // transaction carrying THIS item's details.
-                    pendingTxDescription = VaultSession.saveTransactionText(item)
                     AutofillRevealStore.put(item, "generate")
                     // THE RESULT-CARRIED FILL (the same as the alias chip):
                     // the identity is blank here — the username ids stay
@@ -514,11 +479,9 @@ class AutofillAuthActivity : ComponentActivity() {
             }
         }
         // The seal/unseal gate: the framework-enforced authenticator set
-        // matching the seal key — THE SIGNING TRANSACTION's shape: the
-        // generate flow's only possible prompt is the signing (the item's
-        // summary rides the description), never a generic unlock gate.
-        VaultSession.sealGate = { _, _ ->
-            signingTransactionGate()
+        // matching the seal key — the same wrapper MainActivity installs.
+        VaultSession.sealGate = { title, subtitle ->
+            ScreenlockGate.promptGate(this, title, subtitle, strongOrCredential = true)
         }
         VaultSession.openPgpPinPrompt = {
             kotlinx.coroutines.suspendCancellableCoroutine { cont ->
