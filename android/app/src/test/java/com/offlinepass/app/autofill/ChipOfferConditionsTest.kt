@@ -155,7 +155,7 @@ class ChipOfferConditionsTest {
         // sealed) — the picker shows them without the unlock.
         val item = ProtonItem(name = "github.com",
             username = "user@x.test", urls = listOf("https://github.com"))
-        assertEquals("🔒 github.com — user@x.test — tap, unlock, fill",
+        assertEquals("🔒 github.com — user@x.test",
             svc.sealedLabel(item))
     }
 
@@ -164,13 +164,13 @@ class ChipOfferConditionsTest {
         val item = ProtonItem(name = "github.com",
             email = "alias@aleeas.com", urls = listOf("https://github.com"))
         assertEquals("the email = the identity (username blank)",
-            "🔒 github.com — alias@aleeas.com — tap, unlock, fill",
+            "🔒 github.com — alias@aleeas.com",
             svc.sealedLabel(item))
     }
 
     @Test
     fun `the sealed chip's label without an identity stays clean`() {
-        assertEquals("🔒 github.com — tap, unlock, fill",
+        assertEquals("🔒 github.com",
             svc.sealedLabel(ProtonItem(name = "github.com")))
     }
 
