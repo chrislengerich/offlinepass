@@ -21,11 +21,12 @@ updated; the entries then move under that release's version heading here.
     a real alias on the account's default domain plus a generated
     password, and saves it immediately. If SimpleLogin is unreachable,
     only the password fills — never a dead end.
-  - **Filling takes two taps**: tap the chip, then tap the form field
-    again and pick the entry marked with a check. Chromium-based browsers
-    drop the one-tap fill result (analysis and draft bug report in
+  - **Filling is one tap**: the chip fills the form immediately — the
+    auth result carries the filled dataset and the platform applies it
+    right away (this requires the auth PendingIntents to be mutable on
+    Android 12+; immutable bindings abort the fill — see
     `docs/upstream-vanadium-dataset-auth-report.md`). A toast after each
-    generate walks you through it.
+    generate confirms the save.
   - No screenlock before generation. When a save does need a screenlock,
     the prompt shows what is being saved: site, username, URL, and the
     password length (the password itself stays hidden).
