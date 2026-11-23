@@ -263,6 +263,13 @@ class OfflinepassAutofillService : AutofillService() {
             if (revealed != null && item.itemUuid == revealed.itemUuid) continue
             val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
                 .putExtra(AutofillAuthActivity.EXTRA_UUID, item.itemUuid)
+                // THE FILL TARGETS: the reveal's auth result carries the
+                // filled dataset (the docs' CVC pattern — the same shape
+                // the generate chips use) — the ids it must fill.
+                .putParcelableArrayListExtra(
+                    AutofillAuthActivity.EXTRA_FILL_USERNAME_IDS, ArrayList(fields.username))
+                .putParcelableArrayListExtra(
+                    AutofillAuthActivity.EXTRA_FILL_PASSWORD_IDS, ArrayList(fields.password))
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
             val pi = android.app.PendingIntent.getActivity(
                 appContext(), requestCode++, intent,

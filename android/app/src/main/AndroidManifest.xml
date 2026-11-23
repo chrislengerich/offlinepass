@@ -60,18 +60,22 @@
         </provider>
 
         <!-- THE TASK AFFINITY = EMPTY: the auth lives in the framework's
-             own launch (the finish = back to the form). The theme = the
-             APP's (opaque): the TRANSLUCENT experiment broke the
-             framework's post-auth fill (the measured no-re-invoke, the
-             empty placeholders applied) — the black flash = the accepted
-             trade until the fill's verified on the translucent config. -->
+             own launch (the finish = back to the form). THE TRANSLUCENT
+             THEME: the auth does NOT cover the browser — the underlying
+             activity stays visible (paused, never stopped), so the
+             framework's onStop-driven onInvisibleForAutofill never fires
+             and the fill response never expires while the auth runs. The
+             earlier opaque theme was the black flash; the earlier
+             TRANSLUCENT failure (the empty placeholders applied) cannot
+             recur — the placeholders are null now and the auth result
+             carries the filled dataset. -->
         <activity
             android:name=".autofill.AutofillAuthActivity"
             android:exported="false"
             android:taskAffinity=""
             android:noHistory="true"
             android:excludeFromRecents="true"
-            android:theme="@style/Theme.Offlinepass" />
+            android:theme="@style/Theme.Offlinepass.TranslucentAuth" />
         <service
             android:name=".autofill.OfflinepassAutofillService"
             android:exported="false"

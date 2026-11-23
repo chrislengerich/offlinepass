@@ -407,8 +407,22 @@ class AutofillAuthActivity : ComponentActivity() {
                         return@launch
                     }
                     AutofillRevealStore.put(item, uuid)
-                    Log.i(TAG, "revealed ${item.displayName} — RESULT_OK (the framework re-invokes)")
-                    setResult(RESULT_OK)
+                    // THE RESULT-CARRIED FILL (the docs' CVC pattern — the
+                    // same shape the generate chips use): the revealed
+                    // item's filled DATASET rides the auth result — the
+                    // docs' "the views are filled out IMMEDIATELY". On the
+                    // platforms that drop the result (the measured
+                    // Vanadium data=null) the bare RESULT_OK's re-focus
+                    // path still serves the item first (the revealed
+                    // dataset prepends the sheet).
+                    val resultIntent = Intent()
+                    buildResultDataset(applicationContext, intent,
+                        "✓ ${item.displayName} — ${item.identity}", item)?.let {
+                            resultIntent.putExtra(
+                                AutofillManager.EXTRA_AUTHENTICATION_RESULT, it)
+                        }
+                    Log.i(TAG, "revealed ${item.displayName} — RESULT_OK (the fill rides the result)")
+                    setResult(RESULT_OK, resultIntent)
                     finish()
                 }
             }

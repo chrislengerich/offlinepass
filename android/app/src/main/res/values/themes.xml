@@ -2,4 +2,24 @@
     <!-- Framework theme: no appcompat/material XML dependency needed while
          the UI is Compose-only. -->
     <style name="Theme.Offlinepass" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- THE AUTOFILL AUTH's TRANSLUCENT THEME: the auth activity does NOT
+         cover the browser — a translucent window keeps the underlying
+         activity VISIBLE (paused, never stopped), so the framework's
+         onStop-driven onInvisibleForAutofill never fires and the fill
+         response NEVER EXPIRES while the auth runs (the source-proven
+         expiry: AutofillClientController.onActivityStopped). The earlier
+         translucent experiment failed because the datasets carried
+         EMPTY-STRING placeholders that the framework then applied into
+         the fields — the placeholders are NULL now (the docs' CVC
+         pattern), so that failure mode fills nothing. -->
+    <style name="Theme.Offlinepass.TranslucentAuth"
+        parent="Theme.Offlinepass">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>
