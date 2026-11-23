@@ -395,7 +395,10 @@ class OfflinepassAutofillService : AutofillService() {
         }
         val ds = Dataset.Builder().setAuthentication(pi.intentSender)
             .setId("generate")
-        fields.password.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
+        // THE AUTH'D DATASET's PLACEHOLDERS = NULL (the docs' CVC pattern):
+        // the empty-string values mark the views CHANGED and pollute the
+        // session state — the docs' sample passes null.
+        fields.password.forEach { id -> ds.setValue(id, null, view) }
         Log.i(TAG, "generate chip offered for $origin (id=generate)")
         return ds.build()
     }
@@ -451,8 +454,10 @@ class OfflinepassAutofillService : AutofillService() {
         }
         val ds = Dataset.Builder().setAuthentication(pi.intentSender)
             .setId("generate_alias")
-        for (id in fields.username) ds.setValue(id, AutofillValue.forText(""), view)
-        for (id in fields.password) ds.setValue(id, AutofillValue.forText(""), view)
+        // THE PLACEHOLDERS = NULL (the docs' CVC pattern — the empty
+        // strings mark the views CHANGED and pollute the session state).
+        for (id in fields.username) ds.setValue(id, null, view)
+        for (id in fields.password) ds.setValue(id, null, view)
         Log.i(TAG, "alias chip offered for $origin (id=generate_alias)")
         return ds.build()
     }

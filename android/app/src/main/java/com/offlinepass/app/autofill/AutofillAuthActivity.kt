@@ -117,7 +117,7 @@ class AutofillAuthActivity : ComponentActivity() {
                     // auth result — the framework applies it directly at
                     // the finish, whatever the save card took.
                     val resultIntent = Intent()
-                    buildResultResponse(applicationContext, intent,
+                    buildResultDataset(applicationContext, intent,
                         if (item.identity.isNotBlank()) "✓ $origin — ${item.identity}" else "✓ $origin",
                         item)?.let {
                             resultIntent.putExtra(
@@ -172,7 +172,7 @@ class AutofillAuthActivity : ComponentActivity() {
                     // the identity is blank here — the username ids stay
                     // unset (the no-clobber rule), the password fills.
                     val resultIntent = Intent()
-                    buildResultResponse(applicationContext, intent,
+                    buildResultDataset(applicationContext, intent,
                         "✓ $origin — the generated password",
                         item)?.let {
                             resultIntent.putExtra(
@@ -574,21 +574,24 @@ class AutofillAuthActivity : ComponentActivity() {
         const val EXTRA_FILL_PASSWORD_IDS = "fill_password_ids"
 
         /**
-         * THE RESULT-CARRIED FILL: the filled dataset returned with the
-         * auth result (EXTRA_AUTHENTICATION_RESULT) — the framework
-         * applies it DIRECTLY in onAuthenticationResult. This bypasses
-         * the re-invoke fallback whose session bookkeeping dies across
-         * the save card (the browser's log: our result arrived as an
-         * "empty intent" after onInvisibleForAutofill had EXPIRED the
-         * response — the generated item came back as a re-offered chip,
-         * never auto-filled). Mirrors datasetFor: the identity into the
-         * username ids ONLY when non-blank (the no-clobber rule — the
-         * ⚡ item has none), the password always. Null = the caller
-         * degrades to the bare RESULT_OK (the re-invoke path).
+         * THE RESULT-CARRIED FILL (the docs' CVC pattern): the filled
+         * DATASET returned with the auth result
+         * (EXTRA_AUTHENTICATION_RESULT) — the docs' guarantee: "the new
+         * dataset replaces the dataset that requires authentication, and
+         * the views are filled out IMMEDIATELY". The earlier
+         * FillResponse-wrapper took the replace-response route whose
+         * session bookkeeping dies across the save card (the browser's
+         * log: our result arrived as an "empty intent" after
+         * onInvisibleForAutofill had EXPIRED the response — the generated
+         * item came back as a re-offered chip, never auto-filled).
+         * Mirrors datasetFor: the identity into the username ids ONLY
+         * when non-blank (the no-clobber rule — the ⚡ item has none),
+         * the password always. Null = the caller degrades to the bare
+         * RESULT_OK (the re-invoke path).
          */
-        internal fun buildResultResponse(
+        internal fun buildResultDataset(
             context: Context, intent: Intent, label: String, item: ProtonItem
-        ): FillResponse? {
+        ): Dataset? {
             val usernameIds =
                 intent.getParcelableArrayListExtra<AutofillId>(EXTRA_FILL_USERNAME_IDS)
             val passwordIds =
@@ -609,7 +612,7 @@ class AutofillAuthActivity : ComponentActivity() {
             passwordIds.forEach { id ->
                 ds.setValue(id, AutofillValue.forText(item.password), view)
             }
-            return FillResponse.Builder().addDataset(ds.build()).build()
+            return ds.build()
         }
         const val MODE_REVEAL = "reveal"
         const val MODE_GENERATE = "generate"

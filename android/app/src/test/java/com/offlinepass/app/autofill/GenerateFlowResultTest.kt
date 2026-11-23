@@ -3,7 +3,7 @@ package com.offlinepass.app.autofill
 import android.content.Intent
 import android.view.autofill.AutofillId
 import android.view.autofill.AutofillManager
-import android.service.autofill.FillResponse
+import android.service.autofill.Dataset
 import com.offlinepass.app.crypto.ScreenlockGate
 import com.offlinepass.app.vault.Envelope
 import com.offlinepass.app.vault.ProtonItem
@@ -174,7 +174,7 @@ class GenerateFlowResultTest {
         // THE RESULT CONTRACT: the auth result carries the response.
         val resultIntent = shadowOf(activity).getResultIntent()
         assertNotNull("the result intent must exist", resultIntent)
-        val response = resultIntent.getParcelableExtra<FillResponse>(
+        val response = resultIntent.getParcelableExtra<Dataset>(
             AutofillManager.EXTRA_AUTHENTICATION_RESULT)
         assertNotNull("THE FILL MUST RIDE THE AUTH RESULT " +
             "(the empty intent = the re-offered-chip regression)", response)
@@ -191,7 +191,7 @@ class GenerateFlowResultTest {
         // ride the auth result and save.
         val activity = runFlow(AutofillAuthActivity.MODE_GENERATE_ALIAS)
         val resultIntent = shadowOf(activity).getResultIntent()
-        val response = resultIntent?.getParcelableExtra<FillResponse>(
+        val response = resultIntent?.getParcelableExtra<Dataset>(
             AutofillManager.EXTRA_AUTHENTICATION_RESULT)
         assertNotNull("the password-only degradation still fills", response)
         assertEquals("the degraded save landed", 1, cacheManifest().size)
@@ -207,7 +207,7 @@ class GenerateFlowResultTest {
             urls = listOf("https://github.com"))
         val activity = runFlow(AutofillAuthActivity.MODE_GENERATE, seeded)
         val resultIntent = shadowOf(activity).getResultIntent()
-        assertNotNull(resultIntent.getParcelableExtra<FillResponse>(
+        assertNotNull(resultIntent.getParcelableExtra<Dataset>(
             AutofillManager.EXTRA_AUTHENTICATION_RESULT))
         assertEquals("the update, not the append: one record",
             1, cacheManifest().size)

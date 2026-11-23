@@ -83,7 +83,7 @@ class AutofillResultFillTest {
     fun `the alias item builds the response (the identity and the password ride)`() {
         val f = fields(usernames = 2, passwords = 1)
         val intent = svc.generateIntent("generate_alias", "github.com", f)
-        val r = AutofillAuthActivity.buildResultResponse(
+        val r = AutofillAuthActivity.buildResultDataset(
             app, intent, "✓ github.com — github.word@aleeas.com", aliasItem())
         assertNotNull("the response = the framework's direct apply", r)
     }
@@ -93,13 +93,13 @@ class AutofillResultFillTest {
         val f = fields(usernames = 1, passwords = 1)
         val intent = svc.generateIntent("generate", "github.com", f)
         val item = ProtonItem(name = "github.com", password = "pw-16-characters")
-        val r = AutofillAuthActivity.buildResultResponse(app, intent, "✓ github.com", item)
+        val r = AutofillAuthActivity.buildResultDataset(app, intent, "✓ github.com", item)
         assertNotNull("the password fills; the username ids stay unset (the no-clobber rule)", r)
     }
 
     @Test
     fun `no password ids in the intent - no response (the graceful skip)`() {
-        val r = AutofillAuthActivity.buildResultResponse(
+        val r = AutofillAuthActivity.buildResultDataset(
             app, Intent(), "✓", aliasItem())
         assertNull("the bare RESULT_OK fallback - never a crash", r)
     }
@@ -109,6 +109,6 @@ class AutofillResultFillTest {
         val f = fields(passwords = 1)
         val intent = svc.generateIntent("generate", "github.com", f)
         val item = ProtonItem(name = "github.com", password = "pw")
-        assertTrue(AutofillAuthActivity.buildResultResponse(app, intent, "✓", item) != null)
+        assertTrue(AutofillAuthActivity.buildResultDataset(app, intent, "✓", item) != null)
     }
 }
