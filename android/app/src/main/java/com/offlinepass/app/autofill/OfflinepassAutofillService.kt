@@ -270,7 +270,8 @@ class OfflinepassAutofillService : AutofillService() {
                     AutofillAuthActivity.EXTRA_FILL_USERNAME_IDS, ArrayList(fields.username))
                 .putParcelableArrayListExtra(
                     AutofillAuthActivity.EXTRA_FILL_PASSWORD_IDS, ArrayList(fields.password))
-                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                // NO FLAG_ACTIVITY_NEW_TASK — the for-result delivery (the
+                // same reasoning as generateIntent).
             val pi = android.app.PendingIntent.getActivity(
                 appContext(), requestCode++, intent,
                 android.app.PendingIntent.FLAG_IMMUTABLE or
@@ -369,6 +370,14 @@ class OfflinepassAutofillService : AutofillService() {
                 AutofillAuthActivity.EXTRA_FILL_USERNAME_IDS, ArrayList(fields.username))
             .putParcelableArrayListExtra(
                 AutofillAuthActivity.EXTRA_FILL_PASSWORD_IDS, ArrayList(fields.password))
+            // NO FLAG_ACTIVITY_NEW_TASK: the framework starts the auth
+            // PendingIntent FOR RESULT (startIntentSenderForResult) — the
+            // new-task launch ABORTS on the first attempt (the measured
+            // instant CANCELED result 9ms in, before onCreate) and the
+            // spurious result consumes the framework's auth tracking —
+            // the real RESULT_OK at the finish then has no recipient and
+            // the session stays WAITING_FOR_AUTH forever. The in-task
+            // launch (translucent over the browser) delivers the result.
 
     private fun generateDataset(fields: Fields, requestCode: Int = 30): Dataset? {
         if (fields.password.isEmpty()) {
@@ -378,7 +387,6 @@ class OfflinepassAutofillService : AutofillService() {
         val origin = fields.webDomain ?: fields.appPackage
         val intent = generateIntent(AutofillAuthActivity.MODE_GENERATE, origin, fields)
             .putExtra(AutofillAuthActivity.EXTRA_USERNAME, fields.usernameValue ?: "")
-            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         val pi = android.app.PendingIntent.getActivity(
             appContext(), requestCode, intent,
             android.app.PendingIntent.FLAG_IMMUTABLE or
@@ -437,7 +445,6 @@ class OfflinepassAutofillService : AutofillService() {
         val origin = fields.webDomain ?: fields.appPackage
         val intent = generateIntent(AutofillAuthActivity.MODE_GENERATE_ALIAS, origin, fields)
         slUuid?.let { intent.putExtra(AutofillAuthActivity.EXTRA_SL_UUID, it) }
-        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         val pi = android.app.PendingIntent.getActivity(
             appContext(), requestCode, intent,
             android.app.PendingIntent.FLAG_IMMUTABLE or
