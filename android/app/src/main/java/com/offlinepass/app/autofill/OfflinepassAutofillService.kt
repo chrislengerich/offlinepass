@@ -277,22 +277,13 @@ class OfflinepassAutofillService : AutofillService() {
             builder.addDataset(ds.build())
             count++
         }
-        // The unsealed/not-sealed fallback: the open-the-app dataset.
-        val intent = android.content.Intent(appContext(), MainActivity::class.java)
-            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        val pi = android.app.PendingIntent.getActivity(
-            appContext(), 0, intent,
-            android.app.PendingIntent.FLAG_IMMUTABLE or
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT)
-        val view = RemoteViews(packageName, R.layout.autofill_item).apply {
-            setTextViewText(R.id.autofill_text, "🔒 Unlock offlinepass (touch key), then autofill again")
-        }
-        val ds = Dataset.Builder().setAuthentication(pi.intentSender)
-            .setId("app")
-        ids.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
-        builder.addDataset(ds.build())
-        Log.i(TAG, "sealed response: $count entry datasets + the app fallback")
+        // THE APP FALLBACK is NOT offered here: the sealed sheet's unlock
+        // lives in the 🔒 items themselves (tap, unlock, fill) and the
+        // chips cover the generate - a standing "Unlock offlinepass"
+        // dataset on every field was misplaced noise. It remains the
+        // whole point of the LOCKED sheet (no sealed items - nothing
+        // else to offer).
+        Log.i(TAG, "sealed response: $count entry datasets")
         return builder.withSaveInfo(fields).build()
     }
 
