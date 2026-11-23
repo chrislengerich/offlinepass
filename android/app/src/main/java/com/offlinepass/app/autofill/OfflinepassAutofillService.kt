@@ -35,7 +35,10 @@ class OfflinepassAutofillService : AutofillService() {
         /** The first non-empty text currently in the fields (the save
          *  request's capture; the fill requests leave them null). */
         val usernameValue: String? = null,
-        val passwordValue: String? = null
+        val passwordValue: String? = null,
+        /** The focused field's kind (the sheet's shape: the ✨ chip's
+         *  docs'-CVC experiment applies to the username-focused sheets). */
+        val focusedIsUsername: Boolean = false
     ) {
         /** The page-match predicate (the ranking's match rule, shared with
          *  the generate-chip's offer condition). */
@@ -224,9 +227,22 @@ class OfflinepassAutofillService : AutofillService() {
                 else -> 0
             }
         }
+        // THE EXPERIMENT (the docs' CVC shape): the ✨-focused sheet = the
+        // response = the single auth'd dataset — the platform's
+        // dataset-replacement ("the new dataset replaces the dataset that
+        // requires authentication, and the views are filled out
+        // immediately") is then exercised in its documented shape.
+        val slUuid = sealedSimpleLoginUuid()
+        if (fields.focusedIsUsername && slUuid != null) {
+            Log.i(TAG, "EXPERIMENT: the docs' CVC shape — the response = the ✨'s dataset only (the username-focused sheet)")
+            val builderExp = FillResponse.Builder()
+            generateAliasDataset(fields, 10, slUuid)?.let { builderExp.addDataset(it) }
+            return builderExp.build()
+        }
+
         val builder = FillResponse.Builder()
         var count = 0
-        // The revealed item's REAL dataset FIRST — with the SAME dataset
+        // THE REVEALED ITEM'S REAL DATASET FIRST — with the SAME dataset
         // ID as its sealed chip: the framework matches the authenticated
         // dataset by ID across the re-invocation and AUTO-FILLS the
         // values (no sheet re-show, no second tap — the measured 25s
@@ -237,33 +253,15 @@ class OfflinepassAutofillService : AutofillService() {
                 "✓ ${revealed.displayName} — ${revealed.identity}",
                 revealedId ?: revealed.itemUuid))
             count++
-            // THE RE-INVOKE FILL'S TRACE (the ✨ chip's post-save fill was
-            // reported missing while the ⚡'s worked — the mechanisms are
-            // identical, so this line pins what the re-invoked response
-            // actually carried: the identity, the secret's presence, and
-            // the field ids the framework can apply).
             Log.i(TAG, "revealed dataset: id=${revealedId ?: revealed.itemUuid} " +
                 "identity=${revealed.identity} pwLen=${revealed.password.length} " +
                 "usernameIds=${fields.username.size} passwordIds=${fields.password.size}")
         }
         val ids = (fields.username + fields.password)
         var requestCode = 10
-        // THE GENERATE CHIP: offered on EVERY password field here too
-        // (the tap gates, generates, the fill rides the auth result).
+        // THE ⚡ CHIP: the password-focused sheets — the registration case.
         generateDataset(fields, requestCode++)?.let { builder.addDataset(it) }
         count++
-        // THE ALIAS CHIP in the SEALED sheet: the vault auto-locks, so the
-        // fill requests are sealed in practice — the chip is offered when
-        // the SL entry exists in the manifest (its urls are clear text)
-        // and the form has a username/email field. The tap = the gate
-        // FIRST (the keystore auth window), then the activity reveals the
-        // SL item's api key through the sealed cache. The uuid rides the
-        // intent so the activity skips the manifest scan.
-        val slUuid = sealedSimpleLoginUuid()
-        if (aliasChipOffered(fields, slUuid != null)) {
-            generateAliasDataset(fields, requestCode++, slUuid)?.let { builder.addDataset(it) }
-            count++
-        }
         for (item in ranked.take(5)) {
             if (revealed != null && item.itemUuid == revealed.itemUuid) continue
             val intent = android.content.Intent(appContext(), AutofillAuthActivity::class.java)
@@ -467,6 +465,7 @@ class OfflinepassAutofillService : AutofillService() {
         val password = mutableListOf<AutofillId>()
         var usernameValue: String? = null
         var passwordValue: String? = null
+        var focusedIsUsername = false
         var appPackage = structure.activityComponent.packageName
         var webDomain: String? = null
 
@@ -512,7 +511,7 @@ class OfflinepassAutofillService : AutofillService() {
         for (i in 0 until structure.windowNodeCount) {
             walk(structure.getWindowNodeAt(i).rootViewNode)
         }
-        return Fields(username, password, appPackage, webDomain, usernameValue, passwordValue)
+        return Fields(username, password, appPackage, webDomain, usernameValue, passwordValue, focusedIsUsername)
     }
 
     private fun appContext() = applicationContext
