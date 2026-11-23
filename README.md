@@ -34,7 +34,7 @@ Key Features:
 Getting Started:
 - Grab an Android phone and Yubikey if you don't have one already.
 - Download the most recent release APK of the Android app from https://github.com/chrislengerich/offlinepass/releases/
-- Setup per instructions in [`android/README.md`](android/README.md)
+- Setup your key and app per instructions in [`android/README.md`](android/README.md)
 
 ## License
 
