@@ -10,10 +10,14 @@ opens instantly for the tab you clicked from; scan the phone's looping
 paste QR with the Chromebook's camera; decryption starts automatically
 once the transfer completes (insert key → FIDO2 PIN + touch — no extra
 click); an entry whose URLs match the tab (subdomain-aware) **auto-fills**
-and the window closes; with no match the extension still attempts the fill
-(the first entry) but stays open with a warning banner plus the entry cards
-(Fill / Reveal / Copy / TOTP-copy) so the guessed fill can be verified,
-copied, or redone by hand. Nothing runs on any site by default: `activeTab` + no content
+the password plus the entry's username/email into the login form; the scan
+window stays open with the entry cards (Fill / Reveal / Copy / TOTP-copy) so
+the fill can be verified, copied, or redone by hand — the decrypted
+passwords zero only when the window closes. With no URL match the extension
+still attempts the fill (the first entry) with a warning banner. Login-form
+detection prefers `autocomplete="username"/"email"` hints and never fills
+search boxes (site-header search inputs are skipped). Nothing runs on any
+site by default: `activeTab` + no content
 scripts — the platform grants access only to the tab you clicked on, and
 every decryption requires the key.
 

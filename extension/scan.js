@@ -28,6 +28,13 @@ let done = false;
 let entries = [];   // {name, username, password, totpUri, urls}
 let stopTotp = null;
 
+// The window stays open after a fill (the cards keep Reveal/Copy/TOTP
+// usable), so the zeroing the old auto-close did inline now happens when
+// the window actually closes — manual close or navigation alike.
+window.addEventListener("pagehide", () => {
+  for (const e of entries) e.password = "";
+});
+
 // ---- camera + QRFT assembly -----------------------------------------------
 
 function stopCamera() {
@@ -177,10 +184,10 @@ async function prepareDecrypt(text) {
   }
 }
 
-/** Deliver decrypted entries: URL-match against the target tab → auto-fill
- *  (no UI, window closes); no match → attempt the fill anyway (the first
- *  entry), but stay open with a warning and the entry cards (copy/reveal)
- *  so the guess can be checked or undone by hand. */
+/** Deliver decrypted entries: URL-match against the target tab → auto-fill;
+ *  no match → attempt the fill anyway (the first entry) with the no-match
+ *  warning banner. Either way the window STAYS OPEN with the entry cards
+ *  (copy/reveal/TOTP) so the fill can be verified, undone, or a TOTP copied. */
 async function deliver(items) {
   await refreshTarget();
   const best = bestMatch(items);
@@ -188,21 +195,18 @@ async function deliver(items) {
     msgEl.textContent = "Matched " + (targetInfo ? targetInfo.origin : "tab") +
       " — filling \"" + best.name + "\"…";
     const ok = await fillTab(best);
-    if (ok) return; // window closed by fillTab
-    // Fill couldn't find fields — fall back to the cards.
-    msgEl.textContent = "Auto-fill found no login fields on the tab — fill manually.";
+    if (!ok) {
+      // Fill couldn't find fields — fall back to the cards.
+      msgEl.textContent = "Auto-fill found no login fields on the tab — fill manually.";
+    }
   } else {
     const first = items[0];
     if (first) {
       msgEl.textContent = "No URL match" + (targetInfo ? " for " + targetInfo.origin : "") +
         " — filling \"" + first.name + "\" anyway; verify it below.";
-      const ok = await fillTab(first, { keepOpen: true });
-      if (ok) {
-        noMatchFill = true;
-        showEntries(items);
-        return;
-      }
-      msgEl.textContent = "Fill attempt failed — fill manually from the cards below.";
+      const ok = await fillTab(first);
+      if (ok) noMatchFill = true;
+      else msgEl.textContent = "Fill attempt failed — fill manually from the cards below.";
     }
   }
   showEntries(items);
@@ -474,12 +478,11 @@ function showEntries(items) {
   });
 }
 
-/** Fills the captured tab; resolves true when fields were found. Default
- *  (matched) mode closes the window and zeroes the passwords right then.
- *  With { keepOpen: true } — the no-URL-match path — the window stays up
- *  with the cards (copy/reveal) and the passwords intact, so the guessed
- *  fill can be verified or redone by hand. */
-async function fillTab(item, opts = {}) {
+/** Fills the captured tab; resolves true when fields were found. The window
+ *  never auto-closes: the fill is confirmed in fillMsg and the entry cards
+ *  (copy/reveal/TOTP) stay usable; the passwords zero on window close
+ *  (the pagehide listener). */
+async function fillTab(item) {
   fillMsg.textContent = "";
   if (targetTabId == null) { fillMsg.textContent = "No target tab (open via the toolbar popup)."; return false; }
   let tab;
@@ -496,13 +499,8 @@ async function fillTab(item, opts = {}) {
       type: "offlinepass-fill", username: item.username, password: item.password,
     });
     if (res && res.ok) {
-      if (opts.keepOpen) {
-        fillMsg.textContent = "Filled \"" + item.name + "\" into " +
-          (targetInfo ? targetInfo.origin : "the tab") + ".";
-        return true;
-      }
-      item.password = ""; entries.forEach((e) => { e.password = ""; });
-      window.close(); // filled — popup gone immediately
+      fillMsg.textContent = "Filled \"" + item.name + "\" into " +
+        (targetInfo ? targetInfo.origin : "the tab") + ".";
       return true;
     }
     fillMsg.textContent = "No login fields found on that tab" + (res && res.error ? ": " + res.error : ".");

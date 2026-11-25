@@ -82,6 +82,16 @@ only network = the GitHub sync itself. The extension = Load unpacked
       WebAuthn-PRF: not yet implemented — the memory-only session dies
       with the tab; the re-open = the card again)
 - [ ] The autofill still works for the received pastes
+- [ ] The matched auto-fill leaves the scan window OPEN with the entry
+      cards (Reveal/Copy/TOTP still work); the passwords zero when the
+      window is closed (reopen → Reveal shows "No password" only if the
+      window was actually destroyed, not merely refocused)
+- [ ] On a page with a site-header search box the username/email lands in
+      the login field, NEVER the search input (type="search", a
+      name/id/placeholder like "search"/"query"/"filter", or a
+      form[role="search"])
+- [ ] A username-only entry (no password on the page) still fills the
+      username field and reports success
 
 ## 4. The failure-recovery drill
 - [ ] The tab closed mid-sync → re-open: the local commit intact; the
