@@ -108,11 +108,28 @@ object VaultSession {
     }
 
     /** The vault encrypt: the plaintext JSON → the OpenPGP ciphertext for
-     *  the repo's recipients (keys/encrypt/&lt;keyid&gt;.pub.asc). */
+     *  the repo's recipients (keys/encrypt/&lt;keyid&gt;.pub.asc). The
+     *  capability RULE itself lives in [OpenPgpCardCrypto.loadRecipientKeys]
+     *  (the KEY FLAGS, not BC's algorithm-based isEncryptionKey — the S/A
+     *  subkey seal that once made the repo unreadable); this lambda adds
+     *  the seal↔selection correspondence check: every PKESK in the
+     *  ciphertext must belong to the loaded recipient material, and a
+     *  mismatch fails LOUDLY before any commit. */
     internal var vaultEncryptBytes: suspend (plain: ByteArray, repoRoot: File, keyIds: LongArray) -> ByteArray =
         { plain, repoRoot, keyIds ->
-            com.offlinepass.app.crypto.OpenPgpCardCrypto.encryptToBytes(
-                plain, "10.gpg", loadRecipientKeysFor(repoRoot, keyIds))
+            val keys = loadRecipientKeysFor(repoRoot, keyIds)
+            val out = com.offlinepass.app.crypto.OpenPgpCardCrypto.encryptToBytes(
+                plain, "10.gpg", keys)
+            val allowed = keys.map { it.keyID }.toSet() + keyIds.toSet()
+            val strangers = com.offlinepass.app.crypto.OpenPgpCardCrypto
+                .pkeskKeyIds(out).filter { it !in allowed }
+            if (strangers.isNotEmpty()) {
+                throw java.io.IOException(
+                    "the seal produced PKESK(s) outside the intended recipients (" +
+                        strangers.joinToString(", ") { "0x%016X".format(it) } +
+                        ") — refusing to commit an envelope nobody may open")
+            }
+            out
         }
 
     /** Loads the recipients' public keys from the repo's armored files

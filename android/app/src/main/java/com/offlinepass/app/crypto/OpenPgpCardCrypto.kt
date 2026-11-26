@@ -38,6 +38,10 @@ import java.util.Date
  */
 object OpenPgpCardCrypto {
 
+    /** The KEY FLAGS bits (RFC 4880 §5.2.3.21) that grant OpenPGP
+     *  encryption: 0x04 = encrypt-communications, 0x08 = encrypt-storage. */
+    private const val KEY_FLAG_ENCRYPT = 0x04 or 0x08
+
     /**
      * The card-in-the-middle decryptor: BC hands the PKESK's encrypted
      * session key here, we run the card op (blocking — the call chain is
@@ -248,8 +252,20 @@ object OpenPgpCardCrypto {
 
     /**
      * Loads the encryption-capable public keys from an armored key file
-     * (a single keyring). Prefers the subkeys; the primary falls back when
-     * a key has no encryption subkey (the fixture layout).
+     * (a single keyring). The KEY FLAGS rule (RFC 4880 §5.2.3.21):
+     * "encryption-capable" = the flag bits 0x04/0x08 in the self-signatures
+     * — NOT the algorithm. BC's [PGPPublicKey.isEncryptionKey] reports true
+     * for EVERY RSA subkey regardless of its flags, so the old
+     * algorithm-based filter once sealed the vault to the SIGN/AUTH
+     * subkeys of [CE]-primary keys (the primaries — the only keys
+     * anything could open — were excluded; the repo mode's vault became
+     * unreadable until the seal was redone).
+     *
+     * Preference: the encryption-flagged SUBKEY, then the
+     * encryption-flagged primary (the [CE]-only layout), then — only when
+     * the ring carries NO flags at all (the RFC default = all
+     * capabilities, e.g. the card-constructed bare keys) — the
+     * algorithm-level check.
      */
     fun loadRecipientKeys(armored: ByteArray): List<PGPPublicKey> {
         val decoder = PGPUtil.getDecoderStream(ByteArrayInputStream(armored))
@@ -257,10 +273,31 @@ object OpenPgpCardCrypto {
             ?: throw PGPException("empty key file")
         val ring = obj as? PGPPublicKeyRing
             ?: throw PGPException("not a public key ring: ${obj.javaClass.simpleName}")
-        val subkeys = ring.publicKeys.asSequence().filter { it.isEncryptionKey && !it.isMasterKey }
-            .toList()
-        if (subkeys.isNotEmpty()) return subkeys
-        return ring.publicKeys.asSequence().filter { it.isEncryptionKey }.toList()
+        val keys = ring.publicKeys.asSequence().toList()
+        // A ring that expresses NO flags at all (the card-constructed bare
+        // keys) falls back to the RFC default — the algorithm-level check.
+        if (keys.none { keyFlags(it) != 0 }) return keys.filter { it.isEncryptionKey }
+        fun flagged(subkey: Boolean) = keys.filter {
+            (if (subkey) !it.isMasterKey else it.isMasterKey) &&
+                (keyFlags(it) and KEY_FLAG_ENCRYPT) != 0
+        }
+        flagged(subkey = true).takeIf { it.isNotEmpty() }?.let { return it }
+        flagged(subkey = false).takeIf { it.isNotEmpty() }?.let { return it }
+        // The ring carries flags but grants no encryption (a sign-only
+        // layout) — sealing to it would produce PKESKs nothing can open.
+        throw PGPException(
+            "the key ring grants no encryption capability (the KEY FLAGS " +
+                "certify/sign/auth only) — re-export the recipient key")
+    }
+
+    /** The union of the KEY FLAGS subpackets across a key's signatures
+     *  (0 = no flags information — the caller falls back to the RFC
+     *  default). */
+    private fun keyFlags(key: PGPPublicKey): Int {
+        var flags = 0
+        val sigs = key.signatures
+        while (sigs.hasNext()) flags = flags or sigs.next().hashedSubPackets.keyFlags
+        return flags
     }
 
     /**

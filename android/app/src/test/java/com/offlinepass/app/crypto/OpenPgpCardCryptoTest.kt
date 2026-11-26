@@ -287,4 +287,73 @@ class OpenPgpCardCryptoTest {
             !wrong.fingerprint.contentEquals(parsed.fingerprint))
     }
 
+    // -- THE RECIPIENT-SELECTION RULE (the S/A-subkey seal regression) -----
+    // The incident: keys/encrypt carried [CE]-primary rings whose only
+    // subkeys were [S] and [A] (rsa) — BC's algorithm-based
+    // isEncryptionKey() passed them, the old "prefer the subkeys" filter
+    // sealed the vault to the SIGN/AUTH subkeys, and nothing (the card,
+    // gpg) could open the result. The fixtures here reproduce that exact
+    // ring shape.
+
+    @Test
+    fun cePrimaryRingSelectsThePrimaryNotTheSubkeys() {
+        // The [CE]-primary + rsa [S]/[A]-subkeys ring: the ONLY
+        // encryption-capable key = the primary.
+        val selected = OpenPgpCardCrypto.loadRecipientKeys(
+            resource("ce-shape.pub.asc"))
+        assertEquals("exactly one recipient — the primary", 1, selected.size)
+        assertTrue("the selected key is the MASTER key", selected[0].isMasterKey)
+        assertEquals("the selected key is the [CE] primary",
+            0x32584CAC3B2F50BCUL.toLong(), selected[0].keyID)
+    }
+
+    @Test
+    fun cePrimarySealRoundTripsThroughTheCard() {
+        // The seal the fixed selection produces IS openable: the software
+        // card holding the primary's secret decrypts it.
+        val selected = OpenPgpCardCrypto.loadRecipientKeys(
+            resource("ce-shape.pub.asc"))
+        val plain = "the [CE]-primary seal round trip — секрет ✅"
+            .toByteArray(Charsets.UTF_8)
+        val env = OpenPgpCardCrypto.encryptToBytes(plain, "10.gpg", selected)
+        val back = runBlocking {
+            OpenPgpCardCrypto.decrypt(
+                env, longArrayOf(selected[0].keyID),
+                softwareCard("ce-shape.sec.asc", selected[0].keyID))
+        }
+        assertArrayEquals(plain, back)
+    }
+
+    @Test
+    fun eSubkeyRingStillPrefersTheSubkey() {
+        // The positive shape ([SC] primary + a real [E] subkey): the
+        // subkey preference survives — the flagged SUBKEY wins.
+        val selected = OpenPgpCardCrypto.loadRecipientKeys(
+            resource("e-shape.pub.asc"))
+        assertEquals("exactly one recipient — the [E] subkey", 1, selected.size)
+        assertTrue("the selected key is a SUBKEY", !selected[0].isMasterKey)
+        val plain = "the [E]-subkey seal round trip".toByteArray(Charsets.UTF_8)
+        val env = OpenPgpCardCrypto.encryptToBytes(plain, "10.gpg", selected)
+        val back = runBlocking {
+            OpenPgpCardCrypto.decrypt(
+                env, longArrayOf(selected[0].keyID),
+                softwareCard("e-shape.sec.asc", selected[0].keyID))
+        }
+        assertArrayEquals(plain, back)
+    }
+
+    @Test
+    fun noEncryptionCapabilityRingFailsLoudly() {
+        // A ring that expresses flags but grants no encryption ([SC]
+        // primary, no subkeys) must REFUSE — never silently seal to a key
+        // nothing can open.
+        var failed = false
+        try {
+            OpenPgpCardCrypto.loadRecipientKeys(resource("sign-only.pub.asc"))
+        } catch (e: Exception) {
+            failed = true
+        }
+        assertTrue("the sign-only ring must be refused", failed)
+    }
+
 }
