@@ -34,12 +34,36 @@ function httpLib() {
 }
 
 /** The vault's current plaintext (the decrypted by the card, on
- *  demand): reads state/10.gpg from the FS and runs the card pipeline. */
-export async function currentPlaintext(fs, card, token, httpUrl, onLog = () => {}) {
+ *  demand): reads state/10.gpg from the FS and runs the card pipeline.
+ *  The [dir] = the repo dir override (the tests' absolute dir; the app
+ *  omits it). */
+export async function currentPlaintext(fs, card, token, httpUrl, onLog = () => {}, dir = REPO_DIR) {
   const git = gitLib();
-  const bytes = await fs.promises.readFile(`${REPO_DIR}/${VAULT_PATH}`);
+  const bytes = await fs.promises.readFile(`${dir}/${VAULT_PATH}`);
   const result = await decryptWithCard(bytes, card, onLog);
   return new TextDecoder().decode(result.data);
+}
+
+/** The recipients' public keys: the repo's keys/encrypt/*.pub.asc — the
+ *  SAME contract app.js's persist() uses for its saves. [fsP] = the
+ *  normalized promises API (the caller's `fsp.promises ?? fsp`). */
+async function recipientKeys(fsP, dir) {
+  let names;
+  try { names = await fsP.readdir(`${dir}/keys/encrypt`); }
+  catch (e) {
+    throw new Error("no recipient keys in the synced repo (keys/encrypt/) — " +
+      "sync once with the phone first");
+  }
+  const out = [];
+  for (const name of names.filter((n) => n.endsWith(".pub.asc"))) {
+    const armor = await fsP.readFile(`${dir}/keys/encrypt/${name}`, "utf8");
+    out.push(await openpgp.readKey({ armoredKey: armor }));
+  }
+  if (!out.length) {
+    throw new Error("no recipient keys in the synced repo (keys/encrypt/) — " +
+      "sync once with the phone first");
+  }
+  return out;
 }
 
 /** The envelope JSON's item extraction + the union-merge (the SAME
@@ -68,31 +92,36 @@ export function unionMerge(current, incoming) {
 }
 
 /** THE FULL SYNC: the fetch → the merge (if diverged) → the commit →
- *  the push. The credentials = the Basic with the token. */
-export async function syncVault({ httpUrl, token, card, onLog = () => {} }) {
+ *  the push. The credentials = the Basic with the token. The [fs] and
+ *  [repoDir] params = the test seams (the app omits them → the
+ *  LightningFS's IndexedDB tree at the standard repo path; the tests
+ *  inject the node fs + the absolute dir). */
+export async function syncVault({ httpUrl, token, card, fs: fsOverride = null, repoDir = null, onLog = () => {} }) {
   const git = gitLib();
-  const fs = new (window.LightningFS)("offlinepass-fs");
-  const dir = REPO_DIR;
+  const fsp = fsOverride ?? new (window.LightningFS)("offlinepass-fs");
+  const fsPromises = fsp.promises ?? fsp;
+  const dir = repoDir ?? REPO_DIR;
   const author = { name: "offlinepass-extension", email: "offlinepass@ext.local" };
   const out = { pushed: false, fetched: false, merged: false, rev: null };
 
   // The remote state first (the fetch = cheap; the tracking = isogit's).
   onLog("fetching…");
-  await git.fetch({ fs, http: httpLib(), httpUrl, token, dir });
+  await git.fetch({ fs: fsp, http: httpLib(), url: httpUrl, dir,
+    onAuth: () => ({ username: "x", password: token }) });
   out.fetched = true;
 
   // The local vault's plaintext (the decrypted on demand).
   let localPlain = null, hasLocal = false;
   try {
-    localPlain = await currentPlaintext(fs, card, token, httpUrl, onLog);
+    localPlain = await currentPlaintext(fsp, card, token, httpUrl, onLog, dir);
     hasLocal = true;
   } catch (e) { onLog(`the local decrypt: ${e.message} — proceeding remote-only`); }
 
   // The remote's plaintext (the fetched 10.gpg).
   let remotePlain = null;
   try {
-    const oid = await git.resolveRef({ fs, dir, ref: "refs/remotes/origin/main" });
-    const { blob } = await git.readBlob({ fs, dir, oid, filepath: VAULT_PATH });
+    const oid = await git.resolveRef({ fs: fsp, dir, ref: "refs/remotes/origin/main" });
+    const { blob } = await git.readBlob({ fs: fsp, dir, oid, filepath: VAULT_PATH });
     const remoteResult = await decryptWithCard(blob, card, onLog);
     remotePlain = new TextDecoder().decode(remoteResult.data);
   } catch (e) {
@@ -115,13 +144,23 @@ export async function syncVault({ httpUrl, token, card, onLog = () => {} }) {
   out.rev = merged.rev;
 
   // The write + the commit + the push (the ALWAYS: the local truth).
-  await fs.promises.mkdir(`${dir}/state`, { recursive: true });
-  await fs.promises.writeFile(`${dir}/${VAULT_PATH}`,
-    new TextEncoder().encode(mergedPlain));
-  await git.add({ fs, dir, filepath: VAULT_PATH });
-  await git.commit({ fs, dir, message: `Update 10.gpg (rev ${merged.rev})`, author });
+  // THE RE-ENCRYPT FIRST: the merged plaintext NEVER touches the repo —
+  // the write/commit/push carry the sealed envelope (the recipients =
+  // the repo's keys/encrypt/*.pub.asc). No keys → abort BEFORE the
+  // write: committing plaintext would defeat the whole design.
+  const keys = await recipientKeys(fsPromises, dir);
+  const sealed = await openpgp.encrypt({
+    message: await openpgp.createMessage({
+      binary: new TextEncoder().encode(mergedPlain) }),
+    encryptionKeys: keys, format: "binary",
+  });
+  await fsPromises.mkdir(`${dir}/state`, { recursive: true });
+  await fsPromises.writeFile(`${dir}/${VAULT_PATH}`, sealed);
+  await git.add({ fs: fsp, dir, filepath: VAULT_PATH });
+  await git.commit({ fs: fsp, dir, message: `Update 10.gpg (rev ${merged.rev})`, author });
   try {
-    await git.push({ fs, http: httpLib(), httpUrl, token, dir, force: false });
+    await git.push({ fs: fsp, http: httpLib(), url: httpUrl, dir, force: false,
+    onAuth: () => ({ username: "x", password: token }) });
     out.pushed = true;
   } catch (e) {
     onLog(`the push failed (${e.message}) — the local commit stays, retried next sync`);
@@ -129,12 +168,14 @@ export async function syncVault({ httpUrl, token, card, onLog = () => {} }) {
   return out;
 }
 
-/** The one-time clone (the fresh device). */
-export async function cloneVault({ httpUrl, token, card, onLog = () => {} }) {
+/** The one-time clone (the fresh device). The [fs]/[repoDir] params =
+ *  the same test seams [syncVault] has. */
+export async function cloneVault({ httpUrl, token, card, fs: fsOverride = null, repoDir = null, onLog = () => {} }) {
   const git = gitLib();
-  const fs = new (window.LightningFS)("offlinepass-fs");
-  const dir = REPO_DIR;
-  await git.clone({ fs, http: httpLib(), httpUrl, token, dir, depth: 50 });
+  const fsp = fsOverride ?? new (window.LightningFS)("offlinepass-fs");
+  const dir = repoDir ?? REPO_DIR;
+  await git.clone({ fs: fsp, http: httpLib(), url: httpUrl, dir, depth: 50,
+    onAuth: () => ({ username: "x", password: token }) });
   onLog("cloned");
-  return syncVault({ httpUrl, token, card, onLog });
+  return syncVault({ httpUrl, token, card, fs: fsp, repoDir: dir, onLog });
 }

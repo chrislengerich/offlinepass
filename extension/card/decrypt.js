@@ -17,7 +17,12 @@ import * as openpgp from "../lib/openpgp.mjs";
 const SYM_ALG_NAMES = { 0: "plaintext", 2: "3des", 7: "aes128", 8: "aes192", 9: "aes256" };
 
 /** The packet walk: the old/new-format headers → the [tag, body, next]
- *  list. Enough for the PKESK locate + the SEIPD's span. */
+ *  list. Enough for the PKESK locate + the SEIPD's span. The lengths per
+ *  RFC 4880 §4.2.2 — the NEW format's length TYPE lives in the first
+ *  LENGTH octet's top bits (not the tag byte's!), and the 4-octet form is
+ *  UNSIGNED (a signed `<< 24` read of a ≥0x80 first octet turns negative,
+ *  walked `p` backwards, and looped the parser into an OOM — the sync E2E
+ *  caught it). */
 function walkPackets(bytes) {
   const out = [];
   let p = 0;
@@ -25,27 +30,37 @@ function walkPackets(bytes) {
     const first = bytes[p];
     let tag, len, hdr;
     if (first & 0x80) {
-      // The NEW format: bit7 = 1, bit6 = 1, the tag = the 6 low bits.
+      // The NEW format: bit7 = 1, the tag = the 6 low bits.
       // (The (first >>> 2) & 0x0f here before decoded every new-format
       // tag wrongly — the old format's shapes only — the fixture now
       // caught it: openpgp.js writes 0xc1 = new-format tag 1 = the
       // PKESK the old decode read as tag 0.)
       tag = first & 0x3f;
-      const ltype = first & 3;
-      if (ltype === 0) { len = bytes[p + 1]; hdr = 2; }
-      else if (ltype === 1) { len = (((bytes[p + 1] & 0x1f) << 8) | bytes[p + 2]) + 192; hdr = 3; }
-      else if (ltype === 2) { len = (bytes[p + 1] << 24) | (bytes[p + 2] << 16) | (bytes[p + 3] << 8) | bytes[p + 4]; hdr = 5; }
-      else { throw new Error("indeterminate packet length unsupported"); }
+      const lb = bytes[p + 1];   // the FIRST length octet carries the type
+      if (lb < 192) { len = lb; hdr = 2; }
+      else if (lb <= 223) { len = (((lb & 0x1f) << 8) | bytes[p + 2]) + 192; hdr = 3; }
+      else if (lb === 255) {
+        len = (((bytes[p + 2] << 24) | (bytes[p + 3] << 16) |
+          (bytes[p + 4] << 8) | bytes[p + 5]) >>> 0); hdr = 6;
+      }
+      else { throw new Error("partial/indeterminate packet length unsupported"); }
       p += hdr;
     } else {
-      // The legacy (the tag = the high bits, the 2-bit length).
-      tag = first >>> 2;
-      len = first & 3;
-      if (len === 0) { hdr = 1; }
-      else if (len === 1) { len = bytes[p + 1]; hdr = 2; }
-      else if (len === 2) { len = (bytes[p + 1] << 8) | bytes[p + 2]; hdr = 3; }
+      // The OLD format: bit6 = 1, the tag = bits 5-2, the length TYPE =
+      // the low 2 bits (0/1/2 = the 1/2/4-octet length, 3 = indeterminate).
+      tag = (first >>> 2) & 0x0f;
+      const ltype = first & 3;
+      if (ltype === 0) { len = bytes[p + 1]; hdr = 2; }
+      else if (ltype === 1) { len = (bytes[p + 1] << 8) | bytes[p + 2]; hdr = 3; }
+      else if (ltype === 2) {
+        len = (((bytes[p + 1] << 24) | (bytes[p + 2] << 16) |
+          (bytes[p + 3] << 8) | bytes[p + 4]) >>> 0); hdr = 5;
+      }
       else { throw new Error("the legacy indeterminate length unsupported"); }
       p += hdr;
+    }
+    if (!Number.isSafeInteger(len) || len < 0) {
+      throw new Error("implausible packet length " + len + " at offset " + (p - hdr));
     }
     const body = bytes.slice(p, p + len);
     out.push({ tag, body, start: p - hdr, total: hdr + len });
