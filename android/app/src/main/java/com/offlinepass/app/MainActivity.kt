@@ -1478,6 +1478,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // SECOND unlock screen (the card's) after the gate — the measured
         // "doesn't navigate" trap. The unlockLoop = launched from here,
         // automatically, once the gate is done.
+        // THE DUPLICATE IS GONE: a second identical LaunchedEffect stood
+        // right below this one — every gate-done event launched TWO
+        // concurrent unlockLoops (the measured double "promoting…" in the
+        // logcat: two full sealed-cache unseals racing per unlock).
         androidx.compose.runtime.LaunchedEffect(entryGateDone) {
             if (entryGateDone && VaultSession.state is VaultSession.State.Locked &&
                 VaultSession.screenlockUnlockEnabled() &&
@@ -1485,17 +1489,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                 unlockLoop()
             }
         }
-        // RENDER-TRACES + THE GATE'S AUTO-UNLOCK: the entry gate's done
-        // auth covers the card's unlock — the old chain handed the user a
-        // SECOND unlock screen after the gate ("doesn't navigate").
-        androidx.compose.runtime.LaunchedEffect(entryGateDone) {
-            if (entryGateDone && VaultSession.state is VaultSession.State.Locked &&
-                VaultSession.screenlockUnlockEnabled() &&
-                com.offlinepass.app.vault.SealedVault.hasCache()) {
-                unlockLoop()
-            }
-        }
-        android.util.Log.i("RenderNav", "render: state=${VaultSession.state} screen=$screen gate=${entryGateDone}")
+        // RENDER-TRACES: the state's SIMPLE NAME only — the old
+        // `state=${VaultSession.state}` toString'd the Unlocked data class
+        // and dumped ALL items (a 1345-entry PII string built on the main
+        // thread at every recomposition).
+        android.util.Log.i("RenderNav", "render: state=${VaultSession.state::class.simpleName} screen=$screen gate=${entryGateDone}")
         when (VaultSession.state) {
             VaultSession.State.NoConfig -> SetupChoiceScreen(
                 defaultRemote = "https://github.com/planetaltitude/offlinepass-storage-test.git",
