@@ -40,16 +40,38 @@ fun copyFieldToClipboard(context: android.content.Context, label: String, value:
         android.widget.Toast.LENGTH_SHORT).show()
 }
 
-/** The trailing copy button for one detail field. */
+/** THE COPY GLYPH: the two-sheet copy icon drawn directly — the material
+ *  icon lives in material-icons-extended (a multi-MB artifact for one
+ *  glyph; the low-dependency supply chain says draw it). Two stroked
+ *  rounded rects, the back sheet offset up-right of the front. */
 @Composable
-fun CopyFieldButton(value: () -> String, label: String) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    TextButton(
-        onClick = { copyFieldToClipboard(context, label, value()) },
-        enabled = value().isNotBlank()
-    ) {
-        Text("Copy", style = MaterialTheme.typography.bodySmall)
+fun CopyGlyph(
+    modifier: Modifier = Modifier,
+    tint: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurfaceVariant
+) {
+    androidx.compose.foundation.Canvas(modifier.size(20.dp)) {
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(1.8.dp.toPx())
+        val r = androidx.compose.ui.geometry.CornerRadius(1.5.dp.toPx())
+        drawRoundRect(tint,
+            topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.32f, 0f),
+            size = androidx.compose.ui.geometry.Size(size.width * 0.68f, size.height * 0.68f),
+            cornerRadius = r, style = stroke)
+        drawRoundRect(tint,
+            topLeft = androidx.compose.ui.geometry.Offset(0f, size.height * 0.32f),
+            size = androidx.compose.ui.geometry.Size(size.width * 0.68f, size.height * 0.68f),
+            cornerRadius = r, style = stroke)
     }
+}
+
+/** The copy ICON button for one field (the icon form of CopyFieldButton). */
+@Composable
+fun CopyIconButton(value: () -> String, label: String) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    IconButton(
+        onClick = { copyFieldToClipboard(context, label, value()) },
+        enabled = value().isNotBlank(),
+        modifier = Modifier.size(32.dp)
+    ) { CopyGlyph() }
 }
 
 /**
@@ -144,13 +166,13 @@ fun EntryDetailScreen(
         OutlinedTextField(
             value = username, onValueChange = { username = it },
             label = { Text("Username") }, singleLine = true,
-            trailingIcon = { CopyFieldButton({ username }, "Username") },
+            trailingIcon = { CopyIconButton({ username }, "Username") },
             modifier = Modifier.fillMaxWidth()
         )
         OutlinedTextField(
             value = email, onValueChange = { email = it },
             label = { Text("Email") }, singleLine = true,
-            trailingIcon = { CopyFieldButton({ email }, "Email") },
+            trailingIcon = { CopyIconButton({ email }, "Email") },
             modifier = Modifier.fillMaxWidth()
         )
         if (slCandidate) {
@@ -207,7 +229,7 @@ fun EntryDetailScreen(
                                    else PasswordVisualTransformation(),
             trailingIcon = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    CopyFieldButton({ password }, "Password")
+                    CopyIconButton({ password }, "Password")
                     TextButton(onClick = { showPassword = !showPassword }) {
                         Text(if (showPassword) "Hide" else "Show")
                     }
@@ -232,7 +254,15 @@ fun EntryDetailScreen(
         } else {
             if (totp != null) {
                 val (code, remaining) = totp!!
-                Text("TOTP: $code  (${remaining}s)", style = MaterialTheme.typography.titleMedium)
+                // THE CURRENT CODE, COPYABLE: the 6-digit value on the
+                // clipboard — the paste into the site's 2FA field without
+                // retyping. Copies the LIVE value (the remaining-seconds
+                // text stays display-only).
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("TOTP: $code  (${remaining}s)",
+                        style = MaterialTheme.typography.titleMedium)
+                    CopyIconButton({ code }, "TOTP")
+                }
             }
             // Re-enroll: the same small inline action as Regenerate —
             // right-justified under the TOTP display.

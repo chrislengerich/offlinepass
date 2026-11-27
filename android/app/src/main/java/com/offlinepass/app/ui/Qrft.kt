@@ -48,7 +48,15 @@ fun QrftScreen(payload: String, onBack: () -> Unit) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("← Back") }
-            Text("QRFT sender — scanning device picks this up as a file", style = MaterialTheme.typography.bodySmall)
+            Text("QRFT sender — scanning device picks this up as a file",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f))
+            // THE PAYLOAD, COPYABLE: the same cleaned text the QR loop
+            // carries (org.json's \/ un-escaped) — paste it into another
+            // channel instead of scanning. Sensitive-flagged: the
+            // single-entry export can be plaintext.
+            CopyIconButton(
+                { payload.replace("\\/", "/") }, "QRFT payload")
         }
         AndroidView(
             modifier = Modifier.fillMaxSize(),
