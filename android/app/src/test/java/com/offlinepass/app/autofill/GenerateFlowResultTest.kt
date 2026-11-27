@@ -212,4 +212,30 @@ class GenerateFlowResultTest {
         assertEquals("the update, not the append: one record",
             1, cacheManifest().size)
     }
+
+    @Test
+    fun theAliasChipBuildsOnAnEmailOnlyPage() {
+        // THE MEASURED CRASH (the bucket-split's incomplete edit): the
+        // placeholder loop iterated the username bucket alone — on the
+        // email-only pages (mail.proton.me: ids=0+1u/0p) it set ZERO
+        // fields and Dataset.build() threw IllegalStateException ("at
+        // least one of field or datatype must be set"), degrading the
+        // WHOLE fill response to no suggestions. The chip's placeholders
+        // cover both identity buckets now.
+        val f = OfflinepassAutofillService.Fields(
+            username = emptyList(), email = listOf(fid()), password = emptyList(),
+            appPackage = "app.vanadium.browser", webDomain = "mail.proton.me")
+        val ds = svc.generateAliasDataset(f, 77, null)
+        assertNotNull("the email-only page must hold the alias chip", ds)
+    }
+
+    @Test
+    fun thePasswordChipStaysBuildableOnUsernameOnlyPages() {
+        // The ⚡ chip has no password field → null (its own honest skip),
+        // never a throw — the username-only sheet keeps its other datasets.
+        val f = OfflinepassAutofillService.Fields(
+            username = listOf(fid()), email = emptyList(), password = emptyList(),
+            appPackage = "app.vanadium.browser", webDomain = "account.proton.me")
+        assertNull(svc.generateDataset(f, 78))
+    }
 }

@@ -170,6 +170,20 @@ class OfflinepassAutofillService : AutofillService() {
         ).build())
     }
 
+    /** THE PER-DATASET RESILIENCE: a single dataset's build failure (the
+     *  zero-field IllegalStateException class — the measured mail.proton.me
+     *  alias chip) skips THAT dataset; the sheet's other entries survive.
+     *  The old whole-response catch degraded EVERY suggestion to none. A
+     *  null from the maker = the maker's own skip decision (it logs). */
+    private fun FillResponse.Builder.addDatasetSafe(make: () -> Dataset?) {
+        val ds = try { make() } catch (e: Exception) {
+            Log.w(TAG, "a dataset build failed — the chip is skipped " +
+                "(the sheet survives): ${e.message}")
+            null
+        }
+        ds?.let { addDataset(it) }
+    }
+
     private fun unlockedResponse(fields: Fields): FillResponse {
         val items = (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
         Log.i(TAG, "branch=unlocked pkg=${fields.appPackage} domain=${fields.webDomain} " +
@@ -183,13 +197,15 @@ class OfflinepassAutofillService : AutofillService() {
         val builder = FillResponse.Builder()
         val shown = ranked.take(5)
         for (item in shown) {
-            builder.addDataset(datasetFor(item, fields, "${item.displayName} — ${item.identity}"))
+            builder.addDatasetSafe {
+                datasetFor(item, fields, "${item.displayName} — ${item.identity}")
+            }
         }
         // THE GENERATE CHIP: offered on EVERY password field (the user's
         // call — the generate option must never be missing). Tapping
         // gates, generates, and the fill rides the auth result.
         if (passwordChipOffered(fields, shown)) {
-            generateDataset(fields)?.let { builder.addDataset(it) }
+            builder.addDatasetSafe { generateDataset(fields) }
         }
         // THE ALIAS CHIP (the email fields' generate): offered on ANY form
         // with a username/email field (not registration-only — the second
@@ -198,7 +214,7 @@ class OfflinepassAutofillService : AutofillService() {
         // username/email ids, so it surfaces when an email field is
         // focused.
         if (aliasChipOffered(fields, VaultSession.simpleLoginItem() != null)) {
-            generateAliasDataset(fields)?.let { builder.addDataset(it) }
+            builder.addDatasetSafe { generateAliasDataset(fields) }
         }
         // Search-in-app dataset (covers non-matching or >5 entries). With the
         // empty-fields guard in onFillRequest, at least one id exists here.
@@ -216,7 +232,7 @@ class OfflinepassAutofillService : AutofillService() {
         (fields.allIdentityIds + fields.password).firstOrNull()?.let {
             searchDs.setValue(it, null as AutofillValue?, searchView)
         }
-        builder.addDataset(searchDs.build())
+        builder.addDatasetSafe { searchDs.build() }
         return builder.withSaveInfo(fields).build()
     }
 
@@ -256,10 +272,12 @@ class OfflinepassAutofillService : AutofillService() {
         // values (no sheet re-show, no second tap — the measured 25s
         // dead gap + the re-offered sheet).
         if (revealed != null) {
-            builder.addDataset(datasetFor(
-                revealed, fields,
-                "✓ ${revealed.displayName} — ${revealed.identity}",
-                revealedId ?: revealed.itemUuid))
+            builder.addDatasetSafe {
+                datasetFor(
+                    revealed, fields,
+                    "✓ ${revealed.displayName} — ${revealed.identity}",
+                    revealedId ?: revealed.itemUuid)
+            }
             count++
             Log.i(TAG, "revealed dataset: id=${revealedId ?: revealed.itemUuid} " +
                 "identity=${revealed.identity} pwLen=${revealed.password.length} " +
@@ -268,13 +286,13 @@ class OfflinepassAutofillService : AutofillService() {
         val ids = fields.allIdentityIds + fields.password
         var requestCode = 10
         // THE ⚡ CHIP: the password-focused sheets — the registration case.
-        generateDataset(fields, requestCode++)?.let { builder.addDataset(it) }
+        builder.addDatasetSafe { generateDataset(fields, requestCode++) }
         count++
         // THE ✨ CHIP: the alias + password generate (the SL link required
         // — the slUuid carries the sealed cache's key entry for the
         // flow's gated reveal). The dataset carries the username ids, so
         // it surfaces when an email/username field is focused.
-        generateAliasDataset(fields, requestCode++, slUuid)?.let { builder.addDataset(it) }
+        builder.addDatasetSafe { generateAliasDataset(fields, requestCode++, slUuid) }
         count++
         for (item in ranked.take(5)) {
             if (revealed != null && item.itemUuid == revealed.itemUuid) continue
@@ -299,7 +317,7 @@ class OfflinepassAutofillService : AutofillService() {
             val ds = Dataset.Builder().setAuthentication(pi.intentSender)
                 .setId(item.itemUuid)
             ids.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
-            builder.addDataset(ds.build())
+            builder.addDatasetSafe { ds.build() }
             count++
         }
         // THE APP FALLBACK is NOT offered here: the sealed sheet's unlock
@@ -320,8 +338,8 @@ class OfflinepassAutofillService : AutofillService() {
         // here (a key-locked vault needs the app's unlock first) — the
         // toast reports that honestly, and the filled password can be
         // saved manually after the app's own unlock.
-        generateDataset(fields, 30)?.let { builder.addDataset(it) }
-        generateAliasDataset(fields, 40)?.let { builder.addDataset(it) }
+        builder.addDatasetSafe { generateDataset(fields, 30) }
+        builder.addDatasetSafe { generateAliasDataset(fields, 40) }
         val intent = android.content.Intent(appContext(), MainActivity::class.java)
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val pi = android.app.PendingIntent.getActivity(
@@ -335,7 +353,7 @@ class OfflinepassAutofillService : AutofillService() {
         val ds = Dataset.Builder()
         ids.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
         ds.setAuthentication(pi.intentSender)
-        builder.addDataset(ds.build())
+        builder.addDatasetSafe { ds.build() }
         return builder.withSaveInfo(fields).build()
     }
 
@@ -406,7 +424,7 @@ class OfflinepassAutofillService : AutofillService() {
             // the session stays WAITING_FOR_AUTH forever. The in-task
             // launch (translucent over the browser) delivers the result.
 
-    private fun generateDataset(fields: Fields, requestCode: Int = 30): Dataset? {
+    internal fun generateDataset(fields: Fields, requestCode: Int = 30): Dataset? {
         if (fields.password.isEmpty()) {
             Log.i(TAG, "generate chip skipped — no password field detected")
             return null
@@ -459,7 +477,7 @@ class OfflinepassAutofillService : AutofillService() {
      *  the password ids — the full signup fill in one tap. Offered only
      *  when the SimpleLogin is linked. Null when no username/email field
      *  exists. */
-    private fun generateAliasDataset(
+    internal fun generateAliasDataset(
         fields: Fields, requestCode: Int = 40, slUuid: String? = null
     ): Dataset? {
         // THE ALIAS FILLS BOTH IDENTITY BUCKETS (the alias IS an email —
@@ -482,12 +500,15 @@ class OfflinepassAutofillService : AutofillService() {
             .setId("generate_alias")
         // THE PLACEHOLDERS = NULL (the docs' CVC pattern — the empty
         // strings mark the views CHANGED and pollute the session state).
-        // THE USERNAME IDS ONLY: the placeholders decide where the chip
-        // SURFACES — the password ids would offer the alias chip on
-        // password-focused fields too (the user's call: the ⚡ chip owns
-        // those). The FILL still covers both fields — the auth result's
+        // THE IDENTITY IDS ONLY (both buckets — the email box alone must
+        // surface AND hold the chip: a placeholder loop over the username
+        // bucket alone produced a ZERO-field dataset on the email-only
+        // pages and build() threw, degrading the WHOLE response to no
+        // suggestions — the measured mail.proton.me no-sheet). The
+        // password ids stay out (the ⚡ chip owns password-focused
+        // fields). The FILL still covers every bucket — the auth result's
         // dataset carries the alias AND the password.
-        for (id in fields.username) ds.setValue(id, null, view)
+        for (id in ids) ds.setValue(id, null, view)
         Log.i(TAG, "alias chip offered for $origin (id=generate_alias)")
         return ds.build()
     }

@@ -141,6 +141,27 @@ class AutofillAuthActivity : ComponentActivity() {
                         username = alias ?: currentEmail,
                         urls = listOf("https://$origin"),
                         password = generatedPassword)
+                    // THE DEAD-END HONESTY (the measured SL-limit case):
+                    // the alias failed AND the box was empty AND the page
+                    // has no password field = NOTHING is fillable, and
+                    // the auto-save would put a blank-identity item in
+                    // the vault. No save, no dataset, the toast names
+                    // it. A form WITH a password field keeps the pinned
+                    // degradation: the generated password fills + saves
+                    // (the identity sides stay unset — the no-clobber
+                    // rule).
+                    val passwordIds =
+                        intent.getParcelableArrayListExtra<AutofillId>(
+                            AutofillAuthActivity.EXTRA_FILL_PASSWORD_IDS)
+                    if (item.identity.isBlank() && aliasError != null &&
+                        passwordIds.isNullOrEmpty()) {
+                        Toast.makeText(this@AutofillAuthActivity,
+                            "The alias failed ($aliasError) — nothing to fill; " +
+                                "the vault is untouched",
+                            Toast.LENGTH_LONG).show()
+                        finish()
+                        return@launch
+                    }
                     AutofillRevealStore.put(item, "generate_alias")
                     // THE RESULT-CARRIED FILL: the response rides the
                     // auth result — the framework applies it directly at
