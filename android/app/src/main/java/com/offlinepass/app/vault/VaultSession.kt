@@ -2692,16 +2692,34 @@ object VaultSession {
     const val SL_HOST = "app.simplelogin.io"
 
     /** THE SL LINK = the vault item holding the api key: the URL = the
-     *  SL host, a password present. The item = card-encrypted, synced,
-     *  user-visible/editable — the strongest storage this architecture
-     *  has. Null = not linked. */
+     *  SL host. The item = card-encrypted, synced, user-visible/editable
+     *  — the strongest storage this architecture has. */
+    /** THE SL MARKER (the one predicate): the URL's host == the SimpleLogin
+     *  host. The link, the display, the chip-offer and the key-lookup all
+     *  share it (it existed as three divergent copies). */
+    fun isSimpleLoginUrl(url: String): Boolean = runCatching {
+        java.net.URI(url.trim()).host?.removePrefix("www.") == SL_HOST
+    }.getOrDefault(false)
+
+    /** THE SL LINK ITEM — the linked state's carrier (the metadata: the
+     *  name, the linked account's email, the uuid, the domains note).
+     *  NO password requirement: the stub session (the fast promote's
+     *  manifest envelope) holds the item with its secrets sealed — the
+     *  LINKED state must read true there (the measured regression: the
+     *  password filter made Setup display "not linked" in every stub
+     *  session, and the relink would append a duplicate instead of
+     *  reusing the uuid). The KEY (the ops that CALL SimpleLogin) is
+     *  [simpleLoginApiKey] — null until a full session. */
     fun simpleLoginItem(): ProtonItem? = loadedEnvelope?.items?.firstOrNull { item ->
-        item.password.isNotBlank() && item.urls.any { url ->
-            runCatching {
-                java.net.URI(url.trim()).host?.removePrefix("www.") == SL_HOST
-            }.getOrDefault(false)
-        }
+        item.urls.any { isSimpleLoginUrl(it) }
     }
+
+    /** THE API KEY — readable ONLY in a full session (the stub session's
+     *  items carry no secrets; the sealed cache holds them — the alias
+     *  chain's resolveSimpleLoginApiKey covers both states on its own).
+     *  Null in the stub session = the honest "the key is sealed". */
+    fun simpleLoginApiKey(): String? =
+        simpleLoginItem()?.password?.takeIf { it.isNotBlank() }
 
     /** THE LINKED ALIAS DOMAINS: parsed from the SL item's note (the
      *  marker line the link flow writes: "SimpleLogin alias domains: "

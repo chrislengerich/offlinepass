@@ -460,14 +460,10 @@ class OfflinepassAutofillService : AutofillService() {
     /** The SL entry's uuid in the SEALED manifest, or null. The manifest
      *  items carry name/urls in the clear (the passwords stay sealed), so
      *  the detection = the app.simplelogin.io URL — the same marker the
-     *  link flow writes. */
+     *  link flow writes (the ONE predicate: VaultSession.isSimpleLoginUrl). */
     internal fun sealedSimpleLoginUuid(): String? =
         SealedVault.manifestItems().firstOrNull { item ->
-            item.urls.any { url ->
-                runCatching {
-                    java.net.URI(url.trim()).host?.removePrefix("www.") == VaultSession.SL_HOST
-                }.getOrDefault(false)
-            }
+            item.urls.any { VaultSession.isSimpleLoginUrl(it) }
         }?.itemUuid
 
     /** The "✨ Generate SimpleLogin alias + password" dataset: the auth =

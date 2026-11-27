@@ -59,7 +59,7 @@ fun AddEntryScreen(
         if (slLinked) {
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 TextButton(onClick = {
-                    val apiKey = VaultSession.simpleLoginItem()?.password ?: return@TextButton
+                    val apiKey = VaultSession.simpleLoginApiKey() ?: return@TextButton
                     val host = runCatching {
                         java.net.URI(url.trim().let { if (it.contains("://")) it else "https://$it" }).host
                     }.getOrNull()

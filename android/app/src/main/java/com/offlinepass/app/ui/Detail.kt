@@ -196,7 +196,7 @@ fun EntryDetailScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = {
-                    val apiKey = VaultSession.simpleLoginItem()?.password ?: return@TextButton
+                    val apiKey = VaultSession.simpleLoginApiKey() ?: return@TextButton
                     slBusy = true; slStatus = null
                     slScope.launch {
                         slStatus = try {
@@ -218,7 +218,7 @@ fun EntryDetailScreen(
                 }, enabled = !slBusy) { Text(if (slBusy) "Checking…" else "Check SimpleLogin status") }
                 if (slAliasId != null && slAliasEnabled != null && !slBusy) {
                     Button(onClick = {
-                        val apiKey = VaultSession.simpleLoginItem()?.password ?: return@Button
+                        val apiKey = VaultSession.simpleLoginApiKey() ?: return@Button
                         val id = slAliasId ?: return@Button
                         slBusy = true
                         slScope.launch {

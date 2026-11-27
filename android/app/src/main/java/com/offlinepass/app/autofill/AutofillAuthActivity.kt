@@ -600,15 +600,11 @@ class AutofillAuthActivity : ComponentActivity() {
      * caller degrades to the password-only fill.
      */
     private suspend fun resolveSimpleLoginApiKey(): String {
-        VaultSession.simpleLoginItem()?.password?.takeIf { it.isNotBlank() }
+        VaultSession.simpleLoginApiKey()
             ?.let { return it }
         val uuid = intent.getStringExtra(EXTRA_SL_UUID)
             ?: SealedVault.manifestItems().firstOrNull { item ->
-                item.urls.any { url ->
-                    runCatching {
-                        java.net.URI(url.trim()).host?.removePrefix("www.") == VaultSession.SL_HOST
-                    }.getOrDefault(false)
-                }
+                item.urls.any { VaultSession.isSimpleLoginUrl(it) }
             }?.itemUuid
             ?: throw IllegalStateException("SimpleLogin not linked")
         return SealedVault.reveal(uuid)?.password?.takeIf { it.isNotBlank() }
