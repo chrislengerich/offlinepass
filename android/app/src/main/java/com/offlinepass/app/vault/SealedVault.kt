@@ -5,6 +5,9 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
@@ -460,39 +463,52 @@ object SealedVault {
         unsealInternal(manifest().map { it.uuid })
     }
 
-    private fun unsealInternal(uuids: List<String>): List<ProtonItem> {
-        val cache = readCache() ?: return emptyList()
+    /** THE UNSEAL FAN-OUT'S PARALLELISM: the ops are Keystore binder
+     *  calls (I/O-bound, not CPU) — a bounded pool cuts the 1345-item
+     *  batch from the measured ~13s (serial, ~9.6ms/op) to a fraction,
+     *  without touching the seal format. Each call builds its OWN Cipher
+     *  (KeystoreSealCrypto) — the shared SecretKey handle is safe
+     *  concurrently. */
+    private val unsealPool = Dispatchers.IO.limitedParallelism(6)
+
+    private suspend fun unsealInternal(uuids: List<String>): List<ProtonItem> = coroutineScope {
+        val cache = readCache() ?: return@coroutineScope emptyList()
         // v1 caches (the retired KEK/RSA format) = stale: only the GPG
         // re-seal rebuilds.
         if (cache.optInt("v", 1) != FORMAT_VERSION) throw SealedKeyMismatchException()
         val crypto = cryptoHook ?: (ensureAesKey()?.let { KeystoreSealCrypto(it) })
-            ?: return emptyList()
+            ?: return@coroutineScope emptyList()
         val stubs = manifestItems().associateBy { it.itemUuid }
         val byUuid = cache.optJSONArray("items")?.let { arr ->
             (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i) }
                 .associateBy { it.optString("uuid") }
         } ?: emptyMap()
-        val out = mutableListOf<ProtonItem>()
-        for (uuid in uuids) {
-            val o = byUuid[uuid] ?: continue
-            try {
-                val aad = (ITEM_AAD_PREFIX + uuid).toByteArray()
-                val secrets = JSONObject(String(crypto.unseal(
-                    Base64.getDecoder().decode(o.getString("iv")),
-                    Base64.getDecoder().decode(o.getString("ct")),
-                    aad)))
-                stubs[uuid]?.copy(
-                    password = secrets.optString("password"),
-                    note = secrets.optString("note"),
-                    totpUri = secrets.optString("totpUri"))?.let { out += it }
-            } catch (e: Exception) {
-                // Auth failures MUST propagate (the caller prompts + retries);
-                // per-item data failures only skip the entry.
-                if (isAuthError(e)) throw e
-                Log.w(TAG, "unseal failed for $uuid: ${e.message}")
+        // THE ORDER = THE CALLERS' (the manifest order) — the slot-indexed
+        // writes (distinct indices from distinct coroutines, no races).
+        val out = arrayOfNulls<ProtonItem>(uuids.size)
+        uuids.mapIndexed { idx, uuid ->
+            async(unsealPool) {
+                val o = byUuid[uuid] ?: return@async
+                try {
+                    val aad = (ITEM_AAD_PREFIX + uuid).toByteArray()
+                    val secrets = JSONObject(String(crypto.unseal(
+                        Base64.getDecoder().decode(o.getString("iv")),
+                        Base64.getDecoder().decode(o.getString("ct")),
+                        aad)))
+                    out[idx] = stubs[uuid]?.copy(
+                        password = secrets.optString("password"),
+                        note = secrets.optString("note"),
+                        totpUri = secrets.optString("totpUri"))
+                } catch (e: Exception) {
+                    // Auth failures MUST propagate (the caller prompts + retries;
+                    // per-item data failures only skip the entry) — the first
+                    // auth failure cancels the sibling unseals.
+                    if (isAuthError(e)) throw e
+                    Log.w(TAG, "unseal failed for $uuid: ${e.message}")
+                }
             }
-        }
-        return out
+        }.awaitAll()
+        out.filterNotNull().toList()
     }
 
     internal fun isAuthError(e: Exception): Boolean {
