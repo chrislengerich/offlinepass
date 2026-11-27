@@ -1200,6 +1200,17 @@ class MainActivity : androidx.activity.ComponentActivity() {
         // overlaps the unlock screen instead of the first decrypt/sign
         // that needs it (the shared client's binding persists).
         VaultSession.warmOpenKeyChain()
+        // THE IN-APP FIELDS = AUTOFILL-EXCLUDED: offlinepass IS an
+        // autofill service, and the in-app fields (the search box, the
+        // editors) must never fire the framework's fill/save heuristics —
+        // neither our own service nor a third-party password manager
+        // should pop over the vault's own UI. NO_EXCLUDE_DESCENDANTS
+        // covers every field on this window; the OUTBOUND side is
+        // untouched (OfflinepassAutofillService still fills other apps,
+        // and AutofillAuthActivity reads its structure from the intent
+        // extras, not from its own view tree).
+        window.decorView.importantForAutofill =
+            android.view.View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
         // The autofill save-offer's tap (a cold start): the extras → the
         // prefilled AddEntry.
         handleAutofillSaveIntent(intent)
