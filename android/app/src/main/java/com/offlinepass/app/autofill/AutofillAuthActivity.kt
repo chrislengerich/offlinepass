@@ -659,21 +659,32 @@ class AutofillAuthActivity : ComponentActivity() {
                 intent.getParcelableArrayListExtra<AutofillId>(EXTRA_FILL_USERNAME_IDS)
             val passwordIds =
                 intent.getParcelableArrayListExtra<AutofillId>(EXTRA_FILL_PASSWORD_IDS)
-            if (passwordIds.isNullOrEmpty()) {
-                Log.i(TAG, "the result fill skipped — no password ids in the auth intent")
+            // THE FILL PAIRS FIRST: the dataset carries whatever the page
+            // offered. The old guard demanded password ids — the
+            // username-only pages (Proton's step 1, most SSO forms) then
+            // filled NOTHING on a successful auth (the measured Vanadium
+            // no-fill: RESULT_OK with an empty result, and no re-invoke).
+            // The zero-value trap stays closed: a blank identity with no
+            // password ids yields zero pairs → no dataset (build() would
+            // throw — the measured process-killer).
+            val fillPairs = buildList {
+                if (item.identity.isNotBlank()) {
+                    usernameIds.orEmpty().forEach { add(it to item.identity) }
+                }
+                passwordIds.orEmpty().forEach { add(it to item.password) }
+            }
+            if (fillPairs.isEmpty()) {
+                Log.i(TAG, "the result fill skipped — nothing to fill " +
+                    "(user=${usernameIds?.size ?: 0}, pw=${passwordIds?.size ?: 0}, " +
+                    "identity blank=${item.identity.isBlank()})")
                 return null
             }
             val view = RemoteViews(context.packageName, R.layout.autofill_item).apply {
                 setTextViewText(R.id.autofill_text, label)
             }
             val ds = Dataset.Builder()
-            if (item.identity.isNotBlank()) {
-                usernameIds.orEmpty().forEach { id ->
-                    ds.setValue(id, AutofillValue.forText(item.identity), view)
-                }
-            }
-            passwordIds.forEach { id ->
-                ds.setValue(id, AutofillValue.forText(item.password), view)
+            fillPairs.forEach { (id, value) ->
+                ds.setValue(id, AutofillValue.forText(value), view)
             }
             return ds.build()
         }
