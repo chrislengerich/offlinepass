@@ -135,12 +135,21 @@ fun EntryDetailScreen(
     }
 
     // -- THE SIMPLELOGIN ALIAS TOGGLE (the item-page management) ------------
-    // The gate: the SL api-key item exists AND the email = an SL alias on
-    // our domain. The items carry NO SL state and make NO network requests
-    // by default: the status check = one list call; the toggle = one
-    // call. The state lives in the screen only.
+    // The gate: the SL api-key item exists AND one of the identity boxes
+    // (the email OR the username — the chips fill the identity USERNAME-
+    // FIRST, so most alias items carry the alias in the username field
+    // with the email box empty: the measured asj.nuptials-shows /
+    // github.flounder-doesn't split) = an SL alias on our domain. The
+    // items carry NO SL state and make NO network requests by default:
+    // the status check = one list call; the toggle = one call. The state
+    // lives in the screen only.
     val slLinked = VaultSession.simpleLoginItem() != null
-    val slCandidate = slLinked && VaultSession.isSimpleLoginAlias(email)
+    val aliasAddress = when {
+        VaultSession.isSimpleLoginAlias(email) -> email
+        VaultSession.isSimpleLoginAlias(username) -> username
+        else -> ""
+    }
+    val slCandidate = slLinked && aliasAddress.isNotBlank()
     var slStatus by remember(item.itemUuid) { mutableStateOf<String?>(null) }
     var slAliasEnabled by remember(item.itemUuid) { mutableStateOf<Boolean?>(null) }
     var slBusy by remember(item.itemUuid) { mutableStateOf(false) }
@@ -211,11 +220,11 @@ fun EntryDetailScreen(
                         }
                         slStatus = try {
                             val found = SimpleLoginHttp().listAliases(
-                                apiKey, query = email.trim())
-                                .firstOrNull { it.email.equals(email.trim(), true) }
+                                apiKey, query = aliasAddress.trim())
+                                .firstOrNull { it.email.equals(aliasAddress.trim(), true) }
                             if (found == null) {
                                 slAliasId = null; slAliasEnabled = null
-                                "No SimpleLogin alias matches this email."
+                                "No SimpleLogin alias matches this address."
                             } else {
                                 slAliasId = found.id; slAliasEnabled = found.enabled
                                 "SimpleLogin: ${found.email} is " +
@@ -240,7 +249,7 @@ fun EntryDetailScreen(
                             }
                             slStatus = try {
                                 slAliasEnabled = SimpleLoginHttp().toggleAlias(apiKey, id)
-                                "SimpleLogin: ${email.trim()} is now " +
+                                "SimpleLogin: ${aliasAddress.trim()} is now " +
                                     if (slAliasEnabled == true) "ENABLED" else "DISABLED"
                             } catch (e: Exception) {
                                 "SimpleLogin error: ${e.message}"
