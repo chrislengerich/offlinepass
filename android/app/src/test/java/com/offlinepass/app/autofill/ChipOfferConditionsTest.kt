@@ -91,8 +91,13 @@ class ChipOfferConditionsTest {
     @Test
     fun `the app package is the fallback match (the no-domain forms)`() {
         val f = fields(pkg = "com.example.app", domain = null)
-        assertTrue(f.matches(siteItem("app", "https://com.example.app")))
-        assertFalse(f.matches(siteItem("web", "https://example.com")))
+        // THE REVERSE-DOMAIN LINK: example.com ↔ com.example.app — the
+        // site's app fills the site's entry (the old contains() rule
+        // matched only a URL literally shaped like the package string,
+        // and refused the real-world pairing).
+        assertTrue(f.matches(siteItem("app", "https://example.com")))
+        assertFalse("the dot boundary holds",
+            f.matches(siteItem("web", "https://example.org")))
     }
 
     @Test
