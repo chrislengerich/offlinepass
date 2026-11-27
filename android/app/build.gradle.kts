@@ -22,6 +22,16 @@ android {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+        // THE SUFFIX: the debug installs ALONGSIDE the release app
+        // (com.offlinepass.app.debug) — a debug `adb install -r` against
+        // the release signature fails with UPDATE_INCOMPATIBLE and the
+        // "fix" (uninstall) would wipe the vault + the sealed cache. The
+        // debug app starts with its own data; the vault rides in via the
+        // Setup flows (the remote clone / the backup import).
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         // Release-grade build (minified, not debuggable) with the <profileable>
         // manifest tag (src/profileable/): profilers can attach without the
         // app being debuggable. Ships unsigned; signed in scripts/release.sh.
