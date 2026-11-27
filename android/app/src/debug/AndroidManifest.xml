@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- THE DEBUG LABEL: the launcher's two offlinepass icons (the release's
+     and this build's) read identically without it — the debug installs
+     alongside (the .debug applicationIdSuffix) and the only visible
+     difference was nothing. "offlinepass-debug" is tellable apart at a
+     glance; the merge overrides only the application label. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application android:label="offlinepass-debug"
+        tools:replace="android:label" />
+</manifest>
