@@ -77,7 +77,8 @@ class AutofillOriginMatchTest {
     @Test
     fun matchesPredicateUsesThePreciseRule() {
         val f = OfflinepassAutofillService.Fields(
-            emptyList(), emptyList(), "com.android.chrome", "icml.cc")
+            username = emptyList(), email = emptyList(), password = emptyList(),
+            appPackage = "com.android.chrome", webDomain = "icml.cc")
         assertTrue(f.matches(item("https://2017.icml.cc/Profile")))
         assertFalse(f.matches(item("https://xicml.cc/")))
         assertFalse(f.matches(item()))

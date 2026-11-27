@@ -40,6 +40,11 @@ class OfflinepassAutofillService : AutofillService() {
 
     data class Fields(
         val username: List<AutofillId>,
+        /** THE EMAIL BUCKET (the tier-1 email-marked fields) — split from
+         *  the username bucket so a signup with BOTH boxes fills each
+         *  with its own value (the measured single-bucket wrongness: the
+         *  email box received the username whenever they differed). */
+        val email: List<AutofillId> = emptyList(),
         val password: List<AutofillId>,
         val appPackage: String,
         val webDomain: String?,
@@ -48,6 +53,10 @@ class OfflinepassAutofillService : AutofillService() {
         val usernameValue: String? = null,
         val passwordValue: String? = null
     ) {
+        /** Every identity-side id (the username + the email buckets) —
+         *  the save-info targets and the "any fillable field" checks. */
+        val allIdentityIds: List<AutofillId> get() = username + email
+
         /** The page-match predicate (the generate-chips' offer condition,
          *  shared with the ranking) — the PRECISE origin rule
          *  (OriginMatch), not the old substring. */
@@ -79,7 +88,7 @@ class OfflinepassAutofillService : AutofillService() {
         // No recognized login fields → no response. Building a dataset with
         // zero values throws — and this service shares the app's process, so
         // a crash here kills the whole app (vault session included).
-        if (fields.username.isEmpty() && fields.password.isEmpty()) {
+        if (fields.username.isEmpty() && fields.email.isEmpty() && fields.password.isEmpty()) {
             callback.onSuccess(null); return
         }
 
@@ -151,7 +160,7 @@ class OfflinepassAutofillService : AutofillService() {
      *  flags: the save fires on the user-changed fields at the form's
      *  finish (the verified on-device behavior). */
     private fun FillResponse.Builder.withSaveInfo(fields: Fields): FillResponse.Builder {
-        val allIds = (fields.username + fields.password).toTypedArray()
+        val allIds = fields.allIdentityIds.plus(fields.password).toTypedArray()
         if (allIds.isEmpty()) return this
         return setSaveInfo(android.service.autofill.SaveInfo.Builder(
             android.service.autofill.SaveInfo.SAVE_DATA_TYPE_PASSWORD or
@@ -204,7 +213,7 @@ class OfflinepassAutofillService : AutofillService() {
         }
         val searchDs = Dataset.Builder()
             .setAuthentication(searchPi.intentSender)
-        (fields.username + fields.password).firstOrNull()?.let {
+        (fields.allIdentityIds + fields.password).firstOrNull()?.let {
             searchDs.setValue(it, null as AutofillValue?, searchView)
         }
         builder.addDataset(searchDs.build())
@@ -225,7 +234,8 @@ class OfflinepassAutofillService : AutofillService() {
         val manifest = SealedVault.manifestItems()
         Log.i(TAG, "branch=sealed pkg=${fields.appPackage} domain=${fields.webDomain} " +
             "manifest=${manifest.size} revealed=${revealed?.displayName ?: "none"} " +
-            "(datasetId=${revealedId?.take(8) ?: "none"})")
+            "(datasetId=${revealedId?.take(8) ?: "none"}) ids=" +
+            "${fields.username.size}+${fields.email.size}u/${fields.password.size}p")
         // Rank: the URL/domain match first, then everything else (the
         // precise origin rule — OriginMatch).
         val ranked = manifest.sortedByDescending { item ->
@@ -255,7 +265,7 @@ class OfflinepassAutofillService : AutofillService() {
                 "identity=${revealed.identity} pwLen=${revealed.password.length} " +
                 "usernameIds=${fields.username.size} passwordIds=${fields.password.size}")
         }
-        val ids = (fields.username + fields.password)
+        val ids = fields.allIdentityIds + fields.password
         var requestCode = 10
         // THE ⚡ CHIP: the password-focused sheets — the registration case.
         generateDataset(fields, requestCode++)?.let { builder.addDataset(it) }
@@ -275,6 +285,8 @@ class OfflinepassAutofillService : AutofillService() {
                 // the generate chips use) — the ids it must fill.
                 .putParcelableArrayListExtra(
                     AutofillAuthActivity.EXTRA_FILL_USERNAME_IDS, ArrayList(fields.username))
+                .putParcelableArrayListExtra(
+                    AutofillAuthActivity.EXTRA_FILL_EMAIL_IDS, ArrayList(fields.email))
                 .putParcelableArrayListExtra(
                     AutofillAuthActivity.EXTRA_FILL_PASSWORD_IDS, ArrayList(fields.password))
                 // NO FLAG_ACTIVITY_NEW_TASK — the for-result delivery (the
@@ -319,7 +331,7 @@ class OfflinepassAutofillService : AutofillService() {
         val view = RemoteViews(packageName, R.layout.autofill_item).apply {
             setTextViewText(R.id.autofill_text, "🔒 Unlock offlinepass (touch key), then autofill again")
         }
-        val ids = (fields.username + fields.password)
+        val ids = fields.allIdentityIds + fields.password
         val ds = Dataset.Builder()
         ids.forEach { id -> ds.setValue(id, AutofillValue.forText(""), view) }
         ds.setAuthentication(pi.intentSender)
@@ -349,13 +361,12 @@ class OfflinepassAutofillService : AutofillService() {
         }
         val ds = Dataset.Builder()
         id?.let { ds.setId(it) }
-        // THE NO-IDENTITY CASE (the generated password): the username ids
-        // stay UNSET — the re-invoke must never clobber the user's typed
-        // username with an empty value.
-        if (item.identity.isNotBlank()) {
-            for (id in fields.username) ds.setValue(id, AutofillValue.forText(item.identity), view)
+        // THE ONE FILL RULE (fillPairs): the identity → the username ids,
+        // the item's email (identity fallback) → the email ids, the
+        // password → the password ids; blanks fill nothing.
+        fillPairs(fields.username, fields.email, fields.password, item).forEach { (id, value) ->
+            ds.setValue(id, AutofillValue.forText(value), view)
         }
-        for (id in fields.password) ds.setValue(id, AutofillValue.forText(item.password), view)
         return ds.build()
     }
 
@@ -382,6 +393,8 @@ class OfflinepassAutofillService : AutofillService() {
             .putExtra(AutofillAuthActivity.EXTRA_NAME, origin)
             .putParcelableArrayListExtra(
                 AutofillAuthActivity.EXTRA_FILL_USERNAME_IDS, ArrayList(fields.username))
+            .putParcelableArrayListExtra(
+                AutofillAuthActivity.EXTRA_FILL_EMAIL_IDS, ArrayList(fields.email))
             .putParcelableArrayListExtra(
                 AutofillAuthActivity.EXTRA_FILL_PASSWORD_IDS, ArrayList(fields.password))
             // NO FLAG_ACTIVITY_NEW_TASK: the framework starts the auth
@@ -424,7 +437,7 @@ class OfflinepassAutofillService : AutofillService() {
         fields.password.isNotEmpty()
 
     internal fun aliasChipOffered(fields: Fields, slReachable: Boolean) =
-        fields.username.isNotEmpty() && slReachable
+        fields.allIdentityIds.isNotEmpty() && slReachable
 
     /** The SL entry's uuid in the SEALED manifest, or null. The manifest
      *  items carry name/urls in the clear (the passwords stay sealed), so
@@ -449,7 +462,10 @@ class OfflinepassAutofillService : AutofillService() {
     private fun generateAliasDataset(
         fields: Fields, requestCode: Int = 40, slUuid: String? = null
     ): Dataset? {
-        val ids = fields.username
+        // THE ALIAS FILLS BOTH IDENTITY BUCKETS (the alias IS an email —
+        // the email-marked boxes get it too), so the placeholders surface
+        // the chip on either box's focus.
+        val ids = fields.allIdentityIds
         if (ids.isEmpty()) {
             Log.i(TAG, "alias chip skipped — no username/email field detected")
             return null
@@ -492,6 +508,7 @@ internal fun parseAutofillStructure(
     structure: AssistStructure
 ): OfflinepassAutofillService.Fields {
     val username = mutableListOf<AutofillId>()
+    val email = mutableListOf<AutofillId>()
     val password = mutableListOf<AutofillId>()
     var usernameValue: String? = null
     var passwordValue: String? = null
@@ -506,6 +523,27 @@ internal fun parseAutofillStructure(
     var strongUsernameFrom: String? = null
     var weakUsernameValue: String? = null
     var weakUsernameFrom: String? = null
+
+    /** The tiered capture, shared by both identity buckets (the save's
+     *  usernameValue and the generate chips' typed username ride it
+     *  regardless of which bucket the field landed in). */
+    fun captureIdentityValue(node: AssistStructure.ViewNode, strong: Boolean) {
+        (node.autofillValue?.textValue as? CharSequence)
+            ?.takeIf { it.isNotBlank() && !it.startsWith("http") && !it.startsWith("www.") }
+            ?.let { v ->
+                val value = v.toString()
+                val from = (node.idEntry ?: "").lowercase().ifBlank { node.hint?.lowercase() ?: "" }
+                if (strong) {
+                    if (strongUsernameValue == null) {
+                        strongUsernameValue = value
+                        strongUsernameFrom = from
+                    }
+                } else if (weakUsernameValue == null) {
+                    weakUsernameValue = value
+                    weakUsernameFrom = from
+                }
+            }
+    }
 
     fun walk(node: AssistStructure.ViewNode) {
         node.webDomain?.let { if (webDomain == null) webDomain = it }
@@ -532,12 +570,17 @@ internal fun parseAutofillStructure(
         val explicitUsername = node.autofillHints?.any {
             it.contains("username", ignoreCase = true)
         } == true || hints.contains("username") || resId.contains("username")
-        val isUsername = !isPassword && !looksLikeUrlField && (
+        val isIdentity = !isPassword && !looksLikeUrlField && (
             explicitEmail || explicitUsername ||
                 node.autofillHints?.contains(View.AUTOFILL_HINT_USERNAME) == true ||
                 hint.contains("user") || resId.contains("user") ||
                 resId.contains("login") || resId.contains("account")
             )
+        // THE BUCKET SPLIT: an explicitly-EMAIL field (and nothing else
+        // about it marked username) goes to the email bucket; a dual-
+        // marked field (both user and email hints) stays in the username
+        // bucket — the old single-bucket behavior for the ambiguous shape.
+        val isEmailField = isIdentity && explicitEmail && !explicitUsername
         node.autofillId?.let { id ->
             if (node.visibility == View.VISIBLE) {
                 when {
@@ -548,22 +591,17 @@ internal fun parseAutofillStructure(
                                 ?.takeIf { it.isNotBlank() }?.let { passwordValue = it.toString() }
                         }
                     }
-                    isUsername -> {
+                    // THE VALUE CAPTURE runs for BOTH identity buckets —
+                    // the save path's usernameValue (an email-only form's
+                    // email IS the login's username) and the generate
+                    // chips' typed-username ride it regardless of bucket.
+                    isEmailField -> {
+                        email.add(id)
+                        captureIdentityValue(node, explicitEmail || explicitUsername)
+                    }
+                    isIdentity -> {
                         username.add(id)
-                        (node.autofillValue?.textValue as? CharSequence)
-                            ?.takeIf { it.isNotBlank() && !it.startsWith("http") && !it.startsWith("www.") }
-                            ?.let { v ->
-                                val value = v.toString()
-                                if (explicitEmail || explicitUsername) {
-                                    if (strongUsernameValue == null) {
-                                        strongUsernameValue = value
-                                        strongUsernameFrom = resId.ifBlank { hint }
-                                    }
-                                } else if (weakUsernameValue == null) {
-                                    weakUsernameValue = value
-                                    weakUsernameFrom = resId.ifBlank { hint }
-                                }
-                            }
+                        captureIdentityValue(node, explicitEmail || explicitUsername)
                     }
                 }
             }
@@ -580,5 +618,40 @@ internal fun parseAutofillStructure(
         "from=${strongUsernameFrom ?: weakUsernameFrom ?: "none"} " +
         "(username fields: ${username.size})")
     return OfflinepassAutofillService.Fields(
-        username, password, appPackage, webDomain, usernameValue, passwordValue)
+        username = username,
+        email = email,
+        password = password,
+        appPackage = appPackage,
+        webDomain = webDomain,
+        usernameValue = usernameValue,
+        passwordValue = passwordValue)
+}
+
+/** THE FILL PAIRS — the ONE rule both the sheet's datasets and the
+ *  auth-result dataset follow (the single source of truth for which id
+ *  gets which value):
+ *  - the username ids get the identity (username-first, the email as the
+ *    fallback — the dedup key's shape);
+ *  - the EMAIL ids get the item's EMAIL, falling back to the identity
+ *    (an email-only item's identity IS its email);
+ *  - the password ids always get the password (the historical semantics —
+ *    a password field is the item's password, blank or not);
+ *  - a blank value fills NOTHING (the no-clobber rule — the user's typed
+ *    text survives).
+ *  Empty result = the caller offers no dataset (the zero-value build()
+ *  throw — the measured process-killer — stays unreachable). */
+internal fun fillPairs(
+    usernameIds: List<AutofillId>?,
+    emailIds: List<AutofillId>?,
+    passwordIds: List<AutofillId>?,
+    item: ProtonItem
+): List<Pair<AutofillId, String>> = buildList {
+    if (item.identity.isNotBlank()) {
+        usernameIds.orEmpty().forEach { add(it to item.identity) }
+    }
+    val emailValue = item.email.ifBlank { item.identity }
+    if (emailValue.isNotBlank()) {
+        emailIds.orEmpty().forEach { add(it to emailValue) }
+    }
+    passwordIds.orEmpty().forEach { add(it to item.password) }
 }

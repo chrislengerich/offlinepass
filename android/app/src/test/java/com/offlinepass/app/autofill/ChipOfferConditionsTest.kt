@@ -37,10 +37,11 @@ class ChipOfferConditionsTest {
             .newInstance() as AutofillId
 
     private fun fields(
-        usernames: Int = 0, passwords: Int = 0,
+        usernames: Int = 0, emails: Int = 0, passwords: Int = 0,
         pkg: String = "app.vanadium.browser", domain: String? = null,
     ) = OfflinepassAutofillService.Fields(
         username = List(usernames) { fid() },
+        email = List(emails) { fid() },
         password = List(passwords) { fid() },
         appPackage = pkg, webDomain = domain)
 
@@ -136,6 +137,13 @@ class ChipOfferConditionsTest {
     fun `the alias chip - offered on any username form when the SL is linked`() {
         val f = fields(usernames = 1, passwords = 1, domain = "github.com")
         assertTrue("the matched site does NOT suppress it (the second account)",
+            svc.aliasChipOffered(f, slReachable = true))
+    }
+
+    @Test
+    fun `the alias chip - offered on an email-only form (the split bucket)`() {
+        val f = fields(emails = 1, domain = "github.com")
+        assertTrue("the email box alone arms the alias chip",
             svc.aliasChipOffered(f, slReachable = true))
     }
 

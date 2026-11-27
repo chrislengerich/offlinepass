@@ -634,6 +634,7 @@ class AutofillAuthActivity : ComponentActivity() {
         const val EXTRA_CONFIRMED = "confirmed"
         const val EXTRA_SL_UUID = "sl_uuid"
         const val EXTRA_FILL_USERNAME_IDS = "fill_username_ids"
+        const val EXTRA_FILL_EMAIL_IDS = "fill_email_ids"
         const val EXTRA_FILL_PASSWORD_IDS = "fill_password_ids"
 
         /**
@@ -657,33 +658,31 @@ class AutofillAuthActivity : ComponentActivity() {
         ): Dataset? {
             val usernameIds =
                 intent.getParcelableArrayListExtra<AutofillId>(EXTRA_FILL_USERNAME_IDS)
+            val emailIds =
+                intent.getParcelableArrayListExtra<AutofillId>(EXTRA_FILL_EMAIL_IDS)
             val passwordIds =
                 intent.getParcelableArrayListExtra<AutofillId>(EXTRA_FILL_PASSWORD_IDS)
-            // THE FILL PAIRS FIRST: the dataset carries whatever the page
-            // offered. The old guard demanded password ids — the
-            // username-only pages (Proton's step 1, most SSO forms) then
-            // filled NOTHING on a successful auth (the measured Vanadium
-            // no-fill: RESULT_OK with an empty result, and no re-invoke).
-            // The zero-value trap stays closed: a blank identity with no
-            // password ids yields zero pairs → no dataset (build() would
-            // throw — the measured process-killer).
-            val fillPairs = buildList {
-                if (item.identity.isNotBlank()) {
-                    usernameIds.orEmpty().forEach { add(it to item.identity) }
-                }
-                passwordIds.orEmpty().forEach { add(it to item.password) }
-            }
-            if (fillPairs.isEmpty()) {
+            // THE ONE FILL RULE (the service's fillPairs): the identity →
+            // the username ids, the item's email (identity fallback) →
+            // the email ids, the password → the password ids. The old
+            // guard demanded password ids — the username-only pages
+            // (Proton's step 1, most SSO forms) then filled NOTHING on a
+            // successful auth (the measured Vanadium no-fill: RESULT_OK
+            // with an empty result, and no re-invoke). A null email list
+            // (an old pending intent from before the split) degrades to
+            // no email fill — never a crash.
+            val pairs = fillPairs(usernameIds, emailIds, passwordIds, item)
+            if (pairs.isEmpty()) {
                 Log.i(TAG, "the result fill skipped — nothing to fill " +
-                    "(user=${usernameIds?.size ?: 0}, pw=${passwordIds?.size ?: 0}, " +
-                    "identity blank=${item.identity.isBlank()})")
+                    "(user=${usernameIds?.size ?: 0}, email=${emailIds?.size ?: 0}, " +
+                    "pw=${passwordIds?.size ?: 0}, identity blank=${item.identity.isBlank()})")
                 return null
             }
             val view = RemoteViews(context.packageName, R.layout.autofill_item).apply {
                 setTextViewText(R.id.autofill_text, label)
             }
             val ds = Dataset.Builder()
-            fillPairs.forEach { (id, value) ->
+            pairs.forEach { (id, value) ->
                 ds.setValue(id, AutofillValue.forText(value), view)
             }
             return ds.build()
