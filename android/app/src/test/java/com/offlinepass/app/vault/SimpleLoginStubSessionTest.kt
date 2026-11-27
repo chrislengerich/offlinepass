@@ -2,6 +2,7 @@ package com.offlinepass.app.vault
 
 import android.content.Context
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -105,5 +106,48 @@ class SimpleLoginStubSessionTest {
         VaultSession.stubSessionForTest()
         assertNull(VaultSession.simpleLoginItem())
         assertNull(VaultSession.simpleLoginApiKey())
+    }
+
+    @Test
+    fun theDomainsDisplayAndTheAliasGateWorkInTheStubSession() {
+        // THE MEASURED EMPTY DOMAINS: the note carrying the domains is
+        // SEALED — the stub session's display was empty and
+        // isSimpleLoginAlias (the status-check button's gate) was false.
+        // The domains ride the manifest's public metadata now.
+        val sl = slItem().apply {
+            note = "Created via offlinepass (SimpleLogin)\n" +
+                "SimpleLogin alias domains: slmail.com, 8shield.net"
+        }
+        seedCache(sl)
+        VaultSession.stubSessionForTest()
+
+        assertEquals(setOf("slmail.com", "8shield.net"), VaultSession.simpleLoginDomains())
+        assertTrue("the alias gate opens (the button appears)",
+            VaultSession.isSimpleLoginAlias("x@slmail.com"))
+    }
+
+    @Test
+    fun theOldCacheWithoutDomainsDegradesGracefully() {
+        // The pre-domains caches: the manifest entry carries no domains —
+        // the empty set, no crash; the next re-seal populates.
+        val sl = slItem() // no note → no domains at seal
+        seedCache(sl)
+        VaultSession.stubSessionForTest()
+        assertEquals(emptySet<String>(), VaultSession.simpleLoginDomains())
+        org.junit.Assert.assertFalse(VaultSession.isSimpleLoginAlias("x@slmail.com"))
+    }
+
+    @Test
+    fun theGatedKeyUnsealsTheSlItemInTheStubSession() = kotlinx.coroutines.runBlocking {
+        seedCache(slItem())
+        VaultSession.stubSessionForTest()
+        assertNull("the plain accessor stays honest (sealed)",
+            VaultSession.simpleLoginApiKey())
+        // THE GATE STUBBED OPEN: the single unseal delivers the key.
+        VaultSession.sealGate = { _, _ -> true }
+        assertEquals("THE-API-KEY", VaultSession.simpleLoginKeyGated())
+        // THE GATE DECLINED: null, and nothing else changed.
+        VaultSession.sealGate = { _, _ -> false }
+        assertNull(VaultSession.simpleLoginKeyGated())
     }
 }

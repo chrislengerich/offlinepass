@@ -67,7 +67,15 @@ object SealedVault {
         val username: String,
         val email: String,
         val urls: List<String>,
-        val modifyTime: Long
+        val modifyTime: Long,
+        /** THE SL ITEM'S ALIAS DOMAINS — public, display-only metadata
+         *  (SimpleLogin's creatable-domain names, never secrets): the
+         *  locked/stub sessions read them from the manifest because the
+         *  NOTE carrying them is sealed (the measured empty-domains
+         *  display + the missing status-check button). Empty for every
+         *  non-SL item and for the pre-domains caches (a graceful
+         *  degrade until the next re-seal). */
+        val aliasDomains: List<String> = emptyList()
     ) {
         /** Pre-auth search: all words must hit name/username/email/urls.
          *  (Notes are sealed — they only match in a full session.) */
@@ -392,6 +400,16 @@ object SealedVault {
         .put("email", item.email)
         .put("urls", JSONArray().apply { item.urls.forEach { put(it) } })
         .put("modifyTime", item.modifyTime)
+        // THE SL ITEM'S ALIAS DOMAINS ride the PUBLIC manifest — the
+        // locked/stub sessions need them for the display and the
+        // alias-toggle's gate, and the note carrying them is sealed.
+        .apply {
+            if (item.urls.any { VaultSession.isSimpleLoginUrl(it) }) {
+                val domains = VaultSession.aliasDomainsFromNote(item.note)
+                if (domains.isNotEmpty())
+                    put("domains", JSONArray().apply { domains.forEach { put(it) } })
+            }
+        }
 
     /** The cache is fresh when it was sealed against the CURRENT vault file
      *  bytes. Stale ⇒ unsealing would resurrect outdated secrets — flows
@@ -415,7 +433,10 @@ object SealedVault {
                     urls = o.optJSONArray("urls")
                         ?.let { a -> (0 until a.length()).map { a.getString(it) } }
                         ?: emptyList(),
-                    modifyTime = o.optLong("modifyTime", 0)
+                    modifyTime = o.optLong("modifyTime", 0),
+                    aliasDomains = o.optJSONArray("domains")
+                        ?.let { a -> (0 until a.length()).map { a.getString(it) } }
+                        ?: emptyList()
                 )
             }
         } ?: emptyList()
@@ -426,11 +447,19 @@ object SealedVault {
         manifest().filter { it.matches(query) }.map { it.uuid }
 
     /** Locked-mode list backing: ProtonItem stubs with the manifest
-     *  metadata filled in and every secret field empty. */
+     *  metadata filled in and every secret field empty. The SL item's
+     *  NOTE gets the domains marker line rebuilt from the manifest's
+     *  public domains — the note itself is sealed, and the stub session's
+     *  display (the Setup linked line + the alias-toggle's gate) reads
+     *  the domains through it. */
     fun manifestItems(): List<ProtonItem> = manifest().map { e ->
         ProtonItem(
             name = e.name, username = e.username, email = e.email,
             urls = e.urls, modifyTime = e.modifyTime, itemUuid = e.uuid)
+            .apply {
+                if (e.aliasDomains.isNotEmpty())
+                    note = "SimpleLogin alias domains: " + e.aliasDomains.joinToString(", ")
+            }
     }
 
     fun pairedDevices(): List<DeviceRecord> =

@@ -2721,18 +2721,55 @@ object VaultSession {
     fun simpleLoginApiKey(): String? =
         simpleLoginItem()?.password?.takeIf { it.isNotBlank() }
 
+    /** THE API KEY, GATED: the full-session key when present; otherwise
+     *  the SL item's SINGLE unseal (one screen-lock prompt, or the still-
+     *  open 60s window) — never the batch. The item-page ops (the status
+     *  check, the toggle) call this: the old silent null-return made the
+     *  buttons inert in the sealed sessions with no explanation. Null =
+     *  the gate was declined or there is no SL item. */
+    suspend fun simpleLoginKeyGated(): String? {
+        simpleLoginApiKey()?.let { return it }
+        val uuid = loadedEnvelope?.items
+            ?.firstOrNull { it.urls.any { isSimpleLoginUrl(it) } }?.itemUuid
+            ?: return null
+        val gate = sealGate ?: return null
+        val ok = runCatching {
+            gate("Unlock the SimpleLogin key",
+                "Screen lock decrypts the api key for this action")
+        }.getOrDefault(false)
+        if (!ok) return null
+        val item = SealedVault.reveal(uuid) ?: return null
+        return item.password.takeIf { it.isNotBlank() }
+    }
+
     /** THE LINKED ALIAS DOMAINS: parsed from the SL item's note (the
      *  marker line the link flow writes: "SimpleLogin alias domains: "
      *  + the comma list) — the v5/alias/options' domains at the link
      *  time. Display-only: the CREATION always uses the account's
      *  default domain (SimpleLoginChain). Empty when the item carries
      *  no list. */
-    fun simpleLoginDomains(): Set<String> {
-        val note = simpleLoginItem()?.note ?: return emptySet()
-        val marker = "SimpleLogin alias domains: "
-        val line = note.lineSequence().firstOrNull { it.startsWith(marker) }
+    /** THE DOMAINS MARKER (the link flow's note line) — shared with the
+     *  seal's manifest write (SealedVault) so both sides parse the same
+     *  shape. */
+    const val SL_DOMAINS_MARKER = "SimpleLogin alias domains: "
+
+    /** The alias domains parsed from a note (the link flow's marker
+     *  line) — the ONE parser the link-time write and the manifest
+     *  readback share. */
+    fun aliasDomainsFromNote(note: String): Set<String> {
+        val line = note.lineSequence().firstOrNull { it.startsWith(SL_DOMAINS_MARKER) }
             ?: return emptySet()
-        return line.removePrefix(marker).split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
+        return line.removePrefix(SL_DOMAINS_MARKER).split(",")
+            .map { it.trim() }.filter { it.isNotBlank() }.toSet()
+    }
+
+    fun simpleLoginDomains(): Set<String> {
+        val item = simpleLoginItem() ?: return emptySet()
+        // THE STUB SESSION: the note is sealed — the MANIFEST's public
+        // domains (written at seal time) feed the display instead.
+        return if (item.note.isNotBlank()) aliasDomainsFromNote(item.note)
+        else SealedVault.manifest().firstOrNull { it.uuid == item.itemUuid }
+            ?.aliasDomains?.toSet() ?: emptySet()
     }
 
     /** The item's email = an SL alias on ANY of the account's alias

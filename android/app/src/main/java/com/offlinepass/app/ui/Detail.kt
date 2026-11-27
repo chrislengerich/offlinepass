@@ -196,9 +196,19 @@ fun EntryDetailScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = {
-                    val apiKey = VaultSession.simpleLoginApiKey() ?: return@TextButton
                     slBusy = true; slStatus = null
                     slScope.launch {
+                        // THE GATED KEY: the stub session's screen-lock
+                        // prompt unseals the SL item on demand — the old
+                        // silent null-return left the button inert with
+                        // no explanation in the sealed sessions.
+                        val apiKey = VaultSession.simpleLoginKeyGated()
+                        if (apiKey == null) {
+                            slStatus = "The SimpleLogin key is sealed — " +
+                                "the screen lock was declined."
+                            slBusy = false
+                            return@launch
+                        }
                         slStatus = try {
                             val found = SimpleLoginHttp().listAliases(
                                 apiKey, query = email.trim())
@@ -218,10 +228,16 @@ fun EntryDetailScreen(
                 }, enabled = !slBusy) { Text(if (slBusy) "Checking…" else "Check SimpleLogin status") }
                 if (slAliasId != null && slAliasEnabled != null && !slBusy) {
                     Button(onClick = {
-                        val apiKey = VaultSession.simpleLoginApiKey() ?: return@Button
                         val id = slAliasId ?: return@Button
                         slBusy = true
                         slScope.launch {
+                            val apiKey = VaultSession.simpleLoginKeyGated()
+                            if (apiKey == null) {
+                                slStatus = "The SimpleLogin key is sealed — " +
+                                    "the screen lock was declined."
+                                slBusy = false
+                                return@launch
+                            }
                             slStatus = try {
                                 slAliasEnabled = SimpleLoginHttp().toggleAlias(apiKey, id)
                                 "SimpleLogin: ${email.trim()} is now " +

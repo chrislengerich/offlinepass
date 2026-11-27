@@ -59,12 +59,22 @@ fun AddEntryScreen(
         if (slLinked) {
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 TextButton(onClick = {
-                    val apiKey = VaultSession.simpleLoginApiKey() ?: return@TextButton
                     val host = runCatching {
                         java.net.URI(url.trim().let { if (it.contains("://")) it else "https://$it" }).host
                     }.getOrNull()
                     slBusy = true; slError = null
                     slScope.launch {
+                        // THE GATED KEY (the same as Detail's ops): the
+                        // stub session's screen-lock prompt unseals the
+                        // SL item; the silent return made the button
+                        // dead in the sealed sessions.
+                        val apiKey = VaultSession.simpleLoginKeyGated()
+                        if (apiKey == null) {
+                            slError = "The SimpleLogin key is sealed — " +
+                                "the screen lock was declined."
+                            slBusy = false
+                            return@launch
+                        }
                         try {
                             // THE SHARED CHAIN: the v5 options (the
                             // hostname = the entry's site) → the account's
