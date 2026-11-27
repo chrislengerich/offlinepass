@@ -2708,11 +2708,19 @@ object VaultSession {
      *  LINKED state must read true there (the measured regression: the
      *  password filter made Setup display "not linked" in every stub
      *  session, and the relink would append a duplicate instead of
-     *  reusing the uuid). The KEY (the ops that CALL SimpleLogin) is
-     *  [simpleLoginApiKey] — null until a full session. */
-    fun simpleLoginItem(): ProtonItem? = loadedEnvelope?.items?.firstOrNull { item ->
-        item.urls.any { isSimpleLoginUrl(it) }
-    }
+     *  reusing the uuid). THE SEALED DETAIL's fallback: the click-through
+     *  reveal NEVER promotes (the session stays Locked — loadedEnvelope
+     *  is null there), so the metadata falls back to the SEALED
+     *  MANIFEST — the same public metadata, read straight from the
+     *  cache. The KEY (the ops that CALL SimpleLogin) is
+     *  [simpleLoginApiKey]/[simpleLoginKeyGated] — null until a full
+     *  session or the gate. */
+    fun simpleLoginItem(): ProtonItem? =
+        loadedEnvelope?.items?.firstOrNull { item ->
+            item.urls.any { isSimpleLoginUrl(it) }
+        } ?: SealedVault.manifestItems().firstOrNull { item ->
+            item.urls.any { isSimpleLoginUrl(it) }
+        }
 
     /** THE API KEY — readable ONLY in a full session (the stub session's
      *  items carry no secrets; the sealed cache holds them — the alias
@@ -2729,9 +2737,10 @@ object VaultSession {
      *  the gate was declined or there is no SL item. */
     suspend fun simpleLoginKeyGated(): String? {
         simpleLoginApiKey()?.let { return it }
-        val uuid = loadedEnvelope?.items
-            ?.firstOrNull { it.urls.any { isSimpleLoginUrl(it) } }?.itemUuid
-            ?: return null
+        // The SEALED DETAIL runs in the pure-locked state (loadedEnvelope
+        // null) — the uuid lookup rides simpleLoginItem's manifest
+        // fallback.
+        val uuid = simpleLoginItem()?.itemUuid ?: return null
         val gate = sealGate ?: return null
         val ok = runCatching {
             gate("Unlock the SimpleLogin key",

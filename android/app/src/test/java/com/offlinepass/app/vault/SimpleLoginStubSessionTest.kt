@@ -150,4 +150,29 @@ class SimpleLoginStubSessionTest {
         VaultSession.sealGate = { _, _ -> false }
         assertNull(VaultSession.simpleLoginKeyGated())
     }
+
+    @Test
+    fun thePureLockedStateStillShowsTheSlItemAndGatesTheKey() = kotlinx.coroutines.runBlocking {
+        // THE MEASURED MISSING BUTTON: the sealed detail's click-through
+        // NEVER promotes (the session stays Locked — the idle lock's
+        // zero() cleared the envelope) — simpleLoginItem read null there
+        // and the Check-SimpleLogin-status button's gate stayed shut.
+        // The manifest fallback answers from the cache alone.
+        seedCache(slItem().apply {
+            note = "SimpleLogin alias domains: slmail.com"
+        })
+        VaultSession.stubSessionForTest()
+        VaultSession.zero()   // THE LOCKED STATE: the envelope GONE, the cache intact
+
+        assertNull("no envelope, no full-session key",
+            VaultSession.simpleLoginApiKey())
+        val meta = VaultSession.simpleLoginItem()
+        assertNotNull("the manifest fallback carries the metadata", meta)
+        assertEquals("sl-uuid-1", meta?.itemUuid)
+        assertEquals("the domains ride the manifest rebuild",
+            setOf("slmail.com"), VaultSession.simpleLoginDomains())
+        // THE GATED KEY WORKS FROM THE LOCKED STATE TOO.
+        VaultSession.sealGate = { _, _ -> true }
+        assertEquals("THE-API-KEY", VaultSession.simpleLoginKeyGated())
+    }
 }
