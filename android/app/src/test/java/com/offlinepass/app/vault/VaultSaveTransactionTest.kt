@@ -719,10 +719,34 @@ class VaultSaveTransactionTest {
     }
 
     @Test
-    fun promoteSealedSessionEndsInStubs() = runBlocking {
-        // THE STUB-INVARIANT: even the promote (the batch unseal for the
-        // write ops) must not leave the full items in memory — the session
-        // re-stubs (the secrets = in the sealed cache).
+    fun promoteSealedSessionFullEndsInStubs() = runBlocking {
+        // THE STUB-INVARIANT: even the FULL promote (the write ops' batch
+        // unseal) must not leave the full items in the browsing state —
+        // the session re-stubs (the secrets = in the sealed cache).
+        installSoftwareSealCrypto()
+        VaultSession.setScreenlockUnlockEnabled(true)
+        val seeded = item("Existing").apply { password = "real-secret" }
+        VaultSession.adopt(Envelope(deviceId = "t").also { e ->
+            e.rev = 3
+            e.items = mutableListOf(seeded)
+        })
+        kotlinx.coroutines.withTimeout(5000) {
+            while (!SealedVault.hasCache()) kotlinx.coroutines.delay(20)
+        }
+        val r = VaultSession.promoteSealedSessionFull()
+        assertTrue("expected Success, got $r", r is VaultSession.Result.Success)
+        val after = (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
+        assertTrue("the promote must end in stubs", after.all { !it.hasSecrets() })
+        assertEquals("the identity fields survive", "Existing", after.firstOrNull()?.name)
+    }
+
+    @Test
+    fun promoteSealedSessionFastEndsInStubsNoUnseal() = runBlocking {
+        // THE FAST PROMOTE (the unlock path): the session installs the
+        // manifest stubs with NO unseal — the secrets stay sealed, the
+        // browsing state ends in stubs, instant. (The no-unseal proof
+        // itself = corruptCacheFastPromoteStillBrowses: a corrupt blob
+        // would fail any unseal, and the fast promote succeeds anyway.)
         installSoftwareSealCrypto()
         VaultSession.setScreenlockUnlockEnabled(true)
         val seeded = item("Existing").apply { password = "real-secret" }
@@ -736,7 +760,7 @@ class VaultSaveTransactionTest {
         val r = VaultSession.promoteSealedSession()
         assertTrue("expected Success, got $r", r is VaultSession.Result.Success)
         val after = (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
-        assertTrue("the promote must end in stubs", after.all { !it.hasSecrets() })
+        assertTrue("the fast promote must end in stubs", after.all { !it.hasSecrets() })
         assertEquals("the identity fields survive", "Existing", after.firstOrNull()?.name)
     }
 

@@ -1413,7 +1413,10 @@ object VaultSession {
      *  fail honestly rather than proceed with stubs. */
     private suspend fun promoteIfStub(): Boolean {
         if (!stubSession) return true
-        return promoteSealedSession() == Result.Success
+        // THE WRITE OP = THE FULL PROMOTE: the save's apply-diff base must
+        // hold the secrets (the batch unseal). The unlock path's promote
+        // is the FAST one (the manifest stubs) — it must never feed a save.
+        return promoteSealedSessionFull() == Result.Success
     }
 
     fun init(context: Context) {
@@ -2258,7 +2261,11 @@ object VaultSession {
         //  3. only when BOTH fail (no card / unusable keys) — stop, keep
         //     the cache, tell the user. Nothing was ever lost on the way.
         if (stubSession) {
-            val promoted = promoteSealedSession()
+            // THE TOGGLE-OFF NEEDS THE SECRETS LIVE (the full session keeps
+            // them after the cache wipes): the FULL promote — the fast one
+            // would install manifest stubs and the wipe below would then be
+            // the sole live copy's destruction.
+            val promoted = promoteSealedSessionFull()
             val promotedEnv = (promoted as? Result.Success)?.let { loadedEnvelope }
             if (promotedEnv == null) {
                 try {
@@ -2359,6 +2366,62 @@ object VaultSession {
         if (!SealedVault.isFresh(File(vaultFilePath())))
             return Result.NeedsKeyDecrypt("Seal is outdated — a sync pulled a newer vault")
         return try {
+            // THE FAST PROMOTE: the session rebuilds from the sealed
+            // cache's PUBLIC manifest — zero Keystore ops, no unseal,
+            // instant. The secrets stay sealed; the per-item reveals
+            // unseal on click and the first WRITE op runs
+            // [promoteSealedSessionFull] (the batch unseal = the save's
+            // diff base). The old promote unsealed EVERY item's secrets
+            // (one Keystore AES-GCM op each, serial) and then threw the
+            // plaintext away into stubs — the measured 13s first action
+            // on a 1345-item vault, paid twice via the duplicate gate
+            // effect and again on the Setup re-promote.
+            val manifest = SealedVault.manifestItems()
+            // THE CARRY-OVERS: the same stash/envelope coalescing the
+            // full promote runs — the tombstones and the staged pairings
+            // live in the current envelope (or the zero() stash), never
+            // in the manifest.
+            val carriedTombstones = loadedEnvelope?.deletedItemUuids?.toList() ?: emptyList()
+            val carriedDevices = (stashedDevices ?: emptyList()) +
+                (loadedEnvelope?.devices?.toList() ?: emptyList())
+            stashedDevices = null
+            val carriedRemoved = (stashedRemovedDeviceIds ?: emptyList()) +
+                (loadedEnvelope?.removedDeviceIds?.toList() ?: emptyList())
+            stashedRemovedDeviceIds = null
+            val env = SealedVault.toEnvelope(manifest)
+            rev = env.rev
+            env.deletedItemUuids = (carriedTombstones + env.deletedItemUuids)
+                .distinct().toMutableSet()
+            val stagedIds = carriedDevices.map { it.keyId }.toSet()
+            env.devices = (carriedDevices + env.devices.filter { it.keyId !in stagedIds })
+                .distinctBy { it.keyId }.toMutableList()
+            env.removedDeviceIds = (carriedRemoved + env.removedDeviceIds)
+                .distinct().toMutableSet()
+            loadedEnvelope = env
+            val stubs = manifest.map { it.asStub() }.toMutableList()
+            state = State.Unlocked(stubs)
+            stubSession = true
+            android.util.Log.i("UnlockTiming",
+                "promote(fast): state->Unlocked (${stubs.size} stubs, devices=${env.devices.size}) — no unseal")
+            Result.Success
+        } catch (e: Exception) {
+            Result.Error(sealedErrorMessage(e))
+        }
+    }
+
+    /** The FULL promote (the write ops' primitive): the batch unseal of
+     *  every sealed secret — [loadedEnvelope] ends up carrying the full
+     *  items (the save's apply-diff base) while the session's browsing
+     *  list re-stubs (the stub-invariant). The auth-window retry (the
+     *  screenlock gate re-prompt) lives here: only this variant touches
+     *  the Keystore. The unlock path runs the FAST promote instead —
+     *  see [promoteSealedSession]. */
+    suspend fun promoteSealedSessionFull(): Result {
+        if (!screenlockUnlockEnabled() || !SealedVault.hasCache())
+            return Result.NeedsKeyDecrypt("no seal")
+        if (!SealedVault.isFresh(File(vaultFilePath())))
+            return Result.NeedsKeyDecrypt("Seal is outdated — a sync pulled a newer vault")
+        return try {
             val items = try {
                 SealedVault.unsealAll()
             } catch (e: Exception) {
@@ -2393,7 +2456,7 @@ object VaultSession {
                     state = State.Unlocked(emptyList())
                     stubSession = true
                     android.util.Log.i("UnlockTiming",
-                        "promote: the empty-vault edge -> Unlocked")
+                        "promote(full): the empty-vault edge -> Unlocked")
                     return Result.Success
                 }
                 return Result.Error(
@@ -2442,7 +2505,7 @@ object VaultSession {
             val stubs = items.map { it.asStub() }.toMutableList()
             state = State.Unlocked(stubs)
             stubSession = true
-            android.util.Log.i("UnlockTiming", "promote: state->Unlocked (${stubs.size} items, devices=${env.devices.size})")
+            android.util.Log.i("UnlockTiming", "promote(full): state->Unlocked (${stubs.size} items, devices=${env.devices.size})")
             Log.i(TAG, "promoted sealed session (stubs): ${stubs.size} items, rev=${env.rev}")
             Result.Success
         } catch (e: Exception) {
@@ -2458,7 +2521,7 @@ object VaultSession {
      * covers both the seal key and the signing key.
      */
     suspend fun saveSealed(edited: ProtonItem): Result {
-        when (val p = promoteSealedSession()) {
+        when (val p = promoteSealedSessionFull()) {
             is Result.Success -> {}
             else -> return p
         }
@@ -2517,7 +2580,7 @@ object VaultSession {
     }
 
     suspend fun upsertSealed(item: ProtonItem): Result {
-        when (val p = promoteSealedSession()) {
+        when (val p = promoteSealedSessionFull()) {
             is Result.Success -> {}
             else -> return p
         }
@@ -2548,7 +2611,7 @@ object VaultSession {
      *  uuid, which SILENTLY NO-OPs for a brand-new item), this appends.
      *  The item must carry its secrets (the full item, not a stub). */
     suspend fun addSealed(newItem: ProtonItem): Result {
-        when (val p = promoteSealedSession()) {
+        when (val p = promoteSealedSessionFull()) {
             is Result.Success -> {}
             else -> return p
         }

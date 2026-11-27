@@ -1814,7 +1814,11 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onExportQr = { encrypt ->
                         lifecycleScope.launch {
                             val item = sealedReveal ?: return@launch
-                            when (val r = VaultSession.promoteSealedSession()) {
+                            // THE EXPORT = THE WRITE CLASS: the full promote
+                            // (the batch unseal) — the fast one installs stubs
+                            // and the export's session contract needs the
+                            // envelope.
+                            when (val r = VaultSession.promoteSealedSessionFull()) {
                                 VaultSession.Result.Success -> {
                                     sealedReveal = null
                                     exportQr(item, encrypt)
@@ -1880,7 +1884,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
                     onDelete = {
                         lifecycleScope.launch {
                             val item = sealedReveal ?: return@launch
-                            when (val r = VaultSession.promoteSealedSession()) {
+                            // THE DELETE = THE WRITE CLASS: the full promote
+                            // (the batch unseal — the delete's save needs the
+                            // envelope as the diff base).
+                            when (val r = VaultSession.promoteSealedSessionFull()) {
                                 VaultSession.Result.Success -> {
                                     sealedReveal = null
                                     when (val r = VaultSession.delete(item)) {
@@ -2706,9 +2713,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
         android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show()
     }
 
-    /** Sealed-mode promotion: unseal the cache into a full session; on a
-     *  stale/missing seal the GPG unlock runs instead. Navigates to [then]
-     *  on success. */
+    /** Sealed-mode promotion (the FAST one — the manifest stubs, no
+     *  unseal): on a stale/missing seal the GPG unlock runs instead.
+     *  Navigates to [then] on success. Write ops promote FULLLY on
+     *  their own (promoteIfStub). */
     private suspend fun promoteOrUnlock(then: Screen?) {
         when (val r = VaultSession.promoteSealedSession()) {
             VaultSession.Result.Success -> {

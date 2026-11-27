@@ -144,7 +144,36 @@ class ToggleOffNoDataLossTest {
     }
 
     @Test
-    fun corruptCachePromoteFailsRatherThanPromotingEmpty() {
+    fun corruptCacheFullPromoteFailsRatherThanPromotingEmpty() {
+        // THE DATA-LOSS GUARD = THE WRITE OPS' PROMOTE: the corrupt cache
+        // must not promote into a session the SAVE trusts as the diff
+        // base. (The unlock path's FAST promote browses on the public
+        // manifest alone — see corruptCacheFastPromoteStillBrowses.)
+        SealedVault.cryptoHook = fakeCrypto()
+        seedCache(
+            ProtonItem(name = "A", username = "ua", password = "pa", itemUuid = "u-a"))
+        VaultSession.stubSessionForTest()
+        val f = File(RuntimeEnvironment.getApplication().filesDir, "sealed/sealed.json")
+        val raw = org.json.JSONObject(f.readText())
+        raw.getJSONArray("items").getJSONObject(0).put("ct", "!!!not-base64!!!")
+        f.writeText(raw.toString())
+
+        val r = kotlinx.coroutines.runBlocking { VaultSession.promoteSealedSessionFull() }
+
+        assertTrue(
+            "the corrupt cache must NOT promote to an empty (data-loss) session",
+            r is VaultSession.Result.Error)
+        assertTrue(SealedVault.hasCache())
+    }
+
+    @Test
+    fun corruptCacheFastPromoteStillBrowses() {
+        // THE FAST PROMOTE'S CONTRACT: the unlock path promotes from the
+        // PUBLIC manifest alone — no unseal, zero Keystore ops (the 13s →
+        // instant fix). A corrupt secret blob does NOT block browsing:
+        // the data-loss guard lives in the write ops (promoteIfStub → the
+        // full promote fails → the save refuses honestly), never in a
+        // browse that touches neither the secrets nor the vault file.
         SealedVault.cryptoHook = fakeCrypto()
         seedCache(
             ProtonItem(name = "A", username = "ua", password = "pa", itemUuid = "u-a"))
@@ -156,10 +185,12 @@ class ToggleOffNoDataLossTest {
 
         val r = kotlinx.coroutines.runBlocking { VaultSession.promoteSealedSession() }
 
-        assertTrue(
-            "the corrupt cache must NOT promote to an empty (data-loss) session",
-            r is VaultSession.Result.Error)
-        assertTrue(SealedVault.hasCache())
+        assertTrue("the fast promote browses on the manifest alone ($r)",
+            r is VaultSession.Result.Success)
+        assertTrue(VaultSession.state is VaultSession.State.Unlocked)
+        val stubs = (VaultSession.state as VaultSession.State.Unlocked).items
+        assertEquals("the manifest stub survives", "A", stubs.firstOrNull()?.name)
+        assertTrue("the corrupt cache stays (nothing destroyed)", SealedVault.hasCache())
     }
 
     @Test
