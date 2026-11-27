@@ -21,6 +21,37 @@ import org.json.JSONObject
 /** Compact Proton-JSON payload for one entry — the QRFT export format. */
 fun entryPayload(item: ProtonItem): String = item.toProtonJson().toString()
 
+/** THE FIELD COPY: the value → the clipboard, flagged SENSITIVE (API 33+
+ *  hides it from the system clipboard-preview overlay — an onlooker-safe
+ *  copy), with the toast confirmation. The blank fields disable their
+ *  copy buttons — an empty clip helps no one. TextButtons, not icons:
+ *  the app's UI language (and no icons dependency). */
+fun copyFieldToClipboard(context: android.content.Context, label: String, value: String) {
+    val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+        as? android.content.ClipboardManager ?: return
+    val clip = android.content.ClipData.newPlainText("offlinepass $label", value)
+    if (android.os.Build.VERSION.SDK_INT >= 33) {
+        clip.description.extras = android.os.PersistableBundle().apply {
+            putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+        }
+    }
+    cm.setPrimaryClip(clip)
+    android.widget.Toast.makeText(context, "$label copied",
+        android.widget.Toast.LENGTH_SHORT).show()
+}
+
+/** The trailing copy button for one detail field. */
+@Composable
+fun CopyFieldButton(value: () -> String, label: String) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    TextButton(
+        onClick = { copyFieldToClipboard(context, label, value()) },
+        enabled = value().isNotBlank()
+    ) {
+        Text("Copy", style = MaterialTheme.typography.bodySmall)
+    }
+}
+
 /**
  * Entry detail: editable fields (username, email, URLs, password), live TOTP,
  * Save changes, Regenerate password (confirm), Export as QRFT, enroll TOTP,
@@ -113,11 +144,13 @@ fun EntryDetailScreen(
         OutlinedTextField(
             value = username, onValueChange = { username = it },
             label = { Text("Username") }, singleLine = true,
+            trailingIcon = { CopyFieldButton({ username }, "Username") },
             modifier = Modifier.fillMaxWidth()
         )
         OutlinedTextField(
             value = email, onValueChange = { email = it },
             label = { Text("Email") }, singleLine = true,
+            trailingIcon = { CopyFieldButton({ email }, "Email") },
             modifier = Modifier.fillMaxWidth()
         )
         if (slCandidate) {
@@ -173,8 +206,11 @@ fun EntryDetailScreen(
             visualTransformation = if (showPassword) VisualTransformation.None
                                    else PasswordVisualTransformation(),
             trailingIcon = {
-                TextButton(onClick = { showPassword = !showPassword }) {
-                    Text(if (showPassword) "Hide" else "Show")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CopyFieldButton({ password }, "Password")
+                    TextButton(onClick = { showPassword = !showPassword }) {
+                        Text(if (showPassword) "Hide" else "Show")
+                    }
                 }
             },
             modifier = Modifier.fillMaxWidth()
