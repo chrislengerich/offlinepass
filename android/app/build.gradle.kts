@@ -28,9 +28,19 @@ android {
         // "fix" (uninstall) would wipe the vault + the sealed cache. The
         // debug app starts with its own data; the vault rides in via the
         // Setup flows (the remote clone / the backup import).
+        //
+        // THE IN-PLACE TARGET: -PdebugSuffix=false drops the suffix — the
+        // APK keeps com.offlinepass.app and UPDATES the phone's old
+        // DEBUG-SIGNED build in place (same ~/.android/debug.keystore →
+        // the data survives). The YubiKey-signed release can NEVER take
+        // that slot this way (its signature differs — the update fails
+        // cleanly, never wipes). Default (no property) = the safe
+        // alongside install.
         debug {
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+            if (project.findProperty("debugSuffix") != "false") {
+                applicationIdSuffix = ".debug"
+                versionNameSuffix = "-debug"
+            }
         }
         // Release-grade build (minified, not debuggable) with the <profileable>
         // manifest tag (src/profileable/): profilers can attach without the
