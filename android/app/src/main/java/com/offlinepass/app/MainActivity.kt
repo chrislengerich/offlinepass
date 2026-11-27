@@ -699,6 +699,9 @@ class MainActivity : androidx.activity.ComponentActivity() {
      *  invokes the handler from Dispatchers.IO. */
     override fun onResume() {
         super.onResume()
+        // A backgrounded OKK process may have died between ops — the
+        // warm is a no-op when the shared binding is alive.
+        VaultSession.warmOpenKeyChain()
         // Backgrounded past the auto-lock timeout? Lock before anything
         // else touches the session.
         if (pausedAtMs > 0) {
@@ -1193,6 +1196,10 @@ class MainActivity : androidx.activity.ComponentActivity() {
         super.onCreate(savedInstanceState)
         VaultSession.init(applicationContext)
         SealedVault.init(applicationContext)
+        // THE OKK WARM-UP: OpenKeyChain's 5-20s cold process start
+        // overlaps the unlock screen instead of the first decrypt/sign
+        // that needs it (the shared client's binding persists).
+        VaultSession.warmOpenKeyChain()
         // The autofill save-offer's tap (a cold start): the extras → the
         // prefilled AddEntry.
         handleAutofillSaveIntent(intent)

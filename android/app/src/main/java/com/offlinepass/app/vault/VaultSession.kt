@@ -164,6 +164,20 @@ object VaultSession {
             }
         }
 
+    /** Warms the shared OpenKeyChain binding: OKK's 5-20s cold process
+     *  start overlaps whatever the user does first instead of stalling
+     *  the first decrypt/encrypt/sign that needs it (the warm() was
+     *  written for exactly this and never wired up). Fire-and-forget on
+     *  the app scope; a failure just logs — the next real call retries
+     *  the bind. The interactive entry points call this; the autofill
+     *  service paths do NOT (no OKK cold start on their behalf). */
+    fun warmOpenKeyChain() {
+        if (!::appContext.isInitialized) return
+        appScope.launch {
+            runCatching { sharedOpenPgpClient(appContext).warm() }
+        }
+    }
+
     /** Commit signing modes: OpenKeyChain's signing key (default — software
      *  keys or security keys behind the OKK interaction) or the SCREENLOCK
      *  keystore key (per-device, per-operation screen-lock auth, no OKK
@@ -388,9 +402,6 @@ object VaultSession {
             touchPrompt = false
         }
     }
-
-    /** Warms the shared OpenKeyChain binding (the cold start overlaps the
-     *  SSH auth and the fetch). */
 
     /** The user-editable device name (defaults to the model); stamped into
      *  the registry. */
