@@ -43,22 +43,31 @@ fun copyFieldToClipboard(context: android.content.Context, label: String, value:
 /** THE COPY GLYPH: the two-sheet copy icon drawn directly — the material
  *  icon lives in material-icons-extended (a multi-MB artifact for one
  *  glyph; the low-dependency supply chain says draw it). Two stroked
- *  rounded rects, the back sheet offset up-right of the front. */
+ *  rounded rects, tight overlap; the front sheet's SURFACE fill knocks
+ *  the back sheet's stroke out of the overlap (the classic clean look). */
 @Composable
 fun CopyGlyph(
     modifier: Modifier = Modifier,
     tint: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurfaceVariant
 ) {
-    androidx.compose.foundation.Canvas(modifier.size(20.dp)) {
-        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(1.8.dp.toPx())
-        val r = androidx.compose.ui.geometry.CornerRadius(1.5.dp.toPx())
+    val sheet = MaterialTheme.colorScheme.surface
+    androidx.compose.foundation.Canvas(modifier.size(16.dp)) {
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(1.6.dp.toPx())
+        val r = androidx.compose.ui.geometry.CornerRadius(1.2.dp.toPx())
+        // THE BACK SHEET (up-right).
         drawRoundRect(tint,
-            topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.32f, 0f),
-            size = androidx.compose.ui.geometry.Size(size.width * 0.68f, size.height * 0.68f),
+            topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.26f, 0f),
+            size = androidx.compose.ui.geometry.Size(size.width * 0.74f, size.height * 0.74f),
             cornerRadius = r, style = stroke)
+        // THE FRONT SHEET (down-left): the surface fill erases the back
+        // sheet's crossing lines inside it, then the outline redraws.
+        drawRoundRect(sheet,
+            topLeft = androidx.compose.ui.geometry.Offset(0f, size.height * 0.26f),
+            size = androidx.compose.ui.geometry.Size(size.width * 0.74f, size.height * 0.74f),
+            cornerRadius = r)
         drawRoundRect(tint,
-            topLeft = androidx.compose.ui.geometry.Offset(0f, size.height * 0.32f),
-            size = androidx.compose.ui.geometry.Size(size.width * 0.68f, size.height * 0.68f),
+            topLeft = androidx.compose.ui.geometry.Offset(0f, size.height * 0.26f),
+            size = androidx.compose.ui.geometry.Size(size.width * 0.74f, size.height * 0.74f),
             cornerRadius = r, style = stroke)
     }
 }
@@ -70,7 +79,7 @@ fun CopyIconButton(value: () -> String, label: String) {
     IconButton(
         onClick = { copyFieldToClipboard(context, label, value()) },
         enabled = value().isNotBlank(),
-        modifier = Modifier.size(32.dp)
+        modifier = Modifier.size(28.dp)
     ) { CopyGlyph() }
 }
 
@@ -166,13 +175,19 @@ fun EntryDetailScreen(
         OutlinedTextField(
             value = username, onValueChange = { username = it },
             label = { Text("Username") }, singleLine = true,
-            trailingIcon = { CopyIconButton({ username }, "Username") },
+            trailingIcon = {
+                // NO DATA = NO BUTTON (the disabled ghost just cluttered
+                // the field).
+                if (username.isNotBlank()) CopyIconButton({ username }, "Username")
+            },
             modifier = Modifier.fillMaxWidth()
         )
         OutlinedTextField(
             value = email, onValueChange = { email = it },
             label = { Text("Email") }, singleLine = true,
-            trailingIcon = { CopyIconButton({ email }, "Email") },
+            trailingIcon = {
+                if (email.isNotBlank()) CopyIconButton({ email }, "Email")
+            },
             modifier = Modifier.fillMaxWidth()
         )
         if (slCandidate) {
@@ -229,7 +244,7 @@ fun EntryDetailScreen(
                                    else PasswordVisualTransformation(),
             trailingIcon = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    CopyIconButton({ password }, "Password")
+                    if (password.isNotBlank()) CopyIconButton({ password }, "Password")
                     TextButton(onClick = { showPassword = !showPassword }) {
                         Text(if (showPassword) "Hide" else "Show")
                     }
