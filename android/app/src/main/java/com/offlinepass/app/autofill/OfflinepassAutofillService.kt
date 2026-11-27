@@ -48,12 +48,11 @@ class OfflinepassAutofillService : AutofillService() {
         val usernameValue: String? = null,
         val passwordValue: String? = null
     ) {
-        /** The page-match predicate (the ranking's match rule, shared with
-         *  the generate-chip's offer condition). */
+        /** The page-match predicate (the generate-chips' offer condition,
+         *  shared with the ranking) — the PRECISE origin rule
+         *  (OriginMatch), not the old substring. */
         fun matches(item: ProtonItem): Boolean =
-            (webDomain != null && item.urls.any { url ->
-                url.contains(webDomain!!.removePrefix("www."))
-            }) || item.urls.any { url -> url.contains(appPackage) }
+            OriginMatch.rank(item, webDomain, appPackage) > 0
     }
 
     override fun onFillRequest(
@@ -70,6 +69,13 @@ class OfflinepassAutofillService : AutofillService() {
             callback.onSuccess(null); return
         }
         val fields = parse(structure)
+        // THE SELF-FILL GUARD: the activity's fields are excluded at the
+        // view level (the decorView's NO_EXCLUDE_DESCENDANTS) — this
+        // belt-and-suspenders the loop: the service never answers a fill
+        // request for its OWN package.
+        if (fields.appPackage == packageName) {
+            callback.onSuccess(null); return
+        }
         // No recognized login fields → no response. Building a dataset with
         // zero values throws — and this service shares the app's process, so
         // a crash here kills the whole app (vault session included).
@@ -159,15 +165,10 @@ class OfflinepassAutofillService : AutofillService() {
         val items = (VaultSession.state as? VaultSession.State.Unlocked)?.items ?: emptyList()
         Log.i(TAG, "branch=unlocked pkg=${fields.appPackage} domain=${fields.webDomain} " +
             "items=${items.size}")
-        // Rank: URL/domain match first, then everything else.
+        // Rank: URL/domain match first, then everything else (the precise
+        // origin rule — OriginMatch).
         val ranked = items.sortedByDescending { item ->
-            when {
-                fields.webDomain != null && item.urls.any { url ->
-                    url.contains(fields.webDomain!!.removePrefix("www."))
-                } -> 2
-                item.urls.any { url -> url.contains(fields.appPackage) } -> 1
-                else -> 0
-            }
+            OriginMatch.rank(item, fields.webDomain, fields.appPackage)
         }
 
         val builder = FillResponse.Builder()
@@ -225,15 +226,10 @@ class OfflinepassAutofillService : AutofillService() {
         Log.i(TAG, "branch=sealed pkg=${fields.appPackage} domain=${fields.webDomain} " +
             "manifest=${manifest.size} revealed=${revealed?.displayName ?: "none"} " +
             "(datasetId=${revealedId?.take(8) ?: "none"})")
-        // Rank: the URL/domain match first, then everything else.
+        // Rank: the URL/domain match first, then everything else (the
+        // precise origin rule — OriginMatch).
         val ranked = manifest.sortedByDescending { item ->
-            when {
-                fields.webDomain != null && item.urls.any { url ->
-                    url.contains(fields.webDomain!!.removePrefix("www."))
-                } -> 2
-                item.urls.any { url -> url.contains(fields.appPackage) } -> 1
-                else -> 0
-            }
+            OriginMatch.rank(item, fields.webDomain, fields.appPackage)
         }
         // THE EXPERIMENT (the docs' CVC shape) is retired: the
         // single-✨-dataset sheet never fired (focusedIsUsername was never
